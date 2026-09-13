@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Quiz V1 → V2</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,system-ui,sans-serif;-webkit-tap-highlight-color:transparent}
+  body{min-height:100vh;background:linear-gradient(135deg,#667eea,#764ba2);display:flex;justify-content:center;align-items:center;padding:15px}
+  .c{background:#fff;border-radius:20px;padding:24px;width:100%;max-width:600px;box-shadow:0 20px 50px rgba(0,0,0,.25)}
+  h1,h2{color:#4a3f8f;text-align:center;margin-bottom:8px;font-size:22px}
+  .sub{text-align:center;color:#888;font-size:13px;margin-bottom:20px}
+  .info{background:#f4f3ff;border-radius:14px;padding:18px;margin-bottom:20px;text-align:center;color:#4a3f8f;font-size:15px;line-height:1.8}
+  .info b{color:#764ba2}
+  .btn{display:block;width:100%;padding:16px;border:none;border-radius:14px;font-size:17px;font-weight:700;cursor:pointer;background:#764ba2;color:#fff;margin-top:12px;transition:.2s;font-family:inherit}
+  .btn:active{transform:scale(.97);background:#5f3a85}
+  .btn.sec{background:#e0ddf0;color:#4a3f8f}
+  .bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;font-size:13px;font-weight:600;color:#555}
+  .badge{background:#764ba2;color:#fff;padding:6px 14px;border-radius:20px}
+  .timer{background:#ffe9b8;color:#8a6d00;padding:6px 14px;border-radius:20px}
+  .prog{height:8px;background:#eee;border-radius:10px;overflow:hidden;margin-bottom:22px}
+  .prog div{height:100%;background:linear-gradient(90deg,#667eea,#764ba2);width:0;transition:.3s}
+  .q{font-size:21px;font-weight:700;color:#333;text-align:center;margin-bottom:22px;line-height:1.5}
+  .q span{color:#764ba2;font-size:26px}
+  .q .mean{display:block;font-size:15px;color:#888;font-weight:500;margin-top:6px;font-style:italic}
+  .opts{display:grid;gap:11px}
+  .opt{padding:16px 18px;border:2px solid #e0ddf0;border-radius:14px;background:#fff;font-size:17px;text-align:left;font-weight:500;cursor:pointer;transition:.15s;color:#333;font-family:inherit;-webkit-appearance:none}
+  .opt:active:not(:disabled){border-color:#764ba2;background:#f9f7ff}
+  .opt.ok{border-color:#22c55e;background:#dcfce7;color:#15803d;font-weight:700}
+  .opt.no{border-color:#ef4444;background:#fee2e2;color:#b91c1c;font-weight:700}
+  .opt.dim{opacity:.5}
+  .fb{text-align:center;margin-top:14px;font-weight:600;font-size:15px;min-height:22px}
+  .score{width:150px;height:150px;border-radius:50%;margin:0 auto 22px;display:flex;flex-direction:column;justify-content:center;align-items:center;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;box-shadow:0 15px 40px rgba(118,75,162,.4)}
+  .score .n{font-size:44px;font-weight:800}
+  .score .l{font-size:12px;opacity:.9}
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px}
+  .stat{padding:15px;border-radius:14px;text-align:center}
+  .stat .n{font-size:24px;font-weight:800}
+  .stat .t{font-size:12px;color:#666;margin-top:4px}
+  .ok-stat{background:#dcfce7}.ok-stat .n{color:#15803d}
+  .no-stat{background:#fee2e2}.no-stat .n{color:#b91c1c}
+  .rank{text-align:center;font-size:17px;font-weight:700;color:#764ba2;margin-bottom:18px;padding:12px;background:#f4f3ff;border-radius:12px}
+  .rev{max-height:240px;overflow-y:auto;margin-bottom:14px}
+  .rev-i{padding:11px 14px;border-radius:10px;margin-bottom:8px;font-size:13px;background:#fee2e2;border-left:4px solid #ef4444;color:#7f1d1d}
+  .rev-i b{color:#b91c1c}
+  .rev-i .a{color:#15803d;font-weight:700}
+</style>
+</head>
+<body>
+<div class="c" id="app">
+
+  <div id="start">
+    <h1>📚 Quiz Động Từ Bất Quy Tắc</h1>
+    <p class="sub">V1 (Nguyên mẫu) → V2 (Quá khứ)</p>
+    <div class="info">
+      🎯 <b id="total">0</b> câu hỏi<br>
+      ⏱️ Có tính thời gian<br>
+      🏆 Chấm điểm và xếp loại<br>
+      🔍 Xem lại câu sai
+    </div>
+    <button class="btn" onclick="start()">Bắt đầu làm bài 🚀</button>
+  </div>
+
+  <div id="quiz" style="display:none">
+    <div class="bar">
+      <span class="badge" id="cnt">Câu 1</span>
+      <span class="timer" id="tm">⏱️ 00:00</span>
+    </div>
+    <div class="prog"><div id="pg"></div></div>
+    <div class="q" id="qq"></div>
+    <div class="opts" id="oo"></div>
+    <div class="fb" id="ff"></div>
+  </div>
+
+  <div id="end" style="display:none"></div>
+
+</div>
+
+<script>
+/* V1, V2, NGHĨA TIẾNG VIỆT */
+const V=[
+["awake","awoke","thức dậy"],
+["be","was/were","thì, là, ở"],
+["become","became","trở thành"],
+["begin","began","bắt đầu"],
+["bleed","bled","chảy máu"],
+["blow","blew","thổi"],
+["break","broke","làm vỡ"],
+["bring","brought","mang đến"],
+["build","built","xây dựng"],
+["burn","burnt/burned","đốt cháy"],
+["buy","bought","mua"],
+["catch","caught","bắt, chụp"],
+["choose","chose","chọn"],
+["come","came","đến"],
+["cost","cost","tốn, trị giá"],
+["cut","cut","cắt"],
+["deal","dealt","giao dịch, xử lý"],
+["draw","drew","vẽ, kéo"],
+["dream","dreamt/dreamed","mơ"],
+["drink","drank","uống"],
+["drive","drove","lái xe"],
+["eat","ate","ăn"],
+["fall","fell","rơi, ngã"],
+["feed","fed","cho ăn"],
+["feel","felt","cảm thấy"],
+["fight","fought","chiến đấu"],
+["find","found","tìm thấy"],
+["fly","flew","bay"],
+["forbid","forbade/forbad","cấm"],
+["forecast","forecast/forecasted","dự báo"],
+["forget","forgot","quên"],
+["forgive","forgave","tha thứ"],
+["freeze","froze","đóng băng"],
+["get","got","được, lấy"],
+["give","gave","cho, tặng"],
+["go","went","đi"],
+["grow","grew","lớn lên, trồng"],
+["hang","hung","treo"],
+["hear","heard","nghe"],
+["hide","hid","trốn, giấu"],
+["hit","hit","đánh, đập"],
+["hurt","hurt","làm đau"],
+["keep","kept","giữ"],
+["knit","knit/knitted","đan"],
+["know","knew","biết"],
+["lay","laid","đặt, để"],
+["lead","led","dẫn dắt"],
+["learn","learnt/learned","học"],
+["leave","left","rời đi"],
+["lend","lent","cho mượn"],
+["let","let","để cho"],
+["lie","lay","nằm"],
+["light","lit/lighted","thắp sáng"],
+["lose","lost","mất, thua"],
+["make","made","làm, chế tạo"],
+["mean","meant","có nghĩa là"],
+["meet","met","gặp"],
+["misunderstand","misunderstood","hiểu lầm"],
+["overcome","overcame","vượt qua"],
+["pay","paid","trả tiền"],
+["prove","proved","chứng minh"],
+["put","put","đặt, để"],
+["read","read","đọc"],
+["ride","rode","cưỡi, lái"],
+["ring","rang","rung chuông"],
+["rise","rose","mọc, tăng"],
+["run","ran","chạy"],
+["saw","sawed","cưa"],
+["say","said","nói"],
+["see","saw","nhìn thấy"],
+["sell","sold","bán"],
+["send","sent","gửi"],
+["shine","shone","chiếu sáng"],
+["shoot","shot","bắn"],
+["show","showed","cho xem"],
+["sing","sang","hát"],
+["sit","sat","ngồi"],
+["sleep","slept","ngủ"],
+["smell","smelt","ngửi"],
+["speak","spoke","nói"],
+["spell","spelt/spelled","đánh vần"],
+["spend","spent","tiêu, dành"],
+["spoil","spoilt/spoiled","làm hỏng"],
+["spread","spread","lan truyền"],
+["stand","stood","đứng"],
+["steal","stole","ăn cắp"],
+["stick","stuck","dính, dán"],
+["swim","swam","bơi"],
+["take","took","lấy, cầm"],
+["teach","taught","dạy"],
+["tell","told","kể, bảo"],
+["think","thought","suy nghĩ"],
+["throw","threw","ném"],
+["understand","understood","hiểu"],
+["wake","woke/waked","thức dậy"],
+["wear","wore","mặc"],
+["weave","wove/weaved","dệt"],
+["win","won","thắng"],
+["wind","wound","quấn, cuốn"],
+["work","worked","làm việc"],
+["write","wrote","viết"]
+];
+
+const S=a=>a.sort(()=>Math.random()-.5);
+let Q=[],i=0,c=0,w=[],t=0,tm=null;
+const $=id=>document.getElementById(id);
+document.getElementById('total').textContent=V.length;
+
+function start(){
+  Q=S([...V]).map(([a,b,m])=>({a,b,m,o:S([b,...S(V.filter(x=>x[1]!=b)).slice(0,3).map(x=>x[1])])}));
+  i=0;c=0;w=[];t=0;
+  $('start').style.display='none';
+  $('quiz').style.display='block';
+  $('end').style.display='none';
+  clearInterval(tm);
+  tm=setInterval(()=>{t++;$('tm').textContent='⏱️ '+String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0')},1000);
+  render();
+}
+
+function render(){
+  const q=Q[i];
+  $('cnt').textContent=`Câu ${i+1}/${Q.length}`;
+  $('pg').style.width=(i/Q.length*100)+'%';
+  $('qq').innerHTML=`V2 của <span>"${q.a}"</span><span class="mean">(${q.m})</span> là gì?`;
+  $('ff').textContent='';
+  const o=$('oo');o.innerHTML='';
+  q.o.forEach(x=>{
+    const b=document.createElement('button');
+    b.className='opt';b.textContent=x;
+    b.onclick=()=>check(b,x);
+    o.appendChild(b);
+  });
+}
+
+function check(b,x){
+  const q=Q[i],ok=x===q.b;
+  document.querySelectorAll('.opt').forEach(z=>{
+    z.disabled=true;
+    if(z.textContent===q.b)z.classList.add('ok');
+    else if(z===b)z.classList.add('no');
+    else z.classList.add('dim');
+  });
+  if(ok){c++;$('ff').textContent='✅ Đúng!';$('ff').style.color='#22c55e'}
+  else{w.push({a:q.a,b:q.b,m:q.m,x});$('ff').textContent='❌ Sai! Đáp án: '+q.b;$('ff').style.color='#ef4444'}
+  setTimeout(()=>{i++;i<Q.length?render():end()},1200);
+}
+
+function end(){
+  clearInterval(tm);
+  const sc=(c/Q.length*10).toFixed(1);
+  const pct=c/Q.length;
+  const rank=pct>=.9?'🏆 Xuất sắc!':pct>=.8?'🌟 Giỏi!':pct>=.65?'👍 Khá!':pct>=.5?'🙂 Trung bình':'💪 Cố gắng thêm!';
+  $('quiz').style.display='none';
+  const e=$('end');e.style.display='block';
+  e.innerHTML=`
+    <h2>🎉 Kết quả</h2>
+    <div class="score"><div class="n">${sc}</div><div class="l">ĐIỂM / 10</div></div>
+    <div class="rank">${rank}</div>
+    <div class="stats">
+      <div class="stat ok-stat"><div class="n">${c}</div><div class="t">Câu đúng</div></div>
+      <div class="stat no-stat"><div class="n">${w.length}</div><div class="t">Câu sai</div></div>
+    </div>
+    ${w.length?`<div class="rev">${w.map(x=>`<div class="rev-i"><b>${x.a}</b> (${x.m}) → bạn chọn: ${x.x} | Đúng: <span class="a">${x.b}</span></div>`).join('')}</div>`:'<div class="rev"><div class="rev-i" style="background:#dcfce7;border-left-color:#22c55e;color:#15803d">🎉 Tuyệt vời! Không sai câu nào!</div></div>'}
+    <button class="btn" onclick="start()">🔄 Làm lại</button>
+  `;
+}
+</script>
+</body>
+</html>
