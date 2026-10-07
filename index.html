@@ -1,250 +1,401 @@
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Quiz V1 → V2</title>
-<style>
-  *{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,system-ui,sans-serif;-webkit-tap-highlight-color:transparent}
-  body{min-height:100vh;background:linear-gradient(135deg,#667eea,#764ba2);display:flex;justify-content:center;align-items:center;padding:15px}
-  .c{background:#fff;border-radius:20px;padding:24px;width:100%;max-width:600px;box-shadow:0 20px 50px rgba(0,0,0,.25)}
-  h1,h2{color:#4a3f8f;text-align:center;margin-bottom:8px;font-size:22px}
-  .sub{text-align:center;color:#888;font-size:13px;margin-bottom:20px}
-  .info{background:#f4f3ff;border-radius:14px;padding:18px;margin-bottom:20px;text-align:center;color:#4a3f8f;font-size:15px;line-height:1.8}
-  .info b{color:#764ba2}
-  .btn{display:block;width:100%;padding:16px;border:none;border-radius:14px;font-size:17px;font-weight:700;cursor:pointer;background:#764ba2;color:#fff;margin-top:12px;transition:.2s;font-family:inherit}
-  .btn:active{transform:scale(.97);background:#5f3a85}
-  .btn.sec{background:#e0ddf0;color:#4a3f8f}
-  .bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;font-size:13px;font-weight:600;color:#555}
-  .badge{background:#764ba2;color:#fff;padding:6px 14px;border-radius:20px}
-  .timer{background:#ffe9b8;color:#8a6d00;padding:6px 14px;border-radius:20px}
-  .prog{height:8px;background:#eee;border-radius:10px;overflow:hidden;margin-bottom:22px}
-  .prog div{height:100%;background:linear-gradient(90deg,#667eea,#764ba2);width:0;transition:.3s}
-  .q{font-size:21px;font-weight:700;color:#333;text-align:center;margin-bottom:22px;line-height:1.5}
-  .q span{color:#764ba2;font-size:26px}
-  .q .mean{display:block;font-size:15px;color:#888;font-weight:500;margin-top:6px;font-style:italic}
-  .opts{display:grid;gap:11px}
-  .opt{padding:16px 18px;border:2px solid #e0ddf0;border-radius:14px;background:#fff;font-size:17px;text-align:left;font-weight:500;cursor:pointer;transition:.15s;color:#333;font-family:inherit;-webkit-appearance:none}
-  .opt:active:not(:disabled){border-color:#764ba2;background:#f9f7ff}
-  .opt.ok{border-color:#22c55e;background:#dcfce7;color:#15803d;font-weight:700}
-  .opt.no{border-color:#ef4444;background:#fee2e2;color:#b91c1c;font-weight:700}
-  .opt.dim{opacity:.5}
-  .fb{text-align:center;margin-top:14px;font-weight:600;font-size:15px;min-height:22px}
-  .score{width:150px;height:150px;border-radius:50%;margin:0 auto 22px;display:flex;flex-direction:column;justify-content:center;align-items:center;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;box-shadow:0 15px 40px rgba(118,75,162,.4)}
-  .score .n{font-size:44px;font-weight:800}
-  .score .l{font-size:12px;opacity:.9}
-  .stats{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px}
-  .stat{padding:15px;border-radius:14px;text-align:center}
-  .stat .n{font-size:24px;font-weight:800}
-  .stat .t{font-size:12px;color:#666;margin-top:4px}
-  .ok-stat{background:#dcfce7}.ok-stat .n{color:#15803d}
-  .no-stat{background:#fee2e2}.no-stat .n{color:#b91c1c}
-  .rank{text-align:center;font-size:17px;font-weight:700;color:#764ba2;margin-bottom:18px;padding:12px;background:#f4f3ff;border-radius:12px}
-  .rev{max-height:240px;overflow-y:auto;margin-bottom:14px}
-  .rev-i{padding:11px 14px;border-radius:10px;margin-bottom:8px;font-size:13px;background:#fee2e2;border-left:4px solid #ef4444;color:#7f1d1d}
-  .rev-i b{color:#b91c1c}
-  .rev-i .a{color:#15803d;font-weight:700}
-</style>
-</head>
-<body>
-<div class="c" id="app">
+local Players = game:GetService("Players")
+local ProximityPromptService = game:GetService("ProximityPromptService")
+local LocalPlayer = Players.LocalPlayer
 
-  <div id="start">
-    <h1>📚 Quiz Động Từ Bất Quy Tắc</h1>
-    <p class="sub">V1 (Nguyên mẫu) → V2 (Quá khứ)</p>
-    <div class="info">
-      🎯 <b id="total">0</b> câu hỏi<br>
-      ⏱️ Có tính thời gian<br>
-      🏆 Chấm điểm và xếp loại<br>
-      🔍 Xem lại câu sai
-    </div>
-    <button class="btn" onclick="start()">Bắt đầu làm bài 🚀</button>
-  </div>
+-- Xác định Container chứa UI an toàn nhất cho Executor
+local ParentContainer
+if gethui then
+    ParentContainer = gethui()
+else
+    local success, coreGui = pcall(function() return game:GetService("CoreGui") end)
+    if success and coreGui then
+        ParentContainer = coreGui
+    else
+        ParentContainer = LocalPlayer:WaitForChild("PlayerGui")
+    end
+end
 
-  <div id="quiz" style="display:none">
-    <div class="bar">
-      <span class="badge" id="cnt">Câu 1</span>
-      <span class="timer" id="tm">⏱️ 00:00</span>
-    </div>
-    <div class="prog"><div id="pg"></div></div>
-    <div class="q" id="qq"></div>
-    <div class="opts" id="oo"></div>
-    <div class="fb" id="ff"></div>
-  </div>
+-- Xóa UI cũ nếu có
+if ParentContainer:FindFirstChild("hưởngcuto20m") then
+    ParentContainer["hưởngcuto20m"]:Destroy()
+end
 
-  <div id="end" style="display:none"></div>
+-- 1. GIAO DIỆN MENU UI
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "hưởngcuto20m"
+ScreenGui.ResetOnSpawn = false
+pcall(function() ScreenGui.Parent = ParentContainer end)
 
-</div>
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 230, 0, 410)
+MainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
 
-<script>
-/* V1, V2, NGHĨA TIẾNG VIỆT */
-const V=[
-["awake","awoke","thức dậy"],
-["be","was/were","thì, là, ở"],
-["become","became","trở thành"],
-["begin","began","bắt đầu"],
-["bleed","bled","chảy máu"],
-["blow","blew","thổi"],
-["break","broke","làm vỡ"],
-["bring","brought","mang đến"],
-["build","built","xây dựng"],
-["burn","burnt/burned","đốt cháy"],
-["buy","bought","mua"],
-["catch","caught","bắt, chụp"],
-["choose","chose","chọn"],
-["come","came","đến"],
-["cost","cost","tốn, trị giá"],
-["cut","cut","cắt"],
-["deal","dealt","giao dịch, xử lý"],
-["draw","drew","vẽ, kéo"],
-["dream","dreamt/dreamed","mơ"],
-["drink","drank","uống"],
-["drive","drove","lái xe"],
-["eat","ate","ăn"],
-["fall","fell","rơi, ngã"],
-["feed","fed","cho ăn"],
-["feel","felt","cảm thấy"],
-["fight","fought","chiến đấu"],
-["find","found","tìm thấy"],
-["fly","flew","bay"],
-["forbid","forbade/forbad","cấm"],
-["forecast","forecast/forecasted","dự báo"],
-["forget","forgot","quên"],
-["forgive","forgave","tha thứ"],
-["freeze","froze","đóng băng"],
-["get","got","được, lấy"],
-["give","gave","cho, tặng"],
-["go","went","đi"],
-["grow","grew","lớn lên, trồng"],
-["hang","hung","treo"],
-["hear","heard","nghe"],
-["hide","hid","trốn, giấu"],
-["hit","hit","đánh, đập"],
-["hurt","hurt","làm đau"],
-["keep","kept","giữ"],
-["knit","knit/knitted","đan"],
-["know","knew","biết"],
-["lay","laid","đặt, để"],
-["lead","led","dẫn dắt"],
-["learn","learnt/learned","học"],
-["leave","left","rời đi"],
-["lend","lent","cho mượn"],
-["let","let","để cho"],
-["lie","lay","nằm"],
-["light","lit/lighted","thắp sáng"],
-["lose","lost","mất, thua"],
-["make","made","làm, chế tạo"],
-["mean","meant","có nghĩa là"],
-["meet","met","gặp"],
-["misunderstand","misunderstood","hiểu lầm"],
-["overcome","overcame","vượt qua"],
-["pay","paid","trả tiền"],
-["prove","proved","chứng minh"],
-["put","put","đặt, để"],
-["read","read","đọc"],
-["ride","rode","cưỡi, lái"],
-["ring","rang","rung chuông"],
-["rise","rose","mọc, tăng"],
-["run","ran","chạy"],
-["saw","sawed","cưa"],
-["say","said","nói"],
-["see","saw","nhìn thấy"],
-["sell","sold","bán"],
-["send","sent","gửi"],
-["shine","shone","chiếu sáng"],
-["shoot","shot","bắn"],
-["show","showed","cho xem"],
-["sing","sang","hát"],
-["sit","sat","ngồi"],
-["sleep","slept","ngủ"],
-["smell","smelt","ngửi"],
-["speak","spoke","nói"],
-["spell","spelt/spelled","đánh vần"],
-["spend","spent","tiêu, dành"],
-["spoil","spoilt/spoiled","làm hỏng"],
-["spread","spread","lan truyền"],
-["stand","stood","đứng"],
-["steal","stole","ăn cắp"],
-["stick","stuck","dính, dán"],
-["swim","swam","bơi"],
-["take","took","lấy, cầm"],
-["teach","taught","dạy"],
-["tell","told","kể, bảo"],
-["think","thought","suy nghĩ"],
-["throw","threw","ném"],
-["understand","understood","hiểu"],
-["wake","woke/waked","thức dậy"],
-["wear","wore","mặc"],
-["weave","wove/weaved","dệt"],
-["win","won","thắng"],
-["wind","wound","quấn, cuốn"],
-["work","worked","làm việc"],
-["write","wrote","viết"]
-];
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 8)
+MainCorner.Parent = MainFrame
 
-const S=a=>a.sort(()=>Math.random()-.5);
-let Q=[],i=0,c=0,w=[],t=0,tm=null;
-const $=id=>document.getElementById(id);
-document.getElementById('total').textContent=V.length;
+-- Tiêu đề
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 35)
+Title.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+Title.Text = "hưởngcuto20m"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 13
+Title.Font = Enum.Font.SourceSansBold
+Title.Parent = MainFrame
 
-function start(){
-  Q=S([...V]).map(([a,b,m])=>({a,b,m,o:S([b,...S(V.filter(x=>x[1]!=b)).slice(0,3).map(x=>x[1])])}));
-  i=0;c=0;w=[];t=0;
-  $('start').style.display='none';
-  $('quiz').style.display='block';
-  $('end').style.display='none';
-  clearInterval(tm);
-  tm=setInterval(()=>{t++;$('tm').textContent='⏱️ '+String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0')},1000);
-  render();
-}
+local TitleCorner = Instance.new("UICorner")
+TitleCorner.CornerRadius = UDim.new(0, 8)
+TitleCorner.Parent = Title
 
-function render(){
-  const q=Q[i];
-  $('cnt').textContent=`Câu ${i+1}/${Q.length}`;
-  $('pg').style.width=(i/Q.length*100)+'%';
-  $('qq').innerHTML=`V2 của <span>"${q.a}"</span><span class="mean">(${q.m})</span> là gì?`;
-  $('ff').textContent='';
-  const o=$('oo');o.innerHTML='';
-  q.o.forEach(x=>{
-    const b=document.createElement('button');
-    b.className='opt';b.textContent=x;
-    b.onclick=()=>check(b,x);
-    o.appendChild(b);
-  });
-}
+-- Nút Auto Pick
+local AutoBtn = Instance.new("TextButton")
+AutoBtn.Size = UDim2.new(0.88, 0, 0, 28)
+AutoBtn.Position = UDim2.new(0.06, 0, 0.10, 0)
+AutoBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+AutoBtn.Text = "AUTO PICK: OFF"
+AutoBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+AutoBtn.TextSize = 12
+AutoBtn.Font = Enum.Font.SourceSansBold
+AutoBtn.Parent = MainFrame
 
-function check(b,x){
-  const q=Q[i],ok=x===q.b;
-  document.querySelectorAll('.opt').forEach(z=>{
-    z.disabled=true;
-    if(z.textContent===q.b)z.classList.add('ok');
-    else if(z===b)z.classList.add('no');
-    else z.classList.add('dim');
-  });
-  if(ok){c++;$('ff').textContent='✅ Đúng!';$('ff').style.color='#22c55e'}
-  else{w.push({a:q.a,b:q.b,m:q.m,x});$('ff').textContent='❌ Sai! Đáp án: '+q.b;$('ff').style.color='#ef4444'}
-  setTimeout(()=>{i++;i<Q.length?render():end()},1200);
-}
+local BtnCorner1 = Instance.new("UICorner")
+BtnCorner1.CornerRadius = UDim.new(0, 6)
+BtnCorner1.Parent = AutoBtn
 
-function end(){
-  clearInterval(tm);
-  const sc=(c/Q.length*10).toFixed(1);
-  const pct=c/Q.length;
-  const rank=pct>=.9?'🏆 Xuất sắc!':pct>=.8?'🌟 Giỏi!':pct>=.65?'👍 Khá!':pct>=.5?'🙂 Trung bình':'💪 Cố gắng thêm!';
-  $('quiz').style.display='none';
-  const e=$('end');e.style.display='block';
-  e.innerHTML=`
-    <h2>🎉 Kết quả</h2>
-    <div class="score"><div class="n">${sc}</div><div class="l">ĐIỂM / 10</div></div>
-    <div class="rank">${rank}</div>
-    <div class="stats">
-      <div class="stat ok-stat"><div class="n">${c}</div><div class="t">Câu đúng</div></div>
-      <div class="stat no-stat"><div class="n">${w.length}</div><div class="t">Câu sai</div></div>
-    </div>
-    ${w.length?`<div class="rev">${w.map(x=>`<div class="rev-i"><b>${x.a}</b> (${x.m}) → bạn chọn: ${x.x} | Đúng: <span class="a">${x.b}</span></div>`).join('')}</div>`:'<div class="rev"><div class="rev-i" style="background:#dcfce7;border-left-color:#22c55e;color:#15803d">🎉 Tuyệt vời! Không sai câu nào!</div></div>'}
-    <button class="btn" onclick="start()">🔄 Làm lại</button>
-  `;
-}
-</script>
-</body>
-</html>
+-- Nút Auto TP On Ragdoll
+local AutoTpRagdollBtn = Instance.new("TextButton")
+AutoTpRagdollBtn.Size = UDim2.new(0.88, 0, 0, 28)
+AutoTpRagdollBtn.Position = UDim2.new(0.06, 0, 0.18, 0)
+AutoTpRagdollBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+AutoTpRagdollBtn.Text = "AUTO TP ON RAGDOLL: OFF"
+AutoTpRagdollBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+AutoTpRagdollBtn.TextSize = 11
+AutoTpRagdollBtn.Font = Enum.Font.SourceSansBold
+AutoTpRagdollBtn.Parent = MainFrame
+
+local BtnCornerRag = Instance.new("UICorner")
+BtnCornerRag.CornerRadius = UDim.new(0, 6)
+BtnCornerRag.Parent = AutoTpRagdollBtn
+
+-- Nút Grab Position
+local GrabBtn = Instance.new("TextButton")
+GrabBtn.Size = UDim2.new(0.88, 0, 0, 28)
+GrabBtn.Position = UDim2.new(0.06, 0, 0.26, 0)
+GrabBtn.BackgroundColor3 = Color3.fromRGB(50, 100, 180)
+GrabBtn.Text = "GRAB POSITION"
+GrabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+GrabBtn.TextSize = 12
+GrabBtn.Font = Enum.Font.SourceSansBold
+GrabBtn.Parent = MainFrame
+
+local BtnCorner2 = Instance.new("UICorner")
+BtnCorner2.CornerRadius = UDim.new(0, 6)
+BtnCorner2.Parent = GrabBtn
+
+-- Nút Teleport Manual
+local TpBtn = Instance.new("TextButton")
+TpBtn.Size = UDim2.new(0.88, 0, 0, 28)
+TpBtn.Position = UDim2.new(0.06, 0, 0.34, 0)
+TpBtn.BackgroundColor3 = Color3.fromRGB(140, 50, 180)
+TpBtn.Text = "TELEPORT MANUAL"
+TpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+TpBtn.TextSize = 12
+TpBtn.Font = Enum.Font.SourceSansBold
+TpBtn.Parent = MainFrame
+
+local BtnCorner3 = Instance.new("UICorner")
+BtnCorner3.CornerRadius = UDim.new(0, 6)
+BtnCorner3.Parent = TpBtn
+
+-- Nút Auto TP Back To Ragdoll
+local AutoTpBackRagdollBtn = Instance.new("TextButton")
+AutoTpBackRagdollBtn.Size = UDim2.new(0.88, 0, 0, 28)
+AutoTpBackRagdollBtn.Position = UDim2.new(0.06, 0, 0.42, 0)
+AutoTpBackRagdollBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+AutoTpBackRagdollBtn.Text = "AUTO TP BACK RAGDOLL: OFF"
+AutoTpBackRagdollBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+AutoTpBackRagdollBtn.TextSize = 11
+AutoTpBackRagdollBtn.Font = Enum.Font.SourceSansBold
+AutoTpBackRagdollBtn.Parent = MainFrame
+
+local BtnCornerBack = Instance.new("UICorner")
+BtnCornerBack.CornerRadius = UDim.new(0, 6)
+BtnCornerBack.Parent = AutoTpBackRagdollBtn
+
+-- Nút On/Off Speed Toggle
+local SpeedToggleBtn = Instance.new("TextButton")
+SpeedToggleBtn.Size = UDim2.new(0.88, 0, 0, 28)
+SpeedToggleBtn.Position = UDim2.new(0.06, 0, 0.50, 0)
+SpeedToggleBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+SpeedToggleBtn.Text = "WALKSPEED: OFF"
+SpeedToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+SpeedToggleBtn.TextSize = 11
+SpeedToggleBtn.Font = Enum.Font.SourceSansBold
+SpeedToggleBtn.Parent = MainFrame
+
+local BtnCornerSpeedToggle = Instance.new("UICorner")
+BtnCornerSpeedToggle.CornerRadius = UDim.new(0, 6)
+BtnCornerSpeedToggle.Parent = SpeedToggleBtn
+
+-- Khung Speed
+local SpeedFrame = Instance.new("Frame")
+SpeedFrame.Size = UDim2.new(0.88, 0, 0, 50)
+SpeedFrame.Position = UDim2.new(0.06, 0, 0.59, 0)
+SpeedFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+SpeedFrame.BorderSizePixel = 0
+SpeedFrame.Parent = MainFrame
+
+local SpeedCorner = Instance.new("UICorner")
+SpeedCorner.CornerRadius = UDim.new(0, 6)
+SpeedCorner.Parent = SpeedFrame
+
+local SpeedLabel = Instance.new("TextLabel")
+SpeedLabel.Size = UDim2.new(1, 0, 0, 20)
+SpeedLabel.BackgroundTransparency = 1
+SpeedLabel.Text = "Speed: 16 Studs/s"
+SpeedLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+SpeedLabel.TextSize = 12
+SpeedLabel.Font = Enum.Font.SourceSansBold
+SpeedLabel.Parent = SpeedFrame
+
+local DecSpeedBtn = Instance.new("TextButton")
+DecSpeedBtn.Size = UDim2.new(0, 30, 0, 22)
+DecSpeedBtn.Position = UDim2.new(0.05, 0, 0.45, 0)
+DecSpeedBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+DecSpeedBtn.Text = "-10"
+DecSpeedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+DecSpeedBtn.TextSize = 11
+DecSpeedBtn.Font = Enum.Font.SourceSansBold
+DecSpeedBtn.Parent = SpeedFrame
+
+local CornerDec = Instance.new("UICorner")
+CornerDec.CornerRadius = UDim.new(0, 4)
+CornerDec.Parent = DecSpeedBtn
+
+local ResetSpeedBtn = Instance.new("TextButton")
+ResetSpeedBtn.Size = UDim2.new(0, 50, 0, 22)
+ResetSpeedBtn.Position = UDim2.new(0.38, 0, 0.45, 0)
+ResetSpeedBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+ResetSpeedBtn.Text = "Reset"
+ResetSpeedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ResetSpeedBtn.TextSize = 11
+ResetSpeedBtn.Font = Enum.Font.SourceSansBold
+ResetSpeedBtn.Parent = SpeedFrame
+
+local CornerReset = Instance.new("UICorner")
+CornerReset.CornerRadius = UDim.new(0, 4)
+CornerReset.Parent = ResetSpeedBtn
+
+local IncSpeedBtn = Instance.new("TextButton")
+IncSpeedBtn.Size = UDim2.new(0, 30, 0, 22)
+IncSpeedBtn.Position = UDim2.new(0.8, 0, 0.45, 0)
+IncSpeedBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+IncSpeedBtn.Text = "+10"
+IncSpeedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+IncSpeedBtn.TextSize = 11
+IncSpeedBtn.Font = Enum.Font.SourceSansBold
+IncSpeedBtn.Parent = SpeedFrame
+
+local CornerInc = Instance.new("UICorner")
+CornerInc.CornerRadius = UDim.new(0, 4)
+CornerInc.Parent = IncSpeedBtn
+
+-- Trạng thái
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Size = UDim2.new(0.9, 0, 0, 20)
+StatusLabel.Position = UDim2.new(0.05, 0, 0.92, 0)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Text = "Chưa lưu vị trí"
+StatusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+StatusLabel.TextSize = 11
+StatusLabel.Font = Enum.Font.SourceSansItalic
+StatusLabel.Parent = MainFrame
+
+--------------------------------------------------------------------------------
+-- 2. LOGIC XỬ LÝ CHỨC NĂNG TỰ ĐỘNG TELEPORT & PICK
+--------------------------------------------------------------------------------
+local savedCFrame = nil
+local lastRagdollCFrame = nil
+local autoPickEnabled = false
+local autoTpRagdollEnabled = false
+local autoTpBackRagdollEnabled = false
+local speedEnabled = false
+local currentSpeed = 16
+local defaultWalkSpeed = 16 -- Tốc độ mặc định ban đầu của Game
+local isTeleporting = false
+
+-- Lưu tốc độ mặc định ban đầu của nhân vật
+local function captureDefaultSpeed()
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if humanoid and not speedEnabled then
+        defaultWalkSpeed = humanoid.WalkSpeed
+    end
+end
+captureDefaultSpeed()
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(0.5)
+    captureDefaultSpeed()
+end)
+
+-- Bật / Tắt Auto Pick
+AutoBtn.MouseButton1Click:Connect(function()
+    autoPickEnabled = not autoPickEnabled
+    AutoBtn.Text = autoPickEnabled and "AUTO PICK: ON" or "AUTO PICK: OFF"
+    AutoBtn.BackgroundColor3 = autoPickEnabled and Color3.fromRGB(50, 180, 80) or Color3.fromRGB(180, 50, 50)
+end)
+
+-- Bật / Tắt Auto TP khi Ragdoll
+AutoTpRagdollBtn.MouseButton1Click:Connect(function()
+    autoTpRagdollEnabled = not autoTpRagdollEnabled
+    AutoTpRagdollBtn.Text = autoTpRagdollEnabled and "AUTO TP ON RAGDOLL: ON" or "AUTO TP ON RAGDOLL: OFF"
+    AutoTpRagdollBtn.BackgroundColor3 = autoTpRagdollEnabled and Color3.fromRGB(50, 180, 80) or Color3.fromRGB(180, 50, 50)
+end)
+
+-- Bật / Tắt Auto TP Back To Ragdoll
+AutoTpBackRagdollBtn.MouseButton1Click:Connect(function()
+    autoTpBackRagdollEnabled = not autoTpBackRagdollEnabled
+    AutoTpBackRagdollBtn.Text = autoTpBackRagdollEnabled and "AUTO TP BACK RAGDOLL: ON" or "AUTO TP BACK RAGDOLL: OFF"
+    AutoTpBackRagdollBtn.BackgroundColor3 = autoTpBackRagdollEnabled and Color3.fromRGB(50, 180, 80) or Color3.fromRGB(180, 50, 50)
+end)
+
+-- Bật / Tắt WalkSpeed
+SpeedToggleBtn.MouseButton1Click:Connect(function()
+    speedEnabled = not speedEnabled
+    SpeedToggleBtn.Text = speedEnabled and "WALKSPEED: ON" or "WALKSPEED: OFF"
+    SpeedToggleBtn.BackgroundColor3 = speedEnabled and Color3.fromRGB(50, 180, 80) or Color3.fromRGB(180, 50, 50)
+    
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        if speedEnabled then
+            humanoid.WalkSpeed = currentSpeed
+        else
+            humanoid.WalkSpeed = defaultWalkSpeed -- Trả về tốc độ mặc định ban đầu của Game
+        end
+    end
+end)
+
+-- Nhặt nhanh Event-Based
+ProximityPromptService.PromptShown:Connect(function(prompt)
+    if autoPickEnabled and prompt and prompt.Enabled then
+        pcall(function()
+            prompt.HoldDuration = 0
+            if fireproximityprompt then
+                fireproximityprompt(prompt)
+            else
+                if prompt.InputHoldBegin then prompt:InputHoldBegin() end
+                if prompt.InputHoldEnd then prompt:InputHoldEnd() end
+            end
+        end)
+    end
+end)
+
+-- Bắt trạng thái Ragdoll / Ngã của nhân vật & Xử lý TỰ ĐỘNG
+task.spawn(function()
+    while task.wait(0.05) do
+        if autoTpRagdollEnabled and savedCFrame and not isTeleporting then
+            pcall(function()
+                local character = LocalPlayer.Character
+                local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+
+                if humanoid and rootPart then
+                    local state = humanoid:GetState()
+                    local isRagdollState = (state == Enum.HumanoidStateType.Ragdoll) 
+                                        or (state == Enum.HumanoidStateType.FallingDown) 
+                                        or (state == Enum.HumanoidStateType.Physics)
+
+                    local isFallen = math.abs(rootPart.Orientation.Z) > 60 or math.abs(rootPart.Orientation.X) > 60
+
+                    if isRagdollState or isFallen then
+                        isTeleporting = true
+                        
+                        lastRagdollCFrame = rootPart.CFrame
+                        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+                        rootPart.CFrame = savedCFrame
+                        
+                        StatusLabel.Text = "Đã lưu vị trí & Né Ragdoll!"
+                        StatusLabel.TextColor3 = Color3.fromRGB(255, 200, 50)
+
+                        if autoTpBackRagdollEnabled and lastRagdollCFrame then
+                            task.wait(0.2)
+                            rootPart.CFrame = lastRagdollCFrame
+                            StatusLabel.Text = "Auto TP quay lại vị trí Ragdoll!"
+                            StatusLabel.TextColor3 = Color3.fromRGB(80, 220, 100)
+                        end
+
+                        task.wait(0.5)
+                        isTeleporting = false
+                    end
+                end
+            end)
+        end
+    end
+end)
+
+-- Tốc độ di chuyển
+local function updateSpeed(val)
+    currentSpeed = math.clamp(val, 16, 200)
+    SpeedLabel.Text = string.format("Speed: %d Studs/s", currentSpeed)
+    if speedEnabled then
+        local character = LocalPlayer.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if humanoid then humanoid.WalkSpeed = currentSpeed end
+    end
+end
+
+task.spawn(function()
+    while task.wait(0.1) do
+        pcall(function()
+            local character = LocalPlayer.Character
+            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                local targetSpeed = speedEnabled and currentSpeed or defaultWalkSpeed
+                if humanoid.WalkSpeed ~= targetSpeed then
+                    humanoid.WalkSpeed = targetSpeed
+                end
+            end
+        end)
+    end
+end)
+
+IncSpeedBtn.MouseButton1Click:Connect(function() updateSpeed(currentSpeed + 10) end)
+DecSpeedBtn.MouseButton1Click:Connect(function() updateSpeed(currentSpeed - 10) end)
+ResetSpeedBtn.MouseButton1Click:Connect(function() updateSpeed(16) end)
+
+-- Grab Position
+GrabBtn.MouseButton1Click:Connect(function()
+    pcall(function()
+        local character = LocalPlayer.Character
+        local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+        if rootPart then
+            savedCFrame = rootPart.CFrame
+            local pos = rootPart.Position
+            StatusLabel.Text = string.format("Đã lưu: X:%.0f Y:%.0f Z:%.0f", pos.X, pos.Y, pos.Z)
+            StatusLabel.TextColor3 = Color3.fromRGB(80, 220, 100)
+        end
+    end)
+end)
+
+-- Teleport Thủ công về vị trí Grab
+TpBtn.MouseButton1Click:Connect(function()
+    if not savedCFrame then
+        StatusLabel.Text = "Bạn chưa Grab Position!"
+        StatusLabel.TextColor3 = Color3.fromRGB(220, 80, 80)
+        return
+    end
+    pcall(function()
+        local character = LocalPlayer.Character
+        local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+        if rootPart then rootPart.CFrame = savedCFrame end
+    end)
+end)
