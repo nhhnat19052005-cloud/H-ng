@@ -1,44 +1,105 @@
+-- DEBUG: bật/tắt log
+local DEBUG = true
+local function log(...)
+    if DEBUG then
+        print("[hưởngcuto20m]", ...)
+    end
+end
+
+log("Bắt đầu load script...")
+
 local Players = game:GetService("Players")
 local ProximityPromptService = game:GetService("ProximityPromptService")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
+
+log("Services OK")
 
 -- Xác định Container chứa UI an toàn nhất cho Executor
 local ParentContainer
 if gethui then
-    ParentContainer = gethui()
-else
+    local ok, ui = pcall(gethui)
+    if ok and ui then
+        ParentContainer = ui
+        log("Dùng gethui()")
+    end
+end
+if not ParentContainer then
     local success, coreGui = pcall(function() return game:GetService("CoreGui") end)
     if success and coreGui then
         ParentContainer = coreGui
+        log("Dùng CoreGui")
     else
         ParentContainer = LocalPlayer:WaitForChild("PlayerGui")
+        log("Dùng PlayerGui")
     end
 end
 
 -- Xóa UI cũ nếu có
 if ParentContainer:FindFirstChild("hưởngcuto20m") then
     ParentContainer["hưởngcuto20m"]:Destroy()
+    log("Đã xóa UI cũ")
 end
 
 -- 1. GIAO DIỆN MENU UI
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "hưởngcuto20m"
 ScreenGui.ResetOnSpawn = false
-pcall(function() ScreenGui.Parent = ParentContainer end)
+local okParent = pcall(function() ScreenGui.Parent = ParentContainer end)
+if not okParent then
+    ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    log("Fallback PlayerGui")
+end
+log("ScreenGui OK")
 
+-- NÚT TOGGLE (ĐÓNG / MỞ MENU) — icon 🥚🔥
+local ToggleBtn = Instance.new("TextButton")
+ToggleBtn.Name = "ToggleBtn"
+ToggleBtn.Size = UDim2.new(0, 50, 0, 50)
+ToggleBtn.Position = UDim2.new(0.02, 0, 0.02, 0)
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+ToggleBtn.Text = "🥚🔥"
+ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleBtn.TextSize = 26
+ToggleBtn.Font = Enum.Font.SourceSansBold
+ToggleBtn.Active = true
+ToggleBtn.Draggable = true
+ToggleBtn.Parent = ScreenGui
+
+local ToggleCorner = Instance.new("UICorner")
+ToggleCorner.CornerRadius = UDim.new(0, 12)
+ToggleCorner.Parent = ToggleBtn
+
+local ToggleStroke = Instance.new("UIStroke")
+ToggleStroke.Color = Color3.fromRGB(180, 120, 50)
+ToggleStroke.Thickness = 2
+ToggleStroke.Parent = ToggleBtn
+
+-- MainFrame
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 230, 0, 410)
-MainFrame.Position = UDim2.new(0.05, 0, 0.2, 0)
+MainFrame.Size = UDim2.new(0, 230, 0, 450)
+MainFrame.Position = UDim2.new(0.05, 0, 0.15, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
 MainFrame.Draggable = true
+MainFrame.Visible = true
 MainFrame.Parent = ScreenGui
 
 local MainCorner = Instance.new("UICorner")
 MainCorner.CornerRadius = UDim.new(0, 8)
 MainCorner.Parent = MainFrame
+
+-- Toggle đóng/mở
+local menuOpen = true
+ToggleBtn.MouseButton1Click:Connect(function()
+    menuOpen = not menuOpen
+    MainFrame.Visible = menuOpen
+    ToggleBtn.Text = menuOpen and "🥚🔥" or "🥚"
+    log("Menu:", menuOpen and "OPEN" or "CLOSE")
+end)
 
 -- Tiêu đề
 local Title = Instance.new("TextLabel")
@@ -54,95 +115,31 @@ local TitleCorner = Instance.new("UICorner")
 TitleCorner.CornerRadius = UDim.new(0, 8)
 TitleCorner.Parent = Title
 
--- Nút Auto Pick
-local AutoBtn = Instance.new("TextButton")
-AutoBtn.Size = UDim2.new(0.88, 0, 0, 28)
-AutoBtn.Position = UDim2.new(0.06, 0, 0.10, 0)
-AutoBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-AutoBtn.Text = "AUTO PICK: OFF"
-AutoBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-AutoBtn.TextSize = 12
-AutoBtn.Font = Enum.Font.SourceSansBold
-AutoBtn.Parent = MainFrame
+-- Helper tạo nút
+local function makeBtn(name, text, posY, color)
+    local b = Instance.new("TextButton")
+    b.Name = name
+    b.Size = UDim2.new(0.88, 0, 0, 28)
+    b.Position = UDim2.new(0.06, 0, posY, 0)
+    b.BackgroundColor3 = color
+    b.Text = text
+    b.TextColor3 = Color3.fromRGB(255, 255, 255)
+    b.TextSize = 11
+    b.Font = Enum.Font.SourceSansBold
+    b.Parent = MainFrame
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 6)
+    c.Parent = b
+    return b
+end
 
-local BtnCorner1 = Instance.new("UICorner")
-BtnCorner1.CornerRadius = UDim.new(0, 6)
-BtnCorner1.Parent = AutoBtn
-
--- Nút Auto TP On Ragdoll
-local AutoTpRagdollBtn = Instance.new("TextButton")
-AutoTpRagdollBtn.Size = UDim2.new(0.88, 0, 0, 28)
-AutoTpRagdollBtn.Position = UDim2.new(0.06, 0, 0.18, 0)
-AutoTpRagdollBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-AutoTpRagdollBtn.Text = "AUTO TP ON RAGDOLL: OFF"
-AutoTpRagdollBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-AutoTpRagdollBtn.TextSize = 11
-AutoTpRagdollBtn.Font = Enum.Font.SourceSansBold
-AutoTpRagdollBtn.Parent = MainFrame
-
-local BtnCornerRag = Instance.new("UICorner")
-BtnCornerRag.CornerRadius = UDim.new(0, 6)
-BtnCornerRag.Parent = AutoTpRagdollBtn
-
--- Nút Grab Position
-local GrabBtn = Instance.new("TextButton")
-GrabBtn.Size = UDim2.new(0.88, 0, 0, 28)
-GrabBtn.Position = UDim2.new(0.06, 0, 0.26, 0)
-GrabBtn.BackgroundColor3 = Color3.fromRGB(50, 100, 180)
-GrabBtn.Text = "GRAB POSITION"
-GrabBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-GrabBtn.TextSize = 12
-GrabBtn.Font = Enum.Font.SourceSansBold
-GrabBtn.Parent = MainFrame
-
-local BtnCorner2 = Instance.new("UICorner")
-BtnCorner2.CornerRadius = UDim.new(0, 6)
-BtnCorner2.Parent = GrabBtn
-
--- Nút Teleport Manual
-local TpBtn = Instance.new("TextButton")
-TpBtn.Size = UDim2.new(0.88, 0, 0, 28)
-TpBtn.Position = UDim2.new(0.06, 0, 0.34, 0)
-TpBtn.BackgroundColor3 = Color3.fromRGB(140, 50, 180)
-TpBtn.Text = "TELEPORT MANUAL"
-TpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-TpBtn.TextSize = 12
-TpBtn.Font = Enum.Font.SourceSansBold
-TpBtn.Parent = MainFrame
-
-local BtnCorner3 = Instance.new("UICorner")
-BtnCorner3.CornerRadius = UDim.new(0, 6)
-BtnCorner3.Parent = TpBtn
-
--- Nút Auto TP Back To Ragdoll
-local AutoTpBackRagdollBtn = Instance.new("TextButton")
-AutoTpBackRagdollBtn.Size = UDim2.new(0.88, 0, 0, 28)
-AutoTpBackRagdollBtn.Position = UDim2.new(0.06, 0, 0.42, 0)
-AutoTpBackRagdollBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-AutoTpBackRagdollBtn.Text = "AUTO TP BACK RAGDOLL: OFF"
-AutoTpBackRagdollBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-AutoTpBackRagdollBtn.TextSize = 11
-AutoTpBackRagdollBtn.Font = Enum.Font.SourceSansBold
-AutoTpBackRagdollBtn.Parent = MainFrame
-
-local BtnCornerBack = Instance.new("UICorner")
-BtnCornerBack.CornerRadius = UDim.new(0, 6)
-BtnCornerBack.Parent = AutoTpBackRagdollBtn
-
--- Nút On/Off Speed Toggle
-local SpeedToggleBtn = Instance.new("TextButton")
-SpeedToggleBtn.Size = UDim2.new(0.88, 0, 0, 28)
-SpeedToggleBtn.Position = UDim2.new(0.06, 0, 0.50, 0)
-SpeedToggleBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-SpeedToggleBtn.Text = "WALKSPEED: OFF"
-SpeedToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-SpeedToggleBtn.TextSize = 11
-SpeedToggleBtn.Font = Enum.Font.SourceSansBold
-SpeedToggleBtn.Parent = MainFrame
-
-local BtnCornerSpeedToggle = Instance.new("UICorner")
-BtnCornerSpeedToggle.CornerRadius = UDim.new(0, 6)
-BtnCornerSpeedToggle.Parent = SpeedToggleBtn
+local AutoBtn             = makeBtn("AutoBtn", "AUTO PICK: OFF", 0.10, Color3.fromRGB(180, 50, 50))
+local AutoTpRagdollBtn    = makeBtn("AutoTpRagdollBtn", "AUTO TP ON RAGDOLL: OFF", 0.18, Color3.fromRGB(180, 50, 50))
+local GrabBtn             = makeBtn("GrabBtn", "GRAB POSITION", 0.26, Color3.fromRGB(50, 100, 180))
+local TpBtn               = makeBtn("TpBtn", "TELEPORT MANUAL", 0.34, Color3.fromRGB(140, 50, 180))
+local AutoTpBackRagdollBtn= makeBtn("AutoTpBackRagdollBtn", "AUTO TP BACK RAGDOLL: OFF", 0.42, Color3.fromRGB(180, 50, 50))
+local SpeedToggleBtn      = makeBtn("SpeedToggleBtn", "WALKSPEED: OFF", 0.50, Color3.fromRGB(180, 50, 50))
+local HopBtn              = makeBtn("HopBtn", "HOP SERVER ÍT NGƯỜI", 0.75, Color3.fromRGB(180, 120, 50))
 
 -- Khung Speed
 local SpeedFrame = Instance.new("Frame")
@@ -165,47 +162,25 @@ SpeedLabel.TextSize = 12
 SpeedLabel.Font = Enum.Font.SourceSansBold
 SpeedLabel.Parent = SpeedFrame
 
-local DecSpeedBtn = Instance.new("TextButton")
-DecSpeedBtn.Size = UDim2.new(0, 30, 0, 22)
-DecSpeedBtn.Position = UDim2.new(0.05, 0, 0.45, 0)
-DecSpeedBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-DecSpeedBtn.Text = "-10"
-DecSpeedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-DecSpeedBtn.TextSize = 11
-DecSpeedBtn.Font = Enum.Font.SourceSansBold
-DecSpeedBtn.Parent = SpeedFrame
+local function makeSmallBtn(text, posX)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0, 34, 0, 22)
+    b.Position = UDim2.new(posX, 0, 0.45, 0)
+    b.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    b.Text = text
+    b.TextColor3 = Color3.fromRGB(255, 255, 255)
+    b.TextSize = 11
+    b.Font = Enum.Font.SourceSansBold
+    b.Parent = SpeedFrame
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 4)
+    c.Parent = b
+    return b
+end
 
-local CornerDec = Instance.new("UICorner")
-CornerDec.CornerRadius = UDim.new(0, 4)
-CornerDec.Parent = DecSpeedBtn
-
-local ResetSpeedBtn = Instance.new("TextButton")
-ResetSpeedBtn.Size = UDim2.new(0, 50, 0, 22)
-ResetSpeedBtn.Position = UDim2.new(0.38, 0, 0.45, 0)
-ResetSpeedBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-ResetSpeedBtn.Text = "Reset"
-ResetSpeedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-ResetSpeedBtn.TextSize = 11
-ResetSpeedBtn.Font = Enum.Font.SourceSansBold
-ResetSpeedBtn.Parent = SpeedFrame
-
-local CornerReset = Instance.new("UICorner")
-CornerReset.CornerRadius = UDim.new(0, 4)
-CornerReset.Parent = ResetSpeedBtn
-
-local IncSpeedBtn = Instance.new("TextButton")
-IncSpeedBtn.Size = UDim2.new(0, 30, 0, 22)
-IncSpeedBtn.Position = UDim2.new(0.8, 0, 0.45, 0)
-IncSpeedBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-IncSpeedBtn.Text = "+10"
-IncSpeedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-IncSpeedBtn.TextSize = 11
-IncSpeedBtn.Font = Enum.Font.SourceSansBold
-IncSpeedBtn.Parent = SpeedFrame
-
-local CornerInc = Instance.new("UICorner")
-CornerInc.CornerRadius = UDim.new(0, 4)
-CornerInc.Parent = IncSpeedBtn
+local DecSpeedBtn   = makeSmallBtn("-10", 0.05)
+local ResetSpeedBtn = makeSmallBtn("Reset", 0.38)
+local IncSpeedBtn   = makeSmallBtn("+10", 0.78)
 
 -- Trạng thái
 local StatusLabel = Instance.new("TextLabel")
@@ -218,8 +193,10 @@ StatusLabel.TextSize = 11
 StatusLabel.Font = Enum.Font.SourceSansItalic
 StatusLabel.Parent = MainFrame
 
+log("UI build OK")
+
 --------------------------------------------------------------------------------
--- 2. LOGIC XỬ LÝ CHỨC NĂNG TỰ ĐỘNG TELEPORT & PICK
+-- 2. LOGIC
 --------------------------------------------------------------------------------
 local savedCFrame = nil
 local lastRagdollCFrame = nil
@@ -228,15 +205,19 @@ local autoTpRagdollEnabled = false
 local autoTpBackRagdollEnabled = false
 local speedEnabled = false
 local currentSpeed = 16
-local defaultWalkSpeed = 16 -- Tốc độ mặc định ban đầu của Game
+local defaultWalkSpeed = 16
 local isTeleporting = false
 
--- Lưu tốc độ mặc định ban đầu của nhân vật
+local function getHumanoid()
+    local char = LocalPlayer.Character
+    return char and char:FindFirstChildOfClass("Humanoid"), char
+end
+
 local function captureDefaultSpeed()
-    local character = LocalPlayer.Character
-    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-    if humanoid and not speedEnabled then
-        defaultWalkSpeed = humanoid.WalkSpeed
+    local hum = getHumanoid()
+    if hum and not speedEnabled then
+        defaultWalkSpeed = hum.WalkSpeed
+        log("Default speed:", defaultWalkSpeed)
     end
 end
 captureDefaultSpeed()
@@ -246,45 +227,34 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     captureDefaultSpeed()
 end)
 
--- Bật / Tắt Auto Pick
 AutoBtn.MouseButton1Click:Connect(function()
     autoPickEnabled = not autoPickEnabled
     AutoBtn.Text = autoPickEnabled and "AUTO PICK: ON" or "AUTO PICK: OFF"
     AutoBtn.BackgroundColor3 = autoPickEnabled and Color3.fromRGB(50, 180, 80) or Color3.fromRGB(180, 50, 50)
 end)
 
--- Bật / Tắt Auto TP khi Ragdoll
 AutoTpRagdollBtn.MouseButton1Click:Connect(function()
     autoTpRagdollEnabled = not autoTpRagdollEnabled
     AutoTpRagdollBtn.Text = autoTpRagdollEnabled and "AUTO TP ON RAGDOLL: ON" or "AUTO TP ON RAGDOLL: OFF"
     AutoTpRagdollBtn.BackgroundColor3 = autoTpRagdollEnabled and Color3.fromRGB(50, 180, 80) or Color3.fromRGB(180, 50, 50)
 end)
 
--- Bật / Tắt Auto TP Back To Ragdoll
 AutoTpBackRagdollBtn.MouseButton1Click:Connect(function()
     autoTpBackRagdollEnabled = not autoTpBackRagdollEnabled
     AutoTpBackRagdollBtn.Text = autoTpBackRagdollEnabled and "AUTO TP BACK RAGDOLL: ON" or "AUTO TP BACK RAGDOLL: OFF"
     AutoTpBackRagdollBtn.BackgroundColor3 = autoTpBackRagdollEnabled and Color3.fromRGB(50, 180, 80) or Color3.fromRGB(180, 50, 50)
 end)
 
--- Bật / Tắt WalkSpeed
 SpeedToggleBtn.MouseButton1Click:Connect(function()
     speedEnabled = not speedEnabled
     SpeedToggleBtn.Text = speedEnabled and "WALKSPEED: ON" or "WALKSPEED: OFF"
     SpeedToggleBtn.BackgroundColor3 = speedEnabled and Color3.fromRGB(50, 180, 80) or Color3.fromRGB(180, 50, 50)
-    
-    local character = LocalPlayer.Character
-    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-    if humanoid then
-        if speedEnabled then
-            humanoid.WalkSpeed = currentSpeed
-        else
-            humanoid.WalkSpeed = defaultWalkSpeed -- Trả về tốc độ mặc định ban đầu của Game
-        end
+    local hum = getHumanoid()
+    if hum then
+        hum.WalkSpeed = speedEnabled and currentSpeed or defaultWalkSpeed
     end
 end)
 
--- Nhặt nhanh Event-Based
 ProximityPromptService.PromptShown:Connect(function(prompt)
     if autoPickEnabled and prompt and prompt.Enabled then
         pcall(function()
@@ -299,40 +269,31 @@ ProximityPromptService.PromptShown:Connect(function(prompt)
     end
 end)
 
--- Bắt trạng thái Ragdoll / Ngã của nhân vật & Xử lý TỰ ĐỘNG
 task.spawn(function()
     while task.wait(0.05) do
         if autoTpRagdollEnabled and savedCFrame and not isTeleporting then
             pcall(function()
-                local character = LocalPlayer.Character
-                local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-                local rootPart = character and character:FindFirstChild("HumanoidRootPart")
-
-                if humanoid and rootPart then
-                    local state = humanoid:GetState()
-                    local isRagdollState = (state == Enum.HumanoidStateType.Ragdoll) 
-                                        or (state == Enum.HumanoidStateType.FallingDown) 
-                                        or (state == Enum.HumanoidStateType.Physics)
-
-                    local isFallen = math.abs(rootPart.Orientation.Z) > 60 or math.abs(rootPart.Orientation.X) > 60
-
-                    if isRagdollState or isFallen then
+                local char = LocalPlayer.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                if hum and root then
+                    local state = hum:GetState()
+                    local rag = (state == Enum.HumanoidStateType.Ragdoll)
+                             or (state == Enum.HumanoidStateType.FallingDown)
+                             or (state == Enum.HumanoidStateType.Physics)
+                    local fall = math.abs(root.Orientation.Z) > 60 or math.abs(root.Orientation.X) > 60
+                    if rag or fall then
                         isTeleporting = true
-                        
-                        lastRagdollCFrame = rootPart.CFrame
-                        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-                        rootPart.CFrame = savedCFrame
-                        
-                        StatusLabel.Text = "Đã lưu vị trí & Né Ragdoll!"
+                        lastRagdollCFrame = root.CFrame
+                        hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+                        root.CFrame = savedCFrame
+                        StatusLabel.Text = "Né Ragdoll!"
                         StatusLabel.TextColor3 = Color3.fromRGB(255, 200, 50)
-
                         if autoTpBackRagdollEnabled and lastRagdollCFrame then
                             task.wait(0.2)
-                            rootPart.CFrame = lastRagdollCFrame
-                            StatusLabel.Text = "Auto TP quay lại vị trí Ragdoll!"
-                            StatusLabel.TextColor3 = Color3.fromRGB(80, 220, 100)
+                            root.CFrame = lastRagdollCFrame
+                            StatusLabel.Text = "Quay lại vị trí Ragdoll!"
                         end
-
                         task.wait(0.5)
                         isTeleporting = false
                     end
@@ -342,26 +303,23 @@ task.spawn(function()
     end
 end)
 
--- Tốc độ di chuyển
 local function updateSpeed(val)
     currentSpeed = math.clamp(val, 16, 200)
     SpeedLabel.Text = string.format("Speed: %d Studs/s", currentSpeed)
     if speedEnabled then
-        local character = LocalPlayer.Character
-        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-        if humanoid then humanoid.WalkSpeed = currentSpeed end
+        local hum = getHumanoid()
+        if hum then hum.WalkSpeed = currentSpeed end
     end
 end
 
 task.spawn(function()
     while task.wait(0.1) do
         pcall(function()
-            local character = LocalPlayer.Character
-            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-            if humanoid then
-                local targetSpeed = speedEnabled and currentSpeed or defaultWalkSpeed
-                if humanoid.WalkSpeed ~= targetSpeed then
-                    humanoid.WalkSpeed = targetSpeed
+            local hum = getHumanoid()
+            if hum then
+                local target = speedEnabled and currentSpeed or defaultWalkSpeed
+                if hum.WalkSpeed ~= target then
+                    hum.WalkSpeed = target
                 end
             end
         end)
@@ -372,30 +330,97 @@ IncSpeedBtn.MouseButton1Click:Connect(function() updateSpeed(currentSpeed + 10) 
 DecSpeedBtn.MouseButton1Click:Connect(function() updateSpeed(currentSpeed - 10) end)
 ResetSpeedBtn.MouseButton1Click:Connect(function() updateSpeed(16) end)
 
--- Grab Position
 GrabBtn.MouseButton1Click:Connect(function()
-    pcall(function()
-        local character = LocalPlayer.Character
-        local rootPart = character and character:FindFirstChild("HumanoidRootPart")
-        if rootPart then
-            savedCFrame = rootPart.CFrame
-            local pos = rootPart.Position
-            StatusLabel.Text = string.format("Đã lưu: X:%.0f Y:%.0f Z:%.0f", pos.X, pos.Y, pos.Z)
-            StatusLabel.TextColor3 = Color3.fromRGB(80, 220, 100)
-        end
-    end)
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if root then
+        savedCFrame = root.CFrame
+        local pos = root.Position
+        StatusLabel.Text = string.format("Đã lưu: X:%.0f Y:%.0f Z:%.0f", pos.X, pos.Y, pos.Z)
+        StatusLabel.TextColor3 = Color3.fromRGB(80, 220, 100)
+        log("Grab:", pos)
+    end
 end)
 
--- Teleport Thủ công về vị trí Grab
 TpBtn.MouseButton1Click:Connect(function()
     if not savedCFrame then
-        StatusLabel.Text = "Bạn chưa Grab Position!"
+        StatusLabel.Text = "Chưa Grab Position!"
         StatusLabel.TextColor3 = Color3.fromRGB(220, 80, 80)
         return
     end
-    pcall(function()
-        local character = LocalPlayer.Character
-        local rootPart = character and character:FindFirstChild("HumanoidRootPart")
-        if rootPart then rootPart.CFrame = savedCFrame end
-    end)
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if root then
+        root.CFrame = savedCFrame
+        log("TP manual")
+    end
 end)
+
+-- Hop Server Ít Người
+local function hopToLowestPop()
+    StatusLabel.Text = "Đang tìm server..."
+    StatusLabel.TextColor3 = Color3.fromRGB(255, 200, 50)
+    log("Hop: bắt đầu")
+
+    local placeId = game.PlaceId
+    local jobId = game.JobId
+    log("PlaceId:", placeId)
+
+    -- Thử 2 cách lấy dữ liệu
+    local raw = nil
+    local ok, err = pcall(function()
+        local url = string.format(
+            "https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100",
+            placeId
+        )
+        raw = game:HttpGet(url)
+    end)
+    if not ok or not raw then
+        log("HttpGet lỗi:", err)
+        StatusLabel.Text = "HttpGet bị chặn!"
+        StatusLabel.TextColor3 = Color3.fromRGB(220, 80, 80)
+        return
+    end
+
+    local decoded
+    ok, decoded = pcall(function() return HttpService:JSONDecode(raw) end)
+    if not ok or not decoded or not decoded.data then
+        log("JSON lỗi:", decoded)
+        StatusLabel.Text = "Decode server list fail!"
+        StatusLabel.TextColor3 = Color3.fromRGB(220, 80, 80)
+        return
+    end
+
+    local servers = {}
+    for _, s in ipairs(decoded.data) do
+        if s.playing and s.playing < s.maxPlayers and s.id ~= jobId then
+            table.insert(servers, s)
+        end
+    end
+
+    if #servers == 0 then
+        StatusLabel.Text = "Không có server trống!"
+        StatusLabel.TextColor3 = Color3.fromRGB(220, 80, 80)
+        return
+    end
+
+    table.sort(servers, function(a, b) return a.playing < b.playing end)
+    local target = servers[1]
+    StatusLabel.Text = string.format("Hop -> %d/%d người", target.playing, target.maxPlayers)
+    StatusLabel.TextColor3 = Color3.fromRGB(80, 220, 100)
+    log("Target server:", target.id, target.playing)
+
+    task.wait(0.4)
+    local okTp, errTp = pcall(function()
+        TeleportService:TeleportToPlaceInstance(placeId, target.id, LocalPlayer)
+    end)
+    if not okTp then
+        log("TP lỗi:", errTp)
+        StatusLabel.Text = "Teleport fail!"
+        StatusLabel.TextColor3 = Color3.fromRGB(220, 80, 80)
+    end
+end
+
+HopBtn.MouseButton1Click:Connect(hopToLowestPop)
+
+log("Script load xong — sẵn sàng!")
