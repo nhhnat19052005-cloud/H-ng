@@ -1,31 +1,29 @@
-local Players=game:GetService("Players")
+local P=game:GetService("Players")
 local PPS=game:GetService("ProximityPromptService")
 local TPS=game:GetService("TeleportService")
 local HS=game:GetService("HttpService")
 local RS=game:GetService("RunService")
-local LP=Players.LocalPlayer
-
+local LP=P.LocalPlayer
 local C
-if gethui then local ok,u=pcall(gethui) if ok and u then C=u end end
-if not C then local ok,cg=pcall(function() return game:GetService("CoreGui") end) C=ok and cg or LP:WaitForChild("PlayerGui") end
+if gethui then local o,u=pcall(gethui) if o and u then C=u end end
+if not C then local o,cg=pcall(function() return game:GetService("CoreGui") end) C=o and cg or LP:WaitForChild("PlayerGui") end
 if C:FindFirstChild("hcm20m") then C["hcm20m"]:Destroy() end
-
 local SG=Instance.new("ScreenGui") SG.Name="hcm20m" SG.ResetOnSpawn=false
 pcall(function() SG.Parent=C end)
 
 local TG=Instance.new("TextButton")
 TG.Size=UDim2.new(0,50,0,50) TG.Position=UDim2.new(0.02,0,0.02,0)
 TG.BackgroundColor3=Color3.fromRGB(20,20,20) TG.Text="OPEN"
-TG.TextColor3=Color3.fromRGB(255,255,255) TG.TextSize=12
-TG.Font=Enum.Font.SourceSansBold TG.Active=true TG.Draggable=true TG.Parent=SG
-local tgc=Instance.new("UICorner") tgc.CornerRadius=UDim.new(0,12) tgc.Parent=TG
-local tgs=Instance.new("UIStroke") tgs.Color=Color3.fromRGB(180,120,50) tgs.Thickness=2 tgs.Parent=TG
+TG.TextColor3=Color3.fromRGB(255,255,255) TG.TextSize=12 TG.Font=Enum.Font.SourceSansBold
+TG.Active=true TG.Draggable=true TG.Parent=SG
+local tc=Instance.new("UICorner") tc.CornerRadius=UDim.new(0,12) tc.Parent=TG
+local ts=Instance.new("UIStroke") ts.Color=Color3.fromRGB(180,120,50) ts.Thickness=2 ts.Parent=TG
 
 local MF=Instance.new("Frame")
 MF.Size=UDim2.new(0,280,0,540) MF.Position=UDim2.new(0.05,0,0.04,0)
 MF.BackgroundColor3=Color3.fromRGB(20,20,20) MF.BorderSizePixel=0
 MF.Active=true MF.Draggable=true MF.Visible=true MF.Parent=SG
-local mfc=Instance.new("UICorner") mfc.CornerRadius=UDim.new(0,8) mfc.Parent=MF
+local mc=Instance.new("UICorner") mc.CornerRadius=UDim.new(0,8) mc.Parent=MF
 
 local TT=Instance.new("TextLabel")
 TT.Size=UDim2.new(1,0,0,28) TT.BackgroundColor3=Color3.fromRGB(35,35,35)
@@ -39,8 +37,8 @@ TB.BackgroundColor3=Color3.fromRGB(28,28,28) TB.BorderSizePixel=0 TB.Parent=MF
 
 local T1=Instance.new("TextButton")
 T1.Size=UDim2.new(0.5,0,1,0) T1.BackgroundColor3=Color3.fromRGB(60,100,160)
-T1.Text="MAIN" T1.TextColor3=Color3.fromRGB(255,255,255)
-T1.TextSize=11 T1.Font=Enum.Font.SourceSansBold T1.Parent=TB
+T1.Text="MAIN" T1.TextColor3=Color3.fromRGB(255,255,255) T1.TextSize=11
+T1.Font=Enum.Font.SourceSansBold T1.Parent=TB
 
 local T2=Instance.new("TextButton")
 T2.Size=UDim2.new(0.5,0,1,0) T2.Position=UDim2.new(0.5,0,0,0)
@@ -51,84 +49,70 @@ T2.Font=Enum.Font.SourceSansBold T2.Parent=TB
 local MC=Instance.new("Frame")
 MC.Size=UDim2.new(1,0,1,-54) MC.Position=UDim2.new(0,0,0,54)
 MC.BackgroundTransparency=1 MC.Visible=true MC.Parent=MF
-
 local EC=Instance.new("Frame")
 EC.Size=UDim2.new(1,0,1,-54) EC.Position=UDim2.new(0,0,0,54)
 EC.BackgroundTransparency=1 EC.Visible=false EC.Parent=MF
 
-local function selTab(w)
-    if w=="m" then MC.Visible=true EC.Visible=false
-        T1.BackgroundColor3=Color3.fromRGB(60,100,160) T2.BackgroundColor3=Color3.fromRGB(45,45,45)
-    else MC.Visible=false EC.Visible=true
-        T1.BackgroundColor3=Color3.fromRGB(45,45,45) T2.BackgroundColor3=Color3.fromRGB(60,100,160) end
+local function sT(w)
+    MC.Visible=(w=="m") EC.Visible=(w=="e")
+    T1.BackgroundColor3=(w=="m") and Color3.fromRGB(60,100,160) or Color3.fromRGB(45,45,45)
+    T2.BackgroundColor3=(w=="e") and Color3.fromRGB(60,100,160) or Color3.fromRGB(45,45,45)
 end
-T1.MouseButton1Click:Connect(function() selTab("m") end)
-T2.MouseButton1Click:Connect(function() selTab("e") end)
+T1.MouseButton1Click:Connect(function() sT("m") end)
+T2.MouseButton1Click:Connect(function() sT("e") end)
 
 local mo=true
 TG.MouseButton1Click:Connect(function()
     mo=not mo MF.Visible=mo TG.Text=mo and "OPEN" or "CLOSE"
 end)
 
-local function nb(p,t,y,col,h)
+local function nb(p,t,y,c,h)
     h=h or 22
     local b=Instance.new("TextButton")
     b.Size=UDim2.new(0.9,0,0,h) b.Position=UDim2.new(0.05,0,y,0)
-    b.BackgroundColor3=col b.Text=t
-    b.TextColor3=Color3.fromRGB(255,255,255) b.TextSize=9
+    b.BackgroundColor3=c b.Text=t b.TextColor3=Color3.fromRGB(255,255,255) b.TextSize=9
     b.Font=Enum.Font.SourceSansBold b.Parent=p
-    local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,6) c.Parent=b
+    local cc=Instance.new("UICorner") cc.CornerRadius=UDim.new(0,6) cc.Parent=b
     return b
 end
-
-local function mkS(parent,text,posX)
+local function mkS(par,t,px)
     local b=Instance.new("TextButton")
-    b.Size=UDim2.new(0,30,0,18) b.Position=UDim2.new(posX,0,0,0)
-    b.BackgroundColor3=Color3.fromRGB(60,60,60) b.Text=text
+    b.Size=UDim2.new(0,30,0,18) b.Position=UDim2.new(px,0,0,0)
+    b.BackgroundColor3=Color3.fromRGB(60,60,60) b.Text=t
     b.TextColor3=Color3.fromRGB(255,255,255) b.TextSize=9
-    b.Font=Enum.Font.SourceSansBold b.Parent=parent
-    local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,4) c.Parent=b
+    b.Font=Enum.Font.SourceSansBold b.Parent=par
+    local cc=Instance.new("UICorner") cc.CornerRadius=UDim.new(0,4) cc.Parent=b
     return b
 end
 
--- ============ MAIN TAB ============
-local AB  = nb(MC,"AUTO PICK: OFF",0.01,Color3.fromRGB(180,50,50))
-local ARB = nb(MC,"AUTO TP RAGDOLL: OFF",0.065,Color3.fromRGB(180,50,50))
-local GB  = nb(MC,"GRAB POSITION",0.12,Color3.fromRGB(50,100,180))
-local TBt = nb(MC,"TELEPORT MANUAL",0.175,Color3.fromRGB(140,50,180))
-local ABR = nb(MC,"AUTO TP BACK: OFF",0.23,Color3.fromRGB(180,50,50))
-local SB  = nb(MC,"WALKSPEED: OFF",0.285,Color3.fromRGB(180,50,50))
-local HB  = nb(MC,"HOP SERVER",0.34,Color3.fromRGB(180,120,50))
-local ARB2= nb(MC,"AUTO FLY: OFF",0.395,Color3.fromRGB(180,50,50))
+-- MAIN
+local AB=nb(MC,"AUTO PICK: OFF",0.01,Color3.fromRGB(180,50,50))
+local ARB=nb(MC,"AUTO TP RAGDOLL: OFF",0.065,Color3.fromRGB(180,50,50))
+local GB=nb(MC,"GRAB POSITION",0.12,Color3.fromRGB(50,100,180))
+local TBt=nb(MC,"TELEPORT MANUAL",0.175,Color3.fromRGB(140,50,180))
+local ABR=nb(MC,"AUTO TP BACK: OFF",0.23,Color3.fromRGB(180,50,50))
+local SB=nb(MC,"WALKSPEED: OFF",0.285,Color3.fromRGB(180,50,50))
+local HB=nb(MC,"HOP SERVER",0.34,Color3.fromRGB(180,120,50))
+local ARB2=nb(MC,"AUTO FLY: OFF",0.395,Color3.fromRGB(180,50,50))
 
 local KF=Instance.new("Frame")
 KF.Size=UDim2.new(0.9,0,0,70) KF.Position=UDim2.new(0.05,0,0.46,0)
 KF.BackgroundColor3=Color3.fromRGB(30,30,30) KF.BorderSizePixel=0 KF.Parent=MC
 local kfc=Instance.new("UICorner") kfc.CornerRadius=UDim.new(0,6) kfc.Parent=KF
-
 local WSL=Instance.new("TextLabel")
 WSL.Size=UDim2.new(1,0,0,14) WSL.BackgroundTransparency=1
-WSL.Text="Walk: 16" WSL.TextColor3=Color3.fromRGB(255,255,255)
-WSL.TextSize=9 WSL.Font=Enum.Font.SourceSansBold WSL.Parent=KF
-
-local WDB=mkS(KF,"-10",0.05)
-WDB.Position=UDim2.new(0.05,0,0.1,0)
-local WRB=mkS(KF,"R",0.43)
-WRB.Position=UDim2.new(0.43,0,0.1,0)
-local WIB=mkS(KF,"+10",0.78)
-WIB.Position=UDim2.new(0.78,0,0.1,0)
-
+WSL.Text="Walk: 16" WSL.TextColor3=Color3.fromRGB(255,255,255) WSL.TextSize=9
+WSL.Font=Enum.Font.SourceSansBold WSL.Parent=KF
+local WDB=mkS(KF,"-10",0.05) WDB.Position=UDim2.new(0.05,0,0.1,0)
+local WRB=mkS(KF,"R",0.43) WRB.Position=UDim2.new(0.43,0,0.1,0)
+local WIB=mkS(KF,"+10",0.78) WIB.Position=UDim2.new(0.78,0,0.1,0)
 local FSL=Instance.new("TextLabel")
 FSL.Size=UDim2.new(1,0,0,14) FSL.Position=UDim2.new(0,0,0.5,0) FSL.BackgroundTransparency=1
-FSL.Text="Fly: 150 (max 150)" FSL.TextColor3=Color3.fromRGB(255,255,255)
-FSL.TextSize=9 FSL.Font=Enum.Font.SourceSansBold FSL.Parent=KF
-
-local FDB=mkS(KF,"-10",0.05)
-FDB.Position=UDim2.new(0.05,0,0.68,0)
-local FRB=mkS(KF,"R",0.43)
-FRB.Position=UDim2.new(0.43,0,0.68,0)
-local FIB=mkS(KF,"+10",0.78)
-FIB.Position=UDim2.new(0.78,0,0.68,0)
+FSL.Text="Fly: 150 (max 150)" FSL.TextColor3=Color3.fromRGB(255,255,255) FSL.TextSize=9
+FSL.Font=Enum.Font.SourceSansBold FSL.Parent=KF
+local FDB=mkS(KF,"-10",0.05) FDB.Position=UDim2.new(0.05,0,0.68,0)
+local FRB=mkS(KF,"R",0.43) FRB.Position=UDim2.new(0.43,0,0.68,0)
+local FIB=mkS(KF,"+10",0.78) FIB.Position=UDim2.new(0.78,0,0.68,0)
 
 local ST=Instance.new("TextLabel")
 ST.Size=UDim2.new(0.9,0,0,14) ST.Position=UDim2.new(0.05,0,0.94,0)
@@ -140,24 +124,24 @@ local svC,lastRag=nil,nil
 local ap,ar,abr,se=false,false,false,false
 local cs,dws,itp=16,16,false
 local flySpeed=150
-local flySpeedMin,flySpeedMax=16,150
-local eggFollowSpeed=100
-local eggFollowMin,eggFollowMax=16,150
+local flyMin,flyMax=16,150
+local eggSpd=100
+local eggMin,eggMax=16,300
 local egSvPos=nil
 local egAutoOn=false
-local egNocConn,egGodConn,egFlyConn
+local egNC,egGC,egFC
 local egCd=false
-local egSavedMH=nil
+local egMH=nil
 
-local function geth()
+local function gh()
     local ch=LP.Character
     return ch and ch:FindFirstChildOfClass("Humanoid"),ch
 end
-local function capSpd()
-    local h=geth() if h and not se then dws=h.WalkSpeed end
+local function capS()
+    local h=gh() if h and not se then dws=h.WalkSpeed end
 end
-capSpd()
-LP.CharacterAdded:Connect(function() task.wait(0.5) capSpd() end)
+capS()
+LP.CharacterAdded:Connect(function() task.wait(0.5) capS() end)
 
 AB.MouseButton1Click:Connect(function()
     ap=not ap AB.Text=ap and "AUTO PICK: ON" or "AUTO PICK: OFF"
@@ -174,7 +158,7 @@ end)
 SB.MouseButton1Click:Connect(function()
     se=not se SB.Text=se and "WALKSPEED: ON" or "WALKSPEED: OFF"
     SB.BackgroundColor3=se and Color3.fromRGB(50,180,80) or Color3.fromRGB(180,50,50)
-    local h=geth() if h then h.WalkSpeed=se and cs or dws end
+    local h=gh() if h then h.WalkSpeed=se and cs or dws end
 end)
 ARB2.MouseButton1Click:Connect(function()
     egAutoOn=not egAutoOn
@@ -182,21 +166,21 @@ ARB2.MouseButton1Click:Connect(function()
     ARB2.BackgroundColor3=egAutoOn and Color3.fromRGB(50,180,80) or Color3.fromRGB(180,50,50)
 end)
 
-local function upWS(v)
+local function uWS(v)
     cs=math.clamp(v,16,200)
     WSL.Text="Walk: "..cs
-    if se then local h=geth() if h then h.WalkSpeed=cs end end
+    if se then local h=gh() if h then h.WalkSpeed=cs end end
 end
-local function upFS(v)
-    flySpeed=math.clamp(v,flySpeedMin,flySpeedMax)
-    FSL.Text="Fly: "..flySpeed.." (max "..flySpeedMax..")"
+local function uFS(v)
+    flySpeed=math.clamp(v,flyMin,flyMax)
+    FSL.Text="Fly: "..flySpeed.." (max "..flyMax..")"
 end
-WIB.MouseButton1Click:Connect(function() upWS(cs+10) end)
-WDB.MouseButton1Click:Connect(function() upWS(cs-10) end)
-WRB.MouseButton1Click:Connect(function() upWS(16) end)
-FIB.MouseButton1Click:Connect(function() upFS(flySpeed+10) end)
-FDB.MouseButton1Click:Connect(function() upFS(flySpeed-10) end)
-FRB.MouseButton1Click:Connect(function() upFS(150) end)
+WIB.MouseButton1Click:Connect(function() uWS(cs+10) end)
+WDB.MouseButton1Click:Connect(function() uWS(cs-10) end)
+WRB.MouseButton1Click:Connect(function() uWS(16) end)
+FIB.MouseButton1Click:Connect(function() uFS(flySpeed+10) end)
+FDB.MouseButton1Click:Connect(function() uFS(flySpeed-10) end)
+FRB.MouseButton1Click:Connect(function() uFS(150) end)
 
 PPS.PromptShown:Connect(function(p)
     if ap and p and p.Enabled then
@@ -223,8 +207,7 @@ task.spawn(function()
                     local rg=(st==Enum.HumanoidStateType.Ragdoll) or (st==Enum.HumanoidStateType.FallingDown) or (st==Enum.HumanoidStateType.Physics)
                     local fl=math.abs(r.Orientation.Z)>60 or math.abs(r.Orientation.X)>60
                     if rg or fl then
-                        itp=true
-                        lastRag=r.CFrame
+                        itp=true lastRag=r.CFrame
                         h:ChangeState(Enum.HumanoidStateType.GettingUp)
                         r.CFrame=svC
                         ST.Text="Ne Ragdoll!" ST.TextColor3=Color3.fromRGB(255,200,50)
@@ -240,7 +223,7 @@ end)
 task.spawn(function()
     while task.wait(0.1) do
         pcall(function()
-            local h=geth()
+            local h=gh()
             if h then
                 local tg=se and cs or dws
                 if h.WalkSpeed~=tg then h.WalkSpeed=tg end
@@ -253,13 +236,11 @@ GB.MouseButton1Click:Connect(function()
     local ch=LP.Character
     local r=ch and ch:FindFirstChild("HumanoidRootPart")
     if r then
-        svC=r.CFrame
-        egSvPos=r.Position
+        svC=r.CFrame egSvPos=r.Position
         ST.Text=string.format("Luu: %.0f,%.0f,%.0f",r.Position.X,r.Position.Y,r.Position.Z)
         ST.TextColor3=Color3.fromRGB(80,220,100)
     end
 end)
-
 TBt.MouseButton1Click:Connect(function()
     if not svC then ST.Text="Chua Grab!" ST.TextColor3=Color3.fromRGB(220,80,80) return end
     local ch=LP.Character
@@ -287,43 +268,42 @@ HB.MouseButton1Click:Connect(function()
     pcall(function() TPS:TeleportToPlaceInstance(game.PlaceId,list[1].id,LP) end)
 end)
 
--- Auto fly funcs
-local function egSetNC(on)
+-- fly funcs
+local function eNC(on)
     local ch=LP.Character
     if not ch then return end
     for _,p in ipairs(ch:GetDescendants()) do
         if p:IsA("BasePart") then p.CanCollide=not on end
     end
 end
-local function egStartNC()
-    if egNocConn then egNocConn:Disconnect() end
-    egNocConn=RS.Stepped:Connect(function() egSetNC(true) end)
+local function sNC()
+    if egNC then egNC:Disconnect() end
+    egNC=RS.Stepped:Connect(function() eNC(true) end)
 end
-local function egStopNC()
-    if egNocConn then egNocConn:Disconnect() egNocConn=nil end
-    egSetNC(false)
+local function xNC()
+    if egNC then egNC:Disconnect() egNC=nil end
+    eNC(false)
 end
-local function egStartGod()
+local function sGod()
     local ch=LP.Character
     local h=ch and ch:FindFirstChildOfClass("Humanoid")
     if not h then return end
-    egSavedMH=h.MaxHealth
-    h.MaxHealth=math.huge h.Health=math.huge
-    if egGodConn then egGodConn:Disconnect() end
-    egGodConn=RS.Heartbeat:Connect(function()
+    egMH=h.MaxHealth h.MaxHealth=math.huge h.Health=math.huge
+    if egGC then egGC:Disconnect() end
+    egGC=RS.Heartbeat:Connect(function()
         if h and h.Parent and h.Health<h.MaxHealth then h.Health=h.MaxHealth end
     end)
 end
-local function egStopGod()
-    if egGodConn then egGodConn:Disconnect() egGodConn=nil end
+local function xGod()
+    if egGC then egGC:Disconnect() egGC=nil end
     local ch=LP.Character
     local h=ch and ch:FindFirstChildOfClass("Humanoid")
-    if h and egSavedMH then
-        h.MaxHealth=egSavedMH
-        if h.Health>egSavedMH then h.Health=egSavedMH end
+    if h and egMH then
+        h.MaxHealth=egMH
+        if h.Health>egMH then h.Health=egMH end
     end
 end
-local function egDisBoss()
+local function disB()
     for _,d in ipairs(workspace:GetDescendants()) do
         if d:IsA("BasePart") then
             local n=string.lower(d.Name)
@@ -334,22 +314,22 @@ local function egDisBoss()
         end
     end
 end
-local function egStopFly()
-    if egFlyConn then egFlyConn:Disconnect() egFlyConn=nil end
+local function sFly()
+    if egFC then egFC:Disconnect() egFC=nil end
 end
-local function egFlyZigzag(targetPos, cb)
+local function flyZ(tp,cb)
     local ch=LP.Character
     local root=ch and ch:FindFirstChild("HumanoidRootPart")
     if not root then if cb then cb() end return end
-    local myPos=root.Position
-    local toTarget=targetPos-myPos
-    local flatDir=Vector3.new(toTarget.X,0,toTarget.Z)
-    if flatDir.Magnitude<1 then flatDir=Vector3.new(1,0,0) else flatDir=flatDir.Unit end
-    local perp=Vector3.new(-flatDir.Z,0,flatDir.X)
-    local zigzagSign=1
-    local lastFlip=tick()
-    local lastT=tick()
-    egStopFly()
+    local mp0=root.Position
+    local tT=tp-mp0
+    local fD=Vector3.new(tT.X,0,tT.Z)
+    if fD.Magnitude<1 then fD=Vector3.new(1,0,0) else fD=fD.Unit end
+    local pp=Vector3.new(-fD.Z,0,fD.X)
+    local zs=1
+    local lf=tick()
+    local lt=tick()
+    sFly()
     local conn
     conn=RS.Heartbeat:Connect(function()
         if not root or not root.Parent then
@@ -357,58 +337,53 @@ local function egFlyZigzag(targetPos, cb)
             if cb then cb() end return
         end
         local now=tick()
-        local dt=now-lastT
-        lastT=now
+        local dt=now-lt lt=now
         local mp=root.Position
-        local dir=targetPos-mp
+        local dir=tp-mp
         local dist=dir.Magnitude
         if dist<3 then
             if conn then conn:Disconnect() end
-            root.CFrame=CFrame.new(targetPos)
-            egFlyConn=nil
+            root.CFrame=CFrame.new(tp)
+            egFC=nil
             if cb then cb() end return
         end
-        if now-lastFlip>0.3 then
-            zigzagSign=-zigzagSign
-            lastFlip=now
-        end
-        local mainDir=dir.Unit
-        local sideVec=perp*zigzagSign
-        local moveDir=(mainDir*0.7+sideVec*0.3).Unit
+        if now-lf>0.3 then zs=-zs lf=now end
+        local mD=dir.Unit
+        local sV=pp*zs
+        local mvD=(mD*0.7+sV*0.3).Unit
         local step=flySpeed*dt
         if step>dist then step=dist end
-        local newPos=mp+moveDir*step
+        local nPos=mp+mvD*step
         root.Velocity=Vector3.new(0,0,0)
-        root.CFrame=CFrame.new(newPos,newPos+moveDir)
+        root.CFrame=CFrame.new(nPos,nPos+mvD)
     end)
-    egFlyConn=conn
+    egFC=conn
 end
-local function egFlyHome()
+local function flyHome()
     if egCd then return end
     egCd=true
-    egStopFly()
-    egStartNC()
-    egDisBoss()
-    egStartGod()
+    sFly()
+    sNC()
+    disB()
+    sGod()
     if not egSvPos then
         ST.Text="Chua luu grab!" ST.TextColor3=Color3.fromRGB(220,80,80)
-        egStopNC() egStopGod() egCd=false return
+        xNC() xGod() egCd=false return
     end
     ST.Text="Bay zigzag..." ST.TextColor3=Color3.fromRGB(255,200,50)
-    egFlyZigzag(egSvPos, function()
-        egStopNC()
-        egStopGod()
+    flyZ(egSvPos, function()
+        xNC() xGod()
         ST.Text="Xong!" ST.TextColor3=Color3.fromRGB(80,220,100)
         task.wait(0.3)
         egCd=false
     end)
 end
-local function hookEggPrompt(p)
+local function hookP(p)
     pcall(function()
         p.Triggered:Connect(function(pl)
             if pl==LP and egAutoOn then
                 task.wait(0.15)
-                egFlyHome()
+                flyHome()
             end
         end)
     end)
@@ -417,16 +392,16 @@ pcall(function()
     PPS.PromptTriggered:Connect(function(pr,pl)
         if pl==LP and egAutoOn then
             task.wait(0.15)
-            egFlyHome()
+            flyHome()
         end
     end)
 end)
-PPS.PromptShown:Connect(function(p) hookEggPrompt(p) end)
+PPS.PromptShown:Connect(function(p) hookP(p) end)
 for _,d in ipairs(workspace:GetDescendants()) do
-    if d:IsA("ProximityPrompt") then hookEggPrompt(d) end
+    if d:IsA("ProximityPrompt") then hookP(d) end
 end
 
--- ============ EGG TAB ============
+-- EGG TAB
 local WL={["Sun Egg"]=true,["Starry Egg"]=true,["BlackHole Egg"]=true}
 local PT={"Sun Egg","Starry Egg","BlackHole Egg"}
 
@@ -441,40 +416,35 @@ local EDB=nb(EC,"DEBUG",0.065,Color3.fromRGB(150,100,40))
 local EFB=nb(EC,"FOLLOW EGG: OFF",0.12,Color3.fromRGB(180,50,50))
 
 local ESF=Instance.new("Frame")
-ESF.Size=UDim2.new(0.9,0,0,38) ESF.Position=UDim2.new(0.05,0,0.18,0)
+ESF.Size=UDim2.new(0.9,0,0,44) ESF.Position=UDim2.new(0.05,0,0.18,0)
 ESF.BackgroundColor3=Color3.fromRGB(30,30,30) ESF.BorderSizePixel=0 ESF.Parent=EC
 local esfc=Instance.new("UICorner") esfc.CornerRadius=UDim.new(0,6) esfc.Parent=ESF
-
 local ESL=Instance.new("TextLabel")
 ESL.Size=UDim2.new(1,0,0,14) ESL.BackgroundTransparency=1
-ESL.Text="Follow: "..eggFollowSpeed.." (max "..eggFollowMax..")"
+ESL.Text="Follow: "..eggSpd.." (max "..eggMax..")"
 ESL.TextColor3=Color3.fromRGB(255,255,255) ESL.TextSize=9
 ESL.Font=Enum.Font.SourceSansBold ESL.Parent=ESF
-
-local EFDB=mkS(ESF,"-10",0.05)
-EFDB.Position=UDim2.new(0.05,0,0.6,0)
-local EFRB=mkS(ESF,"R",0.43)
-EFRB.Position=UDim2.new(0.43,0,0.6,0)
-local EFIB=mkS(ESF,"+10",0.78)
-EFIB.Position=UDim2.new(0.78,0,0.6,0)
+local EFDB=mkS(ESF,"-10",0.05) EFDB.Position=UDim2.new(0.05,0,0.6,0)
+local EFRB=mkS(ESF,"R",0.43) EFRB.Position=UDim2.new(0.43,0,0.6,0)
+local EFIB=mkS(ESF,"+10",0.78) EFIB.Position=UDim2.new(0.78,0,0.6,0)
 
 local EL=Instance.new("ScrollingFrame")
-EL.Size=UDim2.new(0.9,0,0,360) EL.Position=UDim2.new(0.05,0,0.28,0)
+EL.Size=UDim2.new(0.9,0,0,290) EL.Position=UDim2.new(0.05,0,0.28,0)
 EL.BackgroundColor3=Color3.fromRGB(25,25,25) EL.BorderSizePixel=0
 EL.ScrollBarThickness=6 EL.CanvasSize=UDim2.new(0,0,0,0) EL.Parent=EC
 local elc=Instance.new("UICorner") elc.CornerRadius=UDim.new(0,6) elc.Parent=EL
 local ell=Instance.new("UIListLayout") ell.Padding=UDim.new(0,4) ell.Parent=EL
 
-local selE=nil
-local fe,fc,os=false,nil,16
+local sE={}
+local fe,fcn,os=false,nil,16
 
-local function isEgg(o)
+local function isE(o)
     if not o or not o.Parent then return false end
     if WL[o.Name] then return true end
     for _,k in ipairs(PT) do if string.find(o.Name,k,1,true) then return true end end
     return false
 end
-local function epos(i)
+local function ep(i)
     if not i or not i.Parent then return nil end
     if i:IsA("BasePart") then return i.Position end
     if i:IsA("Model") then
@@ -488,16 +458,31 @@ local function eClr()
         if c:IsA("TextButton") or c:IsA("TextLabel") then c:Destroy() end
     end
 end
-local function upEggFollow(v)
-    eggFollowSpeed=math.clamp(v,eggFollowMin,eggFollowMax)
-    ESL.Text="Follow: "..eggFollowSpeed.." (max "..eggFollowMax..")"
+local function uEF(v)
+    eggSpd=math.clamp(v,eggMin,eggMax)
+    ESL.Text="Follow: "..eggSpd.." (max "..eggMax..")"
 end
-EFDB.MouseButton1Click:Connect(function() upEggFollow(eggFollowSpeed-10) end)
-EFIB.MouseButton1Click:Connect(function() upEggFollow(eggFollowSpeed+10) end)
-EFRB.MouseButton1Click:Connect(function() upEggFollow(100) end)
+EFDB.MouseButton1Click:Connect(function() uEF(eggSpd-10) end)
+EFIB.MouseButton1Click:Connect(function() uEF(eggSpd+10) end)
+EFRB.MouseButton1Click:Connect(function() uEF(100) end)
+
+local function scanE()
+    local seen={} local list={}
+    for _,rt in ipairs({workspace,game:GetService("ReplicatedStorage")}) do
+        local ok,ls=pcall(function() return rt:GetDescendants() end)
+        if ok and ls then
+            for _,o in ipairs(ls) do
+                if not seen[o] and isE(o) then
+                    seen[o]=true table.insert(list,o)
+                end
+            end
+        end
+    end
+    return list
+end
 
 EDB.MouseButton1Click:Connect(function()
-    eClr() selE=nil
+    eClr()
     local hits={}
     for _,rt in ipairs({workspace,game:GetService("ReplicatedStorage")}) do
         local ok,ls=pcall(function() return rt:GetDescendants() end)
@@ -515,7 +500,7 @@ EDB.MouseButton1Click:Connect(function()
         l.TextColor3=Color3.fromRGB(200,220,255) l.TextSize=9
         l.Font=Enum.Font.Code l.TextXAlignment=Enum.TextXAlignment.Left
         l.TextTruncate=Enum.TextTruncate.AtEnd l.Parent=EL
-        local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,4) c.Parent=l
+        local cc=Instance.new("UICorner") cc.CornerRadius=UDim.new(0,4) cc.Parent=l
         y=y+26
     end
     EL.CanvasSize=UDim2.new(0,0,0,y)
@@ -523,92 +508,93 @@ EDB.MouseButton1Click:Connect(function()
 end)
 
 ESB.MouseButton1Click:Connect(function()
-    eClr() selE=nil
+    eClr()
     EST.Text="Dang quet..." EST.TextColor3=Color3.fromRGB(255,200,50)
-    local seen={} local list={}
-    for _,rt in ipairs({workspace,game:GetService("ReplicatedStorage")}) do
-        local ok,ls=pcall(function() return rt:GetDescendants() end)
-        if ok and ls then
-            for _,o in ipairs(ls) do
-                if not seen[o] and isEgg(o) then
-                    seen[o]=true
-                    table.insert(list,{n=o.Name,c=o.ClassName,i=o})
-                end
-            end
-        end
-    end
-    table.sort(list,function(a,b)
-        if a.n==b.n then return a.c<b.c end
-        return a.n<b.n
-    end)
+    local list=scanE()
+    table.sort(list,function(a,b) return a.Name<b.Name end)
     local y=0
     for _,e in ipairs(list) do
         local b=Instance.new("TextButton")
         b.Size=UDim2.new(1,-8,0,26) b.Position=UDim2.new(0,4,0,y)
         b.BackgroundColor3=Color3.fromRGB(40,40,40)
-        b.Text=e.n.." ["..e.c.."]" b.TextColor3=Color3.fromRGB(220,220,220)
+        b.Text=e.Name b.TextColor3=Color3.fromRGB(220,220,220)
         b.TextSize=11 b.Font=Enum.Font.SourceSans
         b.TextXAlignment=Enum.TextXAlignment.Left b.Parent=EL
-        local c=Instance.new("UICorner") c.CornerRadius=UDim.new(0,4) c.Parent=b
-        b.MouseButton1Click:Connect(function()
-            selE=e.i
-            for _,x in ipairs(EL:GetChildren()) do
-                if x:IsA("TextButton") then x.BackgroundColor3=Color3.fromRGB(40,40,40) end
-            end
-            b.BackgroundColor3=Color3.fromRGB(50,130,200)
-            EST.Text="Chon: "..e.n EST.TextColor3=Color3.fromRGB(80,220,100)
-        end)
+        local cc=Instance.new("UICorner") cc.CornerRadius=UDim.new(0,4) cc.Parent=b
         y=y+30
     end
     EL.CanvasSize=UDim2.new(0,0,0,y)
     EST.Text="Tim "..#list.." egg"
     EST.TextColor3=#list>0 and Color3.fromRGB(80,220,100) or Color3.fromRGB(220,80,80)
+    sE=list
 end)
 
-local function eStop()
+local function eS()
     fe=false EFB.Text="FOLLOW EGG: OFF"
     EFB.BackgroundColor3=Color3.fromRGB(180,50,50)
-    if fc then fc:Disconnect() fc=nil end
+    if fcn then fcn:Disconnect() fcn=nil end
     local ch=LP.Character
     local h=ch and ch:FindFirstChildOfClass("Humanoid")
     if h then h.WalkSpeed=os end
 end
 
 EFB.MouseButton1Click:Connect(function()
-    if fe then eStop() EST.Text="Dung follow" return end
-    if not selE or not selE.Parent then EST.Text="Chua chon egg!" EST.TextColor3=Color3.fromRGB(220,80,80) return end
+    if fe then eS() EST.Text="Dung follow" return end
+    if #sE==0 then EST.Text="Chua quet egg!" EST.TextColor3=Color3.fromRGB(220,80,80) return end
     local ch=LP.Character
     local h=ch and ch:FindFirstChildOfClass("Humanoid")
     if not h then return end
-    os=h.WalkSpeed h.WalkSpeed=eggFollowSpeed fe=true
+    os=h.WalkSpeed h.WalkSpeed=eggSpd fe=true
     EFB.Text="FOLLOW EGG: ON" EFB.BackgroundColor3=Color3.fromRGB(50,180,80)
-    EST.Text="Follow @"..eggFollowSpeed EST.TextColor3=Color3.fromRGB(80,220,100)
-    local lastT=tick()
-    fc=RS.Heartbeat:Connect(function()
+    EST.Text="Follow "..#sE.." egg" EST.TextColor3=Color3.fromRGB(80,220,100)
+    local lt=tick()
+    fcn=RS.Heartbeat:Connect(function()
         if not fe then return end
-        if not selE or not selE.Parent then EST.Text="Egg mat!" eStop() return end
+        local v={}
+        for _,eg in ipairs(sE) do
+            if eg and eg.Parent then table.insert(v,eg) end
+        end
+        if #v<#sE then
+            sE=v
+            if #sE==0 then
+                sE=scanE()
+                if #sE==0 then
+                    EST.Text="Het egg!" EST.TextColor3=Color3.fromRGB(220,80,80)
+                    eS()
+                    return
+                end
+                EST.Text="Rescan: "..#sE
+                EST.TextColor3=Color3.fromRGB(80,220,100)
+            end
+        end
         local c=LP.Character
         local r=c and c:FindFirstChild("HumanoidRootPart")
         local hh=c and c:FindFirstChildOfClass("Humanoid")
         if not r or not hh then return end
-        local p=epos(selE) if not p then return end
-        local now=tick()
-        local dt=now-lastT
-        lastT=now
-        local d=p-r.Position
+        local mp=r.Position
+        local cl=nil
+        local cd=math.huge
+        for _,eg in ipairs(sE) do
+            local p=ep(eg)
+            if p then
+                local d=(p-mp).Magnitude
+                if d<cd then cd=d cl=p end
+            end
+        end
+        if not cl then return end
+        local nw=tick() local dt=nw-lt lt=nw
+        local d=cl-mp
         local fl=Vector3.new(d.X,0,d.Z)
         local m=fl.Magnitude
         if m>1.5 then
-            local step=eggFollowSpeed*dt
-            if step>m then step=m end
-            local newPos=r.Position+fl.Unit*step
+            local st=eggSpd*dt
+            if st>m then st=m end
+            local nP=r.Position+fl.Unit*st
             r.Velocity=Vector3.new(0,0,0)
-            r.CFrame=CFrame.new(newPos,newPos+fl.Unit)
+            r.CFrame=CFrame.new(nP,nP+fl.Unit)
             hh.WalkSpeed=0
-        else
-            hh.WalkSpeed=0
-        end
+        else hh.WalkSpeed=0 end
     end)
 end)
 
-print("[HCM FINAL v6] Load OK")
+print("[HCM] Load OK")
