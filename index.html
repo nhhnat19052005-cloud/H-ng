@@ -51,6 +51,14 @@ local function isCarrying()
     return true
 end
 
+local function isPetAuto(name)
+    if not name then return false end
+    for key,_ in pairs(PET_AUTO) do
+        if string.find(name,key,1,true) then return true end
+    end
+    return false
+end
+
 local function autoSaveSafe()
     local ch=LP.Character
     local r=ch and ch:FindFirstChild("HumanoidRootPart")
@@ -176,7 +184,36 @@ end
 local function sFly()
     if egFC then egFC:Disconnect() egFC=nil end
 end
-local function flyZ(tp,cb)
+local flyZ
+
+local function findFallenPet()
+    local myCh=LP.Character
+    local myRoot=myCh and myCh:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return nil end
+    local myPos=myRoot.Position
+    local closest=nil
+    local closestDist=math.huge
+    for _,obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") and isPetAuto(obj.Name) then
+            local hasPrompt=false
+            for _,d in ipairs(obj:GetDescendants()) do
+                if d:IsA("ProximityPrompt") and string.find(string.lower(d.ActionText or ""),"steal") then
+                    hasPrompt=true break
+                end
+            end
+            if hasPrompt then
+                local p=obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+                if p then
+                    local d=(p.Position-myPos).Magnitude
+                    if d<closestDist then closestDist=d closest=p.Position end
+                end
+            end
+        end
+    end
+    return closest
+end
+
+flyZ = function(tp,cb)
     local ch=LP.Character
     local root=ch and ch:FindFirstChild("HumanoidRootPart")
     if not root then if cb then cb() end return end
@@ -200,6 +237,19 @@ local function flyZ(tp,cb)
             egFC=nil
             pausedFollow=false
             Rayfield:Notify({Title="Auto Fly", Content="Roi pet! Quay lai nhat"})
+            task.spawn(function()
+                task.wait(0.3)
+                local target=findFallenPet()
+                if target then
+                    egCd=false
+                    flyZ(target, function()
+                        Rayfield:Notify({Title="Auto Fly", Content="Da toi pet roi!"})
+                        pausedFollow=false
+                    end)
+                else
+                    Rayfield:Notify({Title="Auto Fly", Content="Khong tim thay pet roi"})
+                end
+            end)
             return
         end
         local now=tick()
@@ -225,6 +275,7 @@ local function flyZ(tp,cb)
     end)
     egFC=conn
 end
+
 local function flyHome()
     if egCd then return end
     if not isCarrying() then return end
@@ -271,14 +322,6 @@ end)
 PPS.PromptShown:Connect(function(p) hookP(p) end)
 for _,d in ipairs(workspace:GetDescendants()) do
     if d:IsA("ProximityPrompt") then hookP(d) end
-end
-
-local function isPetAuto(name)
-    if not name then return false end
-    for key,_ in pairs(PET_AUTO) do
-        if string.find(name,key,1,true) then return true end
-    end
-    return false
 end
 
 local function promptMatchesAuto(p)
@@ -600,7 +643,7 @@ MainTab:CreateButton({
 })
 
 MainTab:CreateToggle({
-    Name = "Auto Fly ve Safe Zone (chi khi cam pet)",
+    Name = "Auto Fly Safe Zone (cam pet moi bay)",
     CurrentValue = false,
     Callback = function(v) egAutoOn=v end
 })
