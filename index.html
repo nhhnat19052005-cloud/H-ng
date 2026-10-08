@@ -18,9 +18,22 @@ local egNC,egGC,egFC,egCd,egMH=false,nil,nil,false,nil
 local sE={}
 local fe,fcn,os=false,nil,16
 local pausedFollow=false
+local autoPetOn=false
 local espEggOn=false
 local espPetOn=false
 local hls={}
+
+local PET_AUTO={
+    ["WINGED_IMP"]=true,
+    ["Winged Imp"]=true,
+    ["CALADRIUS"]=true,
+    ["Caladrius"]=true,
+    ["Velociraptor"]=true,
+    ["CLASSICDRAGON"]=true,
+    ["Fire Dragon"]=true,
+    ["QILIN"]=true,
+    ["Qilin"]=true,
+}
 
 local function gh()
     local ch=LP.Character
@@ -214,7 +227,7 @@ local function flyHome()
         xNC() xGod()
         egCd=false
         pausedFollow=false
-        Rayfield:Notify({Title="Auto Fly", Content="Ve safe zone xong, follow lai!"})
+        Rayfield:Notify({Title="Auto Fly", Content="Ve safe zone xong!"})
     end)
 end
 local function hookP(p)
@@ -241,6 +254,64 @@ PPS.PromptShown:Connect(function(p) hookP(p) end)
 for _,d in ipairs(workspace:GetDescendants()) do
     if d:IsA("ProximityPrompt") then hookP(d) end
 end
+
+local function isPetAuto(name)
+    if not name then return false end
+    for key,_ in pairs(PET_AUTO) do
+        if string.find(name,key,1,true) then return true end
+    end
+    return false
+end
+
+local function promptMatchesAuto(p)
+    if not p or not p.Enabled then return false end
+    local at = string.lower(p.ActionText or "")
+    if not string.find(at,"steal") then return false end
+    local node=p
+    for i=1,8 do
+        if not node or not node.Parent then break end
+        node=node.Parent
+        if isPetAuto(node.Name) then return true end
+    end
+    if isPetAuto(p.ObjectText) then return true end
+    if isPetAuto(p.Name) then return true end
+    return false
+end
+
+local function firePromptAuto(p)
+    if not p or not p.Enabled then return end
+    pcall(function()
+        p.HoldDuration = 0
+        if fireproximityprompt then
+            fireproximityprompt(p)
+        else
+            if p.InputHoldBegin then p:InputHoldBegin() end
+            task.wait(0.05)
+            if p.InputHoldEnd then p:InputHoldEnd() end
+        end
+    end)
+end
+
+task.spawn(function()
+    while task.wait(0.2) do
+        if autoPetOn then
+            for _,d in ipairs(workspace:GetDescendants()) do
+                if d:IsA("ProximityPrompt") and d.Enabled then
+                    if promptMatchesAuto(d) then
+                        firePromptAuto(d)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+PPS.PromptShown:Connect(function(p)
+    if not autoPetOn then return end
+    if promptMatchesAuto(p) then
+        firePromptAuto(p)
+    end
+end)
 
 local WL={["Sun Egg"]=true,["Starry Egg"]=true,["BlackHole Egg"]=true}
 local PT={"Sun Egg","Starry Egg","BlackHole Egg"}
@@ -570,6 +641,12 @@ EggTab:CreateSlider({
         eggSpd=v
         if fe then local h=gh() if h then h.WalkSpeed=eggSpd end end
     end
+})
+
+EggTab:CreateToggle({
+    Name = "Auto Pick Pet (Steal)",
+    CurrentValue = false,
+    Callback = function(v) autoPetOn=v end
 })
 
 EggTab:CreateToggle({
