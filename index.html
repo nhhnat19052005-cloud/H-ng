@@ -1,137 +1,25 @@
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
 local P=game:GetService("Players")
 local PPS=game:GetService("ProximityPromptService")
 local TPS=game:GetService("TeleportService")
 local HS=game:GetService("HttpService")
 local RS=game:GetService("RunService")
 local LP=P.LocalPlayer
-local C
-if gethui then local o,u=pcall(gethui) if o and u then C=u end end
-if not C then local o,cg=pcall(function() return game:GetService("CoreGui") end) C=o and cg or LP:WaitForChild("PlayerGui") end
-if C:FindFirstChild("hcm20m") then C["hcm20m"]:Destroy() end
-local SG=Instance.new("ScreenGui") SG.Name="hcm20m" SG.ResetOnSpawn=false
-pcall(function() SG.Parent=C end)
-
-local TG=Instance.new("TextButton")
-TG.Size=UDim2.new(0,50,0,50) TG.Position=UDim2.new(0.02,0,0.02,0)
-TG.BackgroundColor3=Color3.fromRGB(20,20,20) TG.Text="OPEN"
-TG.TextColor3=Color3.fromRGB(255,255,255) TG.TextSize=12 TG.Font=Enum.Font.SourceSansBold
-TG.Active=true TG.Draggable=true TG.Parent=SG
-local tc=Instance.new("UICorner") tc.CornerRadius=UDim.new(0,12) tc.Parent=TG
-local ts=Instance.new("UIStroke") ts.Color=Color3.fromRGB(180,120,50) ts.Thickness=2 ts.Parent=TG
-
-local MF=Instance.new("Frame")
-MF.Size=UDim2.new(0,280,0,540) MF.Position=UDim2.new(0.05,0,0.04,0)
-MF.BackgroundColor3=Color3.fromRGB(20,20,20) MF.BorderSizePixel=0
-MF.Active=true MF.Draggable=true MF.Visible=true MF.Parent=SG
-local mc=Instance.new("UICorner") mc.CornerRadius=UDim.new(0,8) mc.Parent=MF
-
-local TT=Instance.new("TextLabel")
-TT.Size=UDim2.new(1,0,0,28) TT.BackgroundColor3=Color3.fromRGB(35,35,35)
-TT.Text="huongcuto20m" TT.TextColor3=Color3.fromRGB(255,255,255)
-TT.TextSize=12 TT.Font=Enum.Font.SourceSansBold TT.Parent=MF
-local ttc=Instance.new("UICorner") ttc.CornerRadius=UDim.new(0,8) ttc.Parent=TT
-
-local TB=Instance.new("Frame")
-TB.Size=UDim2.new(1,0,0,26) TB.Position=UDim2.new(0,0,0,28)
-TB.BackgroundColor3=Color3.fromRGB(28,28,28) TB.BorderSizePixel=0 TB.Parent=MF
-
-local T1=Instance.new("TextButton")
-T1.Size=UDim2.new(0.5,0,1,0) T1.BackgroundColor3=Color3.fromRGB(60,100,160)
-T1.Text="MAIN" T1.TextColor3=Color3.fromRGB(255,255,255) T1.TextSize=11
-T1.Font=Enum.Font.SourceSansBold T1.Parent=TB
-
-local T2=Instance.new("TextButton")
-T2.Size=UDim2.new(0.5,0,1,0) T2.Position=UDim2.new(0.5,0,0,0)
-T2.BackgroundColor3=Color3.fromRGB(45,45,45) T2.Text="EGG"
-T2.TextColor3=Color3.fromRGB(220,220,220) T2.TextSize=11
-T2.Font=Enum.Font.SourceSansBold T2.Parent=TB
-
-local MC=Instance.new("Frame")
-MC.Size=UDim2.new(1,0,1,-54) MC.Position=UDim2.new(0,0,0,54)
-MC.BackgroundTransparency=1 MC.Visible=true MC.Parent=MF
-local EC=Instance.new("Frame")
-EC.Size=UDim2.new(1,0,1,-54) EC.Position=UDim2.new(0,0,0,54)
-EC.BackgroundTransparency=1 EC.Visible=false EC.Parent=MF
-
-local function sT(w)
-    MC.Visible=(w=="m") EC.Visible=(w=="e")
-    T1.BackgroundColor3=(w=="m") and Color3.fromRGB(60,100,160) or Color3.fromRGB(45,45,45)
-    T2.BackgroundColor3=(w=="e") and Color3.fromRGB(60,100,160) or Color3.fromRGB(45,45,45)
-end
-T1.MouseButton1Click:Connect(function() sT("m") end)
-T2.MouseButton1Click:Connect(function() sT("e") end)
-
-local mo=true
-TG.MouseButton1Click:Connect(function()
-    mo=not mo MF.Visible=mo TG.Text=mo and "OPEN" or "CLOSE"
-end)
-
-local function nb(p,t,y,c,h)
-    h=h or 22
-    local b=Instance.new("TextButton")
-    b.Size=UDim2.new(0.9,0,0,h) b.Position=UDim2.new(0.05,0,y,0)
-    b.BackgroundColor3=c b.Text=t b.TextColor3=Color3.fromRGB(255,255,255) b.TextSize=9
-    b.Font=Enum.Font.SourceSansBold b.Parent=p
-    local cc=Instance.new("UICorner") cc.CornerRadius=UDim.new(0,6) cc.Parent=b
-    return b
-end
-local function mkS(par,t,px)
-    local b=Instance.new("TextButton")
-    b.Size=UDim2.new(0,30,0,18) b.Position=UDim2.new(px,0,0,0)
-    b.BackgroundColor3=Color3.fromRGB(60,60,60) b.Text=t
-    b.TextColor3=Color3.fromRGB(255,255,255) b.TextSize=9
-    b.Font=Enum.Font.SourceSansBold b.Parent=par
-    local cc=Instance.new("UICorner") cc.CornerRadius=UDim.new(0,4) cc.Parent=b
-    return b
-end
-
--- MAIN
-local AB=nb(MC,"AUTO PICK: OFF",0.01,Color3.fromRGB(180,50,50))
-local ARB=nb(MC,"AUTO TP RAGDOLL: OFF",0.065,Color3.fromRGB(180,50,50))
-local GB=nb(MC,"GRAB POSITION",0.12,Color3.fromRGB(50,100,180))
-local TBt=nb(MC,"TELEPORT MANUAL",0.175,Color3.fromRGB(140,50,180))
-local ABR=nb(MC,"AUTO TP BACK: OFF",0.23,Color3.fromRGB(180,50,50))
-local SB=nb(MC,"WALKSPEED: OFF",0.285,Color3.fromRGB(180,50,50))
-local HB=nb(MC,"HOP SERVER",0.34,Color3.fromRGB(180,120,50))
-local ARB2=nb(MC,"AUTO FLY: OFF",0.395,Color3.fromRGB(180,50,50))
-
-local KF=Instance.new("Frame")
-KF.Size=UDim2.new(0.9,0,0,70) KF.Position=UDim2.new(0.05,0,0.46,0)
-KF.BackgroundColor3=Color3.fromRGB(30,30,30) KF.BorderSizePixel=0 KF.Parent=MC
-local kfc=Instance.new("UICorner") kfc.CornerRadius=UDim.new(0,6) kfc.Parent=KF
-local WSL=Instance.new("TextLabel")
-WSL.Size=UDim2.new(1,0,0,14) WSL.BackgroundTransparency=1
-WSL.Text="Walk: 16" WSL.TextColor3=Color3.fromRGB(255,255,255) WSL.TextSize=9
-WSL.Font=Enum.Font.SourceSansBold WSL.Parent=KF
-local WDB=mkS(KF,"-10",0.05) WDB.Position=UDim2.new(0.05,0,0.1,0)
-local WRB=mkS(KF,"R",0.43) WRB.Position=UDim2.new(0.43,0,0.1,0)
-local WIB=mkS(KF,"+10",0.78) WIB.Position=UDim2.new(0.78,0,0.1,0)
-local FSL=Instance.new("TextLabel")
-FSL.Size=UDim2.new(1,0,0,14) FSL.Position=UDim2.new(0,0,0.5,0) FSL.BackgroundTransparency=1
-FSL.Text="Fly: 150 (max 150)" FSL.TextColor3=Color3.fromRGB(255,255,255) FSL.TextSize=9
-FSL.Font=Enum.Font.SourceSansBold FSL.Parent=KF
-local FDB=mkS(KF,"-10",0.05) FDB.Position=UDim2.new(0.05,0,0.68,0)
-local FRB=mkS(KF,"R",0.43) FRB.Position=UDim2.new(0.43,0,0.68,0)
-local FIB=mkS(KF,"+10",0.78) FIB.Position=UDim2.new(0.78,0,0.68,0)
-
-local ST=Instance.new("TextLabel")
-ST.Size=UDim2.new(0.9,0,0,14) ST.Position=UDim2.new(0.05,0,0.94,0)
-ST.BackgroundTransparency=1 ST.Text="Chua luu"
-ST.TextColor3=Color3.fromRGB(150,150,150) ST.TextSize=9
-ST.Font=Enum.Font.SourceSansItalic ST.Parent=MC
 
 local svC,lastRag=nil,nil
 local ap,ar,abr,se=false,false,false,false
 local cs,dws,itp=16,16,false
 local flySpeed=150
-local flyMin,flyMax=16,150
 local eggSpd=100
-local eggMin,eggMax=16,300
 local egSvPos=nil
 local egAutoOn=false
-local egNC,egGC,egFC
-local egCd=false
-local egMH=nil
+local egNC,egGC,egFC,egCd,egMH=false,nil,nil,false,nil
+local sE={}
+local fe,fcn,os=false,nil,16
+local espEggOn=false
+local espPetOn=false
+local hls={}
 
 local function gh()
     local ch=LP.Character
@@ -142,45 +30,6 @@ local function capS()
 end
 capS()
 LP.CharacterAdded:Connect(function() task.wait(0.5) capS() end)
-
-AB.MouseButton1Click:Connect(function()
-    ap=not ap AB.Text=ap and "AUTO PICK: ON" or "AUTO PICK: OFF"
-    AB.BackgroundColor3=ap and Color3.fromRGB(50,180,80) or Color3.fromRGB(180,50,50)
-end)
-ARB.MouseButton1Click:Connect(function()
-    ar=not ar ARB.Text=ar and "AUTO TP RAGDOLL: ON" or "AUTO TP RAGDOLL: OFF"
-    ARB.BackgroundColor3=ar and Color3.fromRGB(50,180,80) or Color3.fromRGB(180,50,50)
-end)
-ABR.MouseButton1Click:Connect(function()
-    abr=not abr ABR.Text=abr and "AUTO TP BACK: ON" or "AUTO TP BACK: OFF"
-    ABR.BackgroundColor3=abr and Color3.fromRGB(50,180,80) or Color3.fromRGB(180,50,50)
-end)
-SB.MouseButton1Click:Connect(function()
-    se=not se SB.Text=se and "WALKSPEED: ON" or "WALKSPEED: OFF"
-    SB.BackgroundColor3=se and Color3.fromRGB(50,180,80) or Color3.fromRGB(180,50,50)
-    local h=gh() if h then h.WalkSpeed=se and cs or dws end
-end)
-ARB2.MouseButton1Click:Connect(function()
-    egAutoOn=not egAutoOn
-    ARB2.Text=egAutoOn and "AUTO FLY: ON" or "AUTO FLY: OFF"
-    ARB2.BackgroundColor3=egAutoOn and Color3.fromRGB(50,180,80) or Color3.fromRGB(180,50,50)
-end)
-
-local function uWS(v)
-    cs=math.clamp(v,16,200)
-    WSL.Text="Walk: "..cs
-    if se then local h=gh() if h then h.WalkSpeed=cs end end
-end
-local function uFS(v)
-    flySpeed=math.clamp(v,flyMin,flyMax)
-    FSL.Text="Fly: "..flySpeed.." (max "..flyMax..")"
-end
-WIB.MouseButton1Click:Connect(function() uWS(cs+10) end)
-WDB.MouseButton1Click:Connect(function() uWS(cs-10) end)
-WRB.MouseButton1Click:Connect(function() uWS(16) end)
-FIB.MouseButton1Click:Connect(function() uFS(flySpeed+10) end)
-FDB.MouseButton1Click:Connect(function() uFS(flySpeed-10) end)
-FRB.MouseButton1Click:Connect(function() uFS(150) end)
 
 PPS.PromptShown:Connect(function(p)
     if ap and p and p.Enabled then
@@ -210,7 +59,6 @@ task.spawn(function()
                         itp=true lastRag=r.CFrame
                         h:ChangeState(Enum.HumanoidStateType.GettingUp)
                         r.CFrame=svC
-                        ST.Text="Ne Ragdoll!" ST.TextColor3=Color3.fromRGB(255,200,50)
                         if abr and lastRag then task.wait(0.2) r.CFrame=lastRag end
                         task.wait(0.5) itp=false
                     end
@@ -232,43 +80,6 @@ task.spawn(function()
     end
 end)
 
-GB.MouseButton1Click:Connect(function()
-    local ch=LP.Character
-    local r=ch and ch:FindFirstChild("HumanoidRootPart")
-    if r then
-        svC=r.CFrame egSvPos=r.Position
-        ST.Text=string.format("Luu: %.0f,%.0f,%.0f",r.Position.X,r.Position.Y,r.Position.Z)
-        ST.TextColor3=Color3.fromRGB(80,220,100)
-    end
-end)
-TBt.MouseButton1Click:Connect(function()
-    if not svC then ST.Text="Chua Grab!" ST.TextColor3=Color3.fromRGB(220,80,80) return end
-    local ch=LP.Character
-    local r=ch and ch:FindFirstChild("HumanoidRootPart")
-    if r then r.CFrame=svC end
-end)
-
-HB.MouseButton1Click:Connect(function()
-    ST.Text="Tim server..." ST.TextColor3=Color3.fromRGB(255,200,50)
-    local ok,raw=pcall(function()
-        return game:HttpGet(string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100",game.PlaceId))
-    end)
-    if not ok or not raw then ST.Text="HttpGet fail!" ST.TextColor3=Color3.fromRGB(220,80,80) return end
-    local ok2,dec=pcall(function() return HS:JSONDecode(raw) end)
-    if not ok2 or not dec or not dec.data then ST.Text="Decode fail!" return end
-    local list={}
-    for _,s in ipairs(dec.data) do
-        if s.playing and s.playing<s.maxPlayers and s.id~=game.JobId then table.insert(list,s) end
-    end
-    if #list==0 then ST.Text="Khong server!" return end
-    table.sort(list,function(a,b) return a.playing<b.playing end)
-    ST.Text=string.format("Hop %d/%d",list[1].playing,list[1].maxPlayers)
-    ST.TextColor3=Color3.fromRGB(80,220,100)
-    task.wait(0.4)
-    pcall(function() TPS:TeleportToPlaceInstance(game.PlaceId,list[1].id,LP) end)
-end)
-
--- fly funcs
 local function eNC(on)
     local ch=LP.Character
     if not ch then return end
@@ -367,14 +178,11 @@ local function flyHome()
     disB()
     sGod()
     if not egSvPos then
-        ST.Text="Chua luu grab!" ST.TextColor3=Color3.fromRGB(220,80,80)
+        Rayfield:Notify({Title="Auto Fly", Content="Chua luu grab!"})
         xNC() xGod() egCd=false return
     end
-    ST.Text="Bay zigzag..." ST.TextColor3=Color3.fromRGB(255,200,50)
     flyZ(egSvPos, function()
         xNC() xGod()
-        ST.Text="Xong!" ST.TextColor3=Color3.fromRGB(80,220,100)
-        task.wait(0.3)
         egCd=false
     end)
 end
@@ -401,42 +209,9 @@ for _,d in ipairs(workspace:GetDescendants()) do
     if d:IsA("ProximityPrompt") then hookP(d) end
 end
 
--- EGG TAB
+-- EGG scan
 local WL={["Sun Egg"]=true,["Starry Egg"]=true,["BlackHole Egg"]=true}
 local PT={"Sun Egg","Starry Egg","BlackHole Egg"}
-
-local EST=Instance.new("TextLabel")
-EST.Size=UDim2.new(0.9,0,0,12) EST.Position=UDim2.new(0.05,0,0.96,0)
-EST.BackgroundTransparency=1 EST.Text="Chua quet"
-EST.TextColor3=Color3.fromRGB(150,150,150) EST.TextSize=9
-EST.Font=Enum.Font.SourceSansItalic EST.Parent=EC
-
-local ESB=nb(EC,"QUET EGG",0.01,Color3.fromRGB(50,130,200))
-local EDB=nb(EC,"DEBUG",0.065,Color3.fromRGB(150,100,40))
-local EFB=nb(EC,"FOLLOW EGG: OFF",0.12,Color3.fromRGB(180,50,50))
-
-local ESF=Instance.new("Frame")
-ESF.Size=UDim2.new(0.9,0,0,44) ESF.Position=UDim2.new(0.05,0,0.18,0)
-ESF.BackgroundColor3=Color3.fromRGB(30,30,30) ESF.BorderSizePixel=0 ESF.Parent=EC
-local esfc=Instance.new("UICorner") esfc.CornerRadius=UDim.new(0,6) esfc.Parent=ESF
-local ESL=Instance.new("TextLabel")
-ESL.Size=UDim2.new(1,0,0,14) ESL.BackgroundTransparency=1
-ESL.Text="Follow: "..eggSpd.." (max "..eggMax..")"
-ESL.TextColor3=Color3.fromRGB(255,255,255) ESL.TextSize=9
-ESL.Font=Enum.Font.SourceSansBold ESL.Parent=ESF
-local EFDB=mkS(ESF,"-10",0.05) EFDB.Position=UDim2.new(0.05,0,0.6,0)
-local EFRB=mkS(ESF,"R",0.43) EFRB.Position=UDim2.new(0.43,0,0.6,0)
-local EFIB=mkS(ESF,"+10",0.78) EFIB.Position=UDim2.new(0.78,0,0.6,0)
-
-local EL=Instance.new("ScrollingFrame")
-EL.Size=UDim2.new(0.9,0,0,290) EL.Position=UDim2.new(0.05,0,0.28,0)
-EL.BackgroundColor3=Color3.fromRGB(25,25,25) EL.BorderSizePixel=0
-EL.ScrollBarThickness=6 EL.CanvasSize=UDim2.new(0,0,0,0) EL.Parent=EC
-local elc=Instance.new("UICorner") elc.CornerRadius=UDim.new(0,6) elc.Parent=EL
-local ell=Instance.new("UIListLayout") ell.Padding=UDim.new(0,4) ell.Parent=EL
-
-local sE={}
-local fe,fcn,os=false,nil,16
 
 local function isE(o)
     if not o or not o.Parent then return false end
@@ -453,19 +228,6 @@ local function ep(i)
         for _,d in ipairs(i:GetDescendants()) do if d:IsA("BasePart") then return d.Position end end
     end
 end
-local function eClr()
-    for _,c in ipairs(EL:GetChildren()) do
-        if c:IsA("TextButton") or c:IsA("TextLabel") then c:Destroy() end
-    end
-end
-local function uEF(v)
-    eggSpd=math.clamp(v,eggMin,eggMax)
-    ESL.Text="Follow: "..eggSpd.." (max "..eggMax..")"
-end
-EFDB.MouseButton1Click:Connect(function() uEF(eggSpd-10) end)
-EFIB.MouseButton1Click:Connect(function() uEF(eggSpd+10) end)
-EFRB.MouseButton1Click:Connect(function() uEF(100) end)
-
 local function scanE()
     local seen={} local list={}
     for _,rt in ipairs({workspace,game:GetService("ReplicatedStorage")}) do
@@ -481,72 +243,23 @@ local function scanE()
     return list
 end
 
-EDB.MouseButton1Click:Connect(function()
-    eClr()
-    local hits={}
-    for _,rt in ipairs({workspace,game:GetService("ReplicatedStorage")}) do
-        local ok,ls=pcall(function() return rt:GetDescendants() end)
-        if ok and ls then
-            for _,o in ipairs(ls) do
-                if string.find(string.lower(o.Name),"egg",1,true) then table.insert(hits,o:GetFullName()) end
-            end
-        end
-    end
-    local y=0
-    for _,p in ipairs(hits) do
-        local l=Instance.new("TextLabel")
-        l.Size=UDim2.new(1,-8,0,22) l.Position=UDim2.new(0,4,0,y)
-        l.BackgroundColor3=Color3.fromRGB(40,40,60) l.Text=p
-        l.TextColor3=Color3.fromRGB(200,220,255) l.TextSize=9
-        l.Font=Enum.Font.Code l.TextXAlignment=Enum.TextXAlignment.Left
-        l.TextTruncate=Enum.TextTruncate.AtEnd l.Parent=EL
-        local cc=Instance.new("UICorner") cc.CornerRadius=UDim.new(0,4) cc.Parent=l
-        y=y+26
-    end
-    EL.CanvasSize=UDim2.new(0,0,0,y)
-    EST.Text="Debug: "..#hits EST.TextColor3=Color3.fromRGB(255,200,50)
-end)
-
-ESB.MouseButton1Click:Connect(function()
-    eClr()
-    EST.Text="Dang quet..." EST.TextColor3=Color3.fromRGB(255,200,50)
-    local list=scanE()
-    table.sort(list,function(a,b) return a.Name<b.Name end)
-    local y=0
-    for _,e in ipairs(list) do
-        local b=Instance.new("TextButton")
-        b.Size=UDim2.new(1,-8,0,26) b.Position=UDim2.new(0,4,0,y)
-        b.BackgroundColor3=Color3.fromRGB(40,40,40)
-        b.Text=e.Name b.TextColor3=Color3.fromRGB(220,220,220)
-        b.TextSize=11 b.Font=Enum.Font.SourceSans
-        b.TextXAlignment=Enum.TextXAlignment.Left b.Parent=EL
-        local cc=Instance.new("UICorner") cc.CornerRadius=UDim.new(0,4) cc.Parent=b
-        y=y+30
-    end
-    EL.CanvasSize=UDim2.new(0,0,0,y)
-    EST.Text="Tim "..#list.." egg"
-    EST.TextColor3=#list>0 and Color3.fromRGB(80,220,100) or Color3.fromRGB(220,80,80)
-    sE=list
-end)
-
 local function eS()
-    fe=false EFB.Text="FOLLOW EGG: OFF"
-    EFB.BackgroundColor3=Color3.fromRGB(180,50,50)
+    fe=false
     if fcn then fcn:Disconnect() fcn=nil end
     local ch=LP.Character
     local h=ch and ch:FindFirstChildOfClass("Humanoid")
     if h then h.WalkSpeed=os end
 end
 
-EFB.MouseButton1Click:Connect(function()
-    if fe then eS() EST.Text="Dung follow" return end
-    if #sE==0 then EST.Text="Chua quet egg!" EST.TextColor3=Color3.fromRGB(220,80,80) return end
+local function startFollow()
+    if #sE==0 then
+        Rayfield:Notify({Title="Follow", Content="Chua quet egg!"})
+        return
+    end
     local ch=LP.Character
     local h=ch and ch:FindFirstChildOfClass("Humanoid")
     if not h then return end
     os=h.WalkSpeed h.WalkSpeed=eggSpd fe=true
-    EFB.Text="FOLLOW EGG: ON" EFB.BackgroundColor3=Color3.fromRGB(50,180,80)
-    EST.Text="Follow "..#sE.." egg" EST.TextColor3=Color3.fromRGB(80,220,100)
     local lt=tick()
     fcn=RS.Heartbeat:Connect(function()
         if not fe then return end
@@ -559,12 +272,9 @@ EFB.MouseButton1Click:Connect(function()
             if #sE==0 then
                 sE=scanE()
                 if #sE==0 then
-                    EST.Text="Het egg!" EST.TextColor3=Color3.fromRGB(220,80,80)
                     eS()
                     return
                 end
-                EST.Text="Rescan: "..#sE
-                EST.TextColor3=Color3.fromRGB(80,220,100)
             end
         end
         local c=LP.Character
@@ -595,6 +305,277 @@ EFB.MouseButton1Click:Connect(function()
             hh.WalkSpeed=0
         else hh.WalkSpeed=0 end
     end)
+end
+
+-- ESP
+local EGG_ESP={
+    ["Sun Egg"]=Color3.fromRGB(255,180,0),
+    ["Starry Egg"]=Color3.fromRGB(180,100,255),
+    ["BlackHole Egg"]=Color3.fromRGB(80,80,80),
+}
+local PET_ESP={
+    ["Crocodile"]=Color3.fromRGB(80,200,80),
+    ["Whale"]=Color3.fromRGB(80,150,255),
+    ["Zebra"]=Color3.fromRGB(220,220,220),
+    ["THUNDERBIRD"]=Color3.fromRGB(255,220,80),
+    ["Thunderbird"]=Color3.fromRGB(255,220,80),
+    ["ARCHAEOPTERYX"]=Color3.fromRGB(200,150,255),
+    ["Archaeopteryx"]=Color3.fromRGB(200,150,255),
+    ["WINGED_IMP"]=Color3.fromRGB(255,80,80),
+    ["Winged Imp"]=Color3.fromRGB(255,80,80),
+    ["CALADRIUS"]=Color3.fromRGB(255,255,150),
+    ["Caladrius"]=Color3.fromRGB(255,255,150),
+    ["Velociraptor"]=Color3.fromRGB(100,180,255),
+    ["Fire Dragon"]=Color3.fromRGB(255,100,50),
+    ["CLASSICDRAGON"]=Color3.fromRGB(255,100,50),
+    ["QILIN"]=Color3.fromRGB(255,180,100),
+    ["Qilin"]=Color3.fromRGB(255,180,100),
+}
+
+local function cName(n)
+    local p=string.find(n,": ")
+    if p then return string.sub(n,p+2) end
+    return n
+end
+local function addESP(inst,color)
+    if hls[inst] then
+        hls[inst].hl.FillColor=color
+        hls[inst].hl.OutlineColor=color
+        if hls[inst].gui then hls[inst].gui.TextLabel.TextColor3=color end
+        return
+    end
+    local hl=Instance.new("Highlight")
+    hl.FillColor=color
+    hl.FillTransparency=0.4
+    hl.OutlineColor=color
+    hl.OutlineTransparency=0
+    hl.DepthMode=Enum.HighlightDepthMode.AlwaysOnTop
+    hl.Adornee=inst
+    hl.Parent=game:GetService("CoreGui")
+    local host=inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart",true)
+    local bb=nil
+    if host then
+        bb=Instance.new("BillboardGui")
+        bb.Size=UDim2.new(0,200,0,30)
+        bb.StudsOffset=Vector3.new(0,3,0)
+        bb.AlwaysOnTop=true
+        bb.Adornee=host
+        bb.Parent=host
+        local lbl=Instance.new("TextLabel")
+        lbl.Size=UDim2.new(1,0,1,0)
+        lbl.BackgroundTransparency=1
+        lbl.Text=cName(inst.Name)
+        lbl.TextColor3=color
+        lbl.TextSize=16
+        lbl.TextStrokeTransparency=0
+        lbl.TextStrokeColor3=Color3.fromRGB(0,0,0)
+        lbl.Font=Enum.Font.SourceSansBold
+        lbl.Parent=bb
+    end
+    hls[inst]={hl=hl,gui=bb}
+end
+local function mList(name,list)
+    for k,c in pairs(list) do
+        if string.find(name,k,1,true) then return c end
+    end
+end
+
+task.spawn(function()
+    while task.wait(0.3) do
+        if espEggOn or espPetOn then
+            for _,obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("Model") then
+                    if espEggOn then
+                        local c=mList(obj.Name,EGG_ESP)
+                        if c then addESP(obj,c) end
+                    end
+                    if espPetOn then
+                        local c=mList(obj.Name,PET_ESP)
+                        if c then addESP(obj,c) end
+                    end
+                end
+            end
+            for inst,data in pairs(hls) do
+                if not inst.Parent then
+                    pcall(function() data.hl:Destroy() end)
+                    if data.gui then pcall(function() data.gui:Destroy() end) end
+                    hls[inst]=nil
+                end
+            end
+        else
+            for _,data in pairs(hls) do
+                pcall(function() data.hl:Destroy() end)
+                if data.gui then pcall(function() data.gui:Destroy() end) end
+            end
+            hls={}
+        end
+    end
 end)
 
-print("[HCM] Load OK")
+-- UI RAYFIELD
+local Window = Rayfield:CreateWindow({
+    Name = "huongcuto20m",
+    LoadingTitle = "Dang tai...",
+    LoadingSubtitle = "by olliE",
+    ConfigurationSaving = {Enabled=false},
+    KeySystem = false
+})
+
+local MainTab = Window:CreateTab("MAIN", 4483362458)
+
+MainTab:CreateToggle({
+    Name = "Auto Pick",
+    CurrentValue = false,
+    Callback = function(v) ap=v end
+})
+
+MainTab:CreateToggle({
+    Name = "Auto TP Ragdoll",
+    CurrentValue = false,
+    Callback = function(v) ar=v end
+})
+
+MainTab:CreateButton({
+    Name = "Grab Position (luu vi tri)",
+    Callback = function()
+        local ch=LP.Character
+        local r=ch and ch:FindFirstChild("HumanoidRootPart")
+        if r then
+            svC=r.CFrame egSvPos=r.Position
+            Rayfield:Notify({Title="Grab", Content="Da luu vi tri"})
+        end
+    end
+})
+
+MainTab:CreateButton({
+    Name = "Teleport Manual",
+    Callback = function()
+        if not svC then Rayfield:Notify({Title="TP", Content="Chua Grab!"}) return end
+        local ch=LP.Character
+        local r=ch and ch:FindFirstChild("HumanoidRootPart")
+        if r then r.CFrame=svC end
+    end
+})
+
+MainTab:CreateToggle({
+    Name = "Auto TP Back",
+    CurrentValue = false,
+    Callback = function(v) abr=v end
+})
+
+MainTab:CreateToggle({
+    Name = "WalkSpeed",
+    CurrentValue = false,
+    Callback = function(v)
+        se=v
+        local h=gh() if h then h.WalkSpeed=v and cs or dws end
+    end
+})
+
+MainTab:CreateSlider({
+    Name = "Walk toc do",
+    Range = {16,200},
+    Increment = 10,
+    Suffix = "studs",
+    CurrentValue = 16,
+    Callback = function(v)
+        cs=v
+        if se then local h=gh() if h then h.WalkSpeed=cs end end
+    end
+})
+
+MainTab:CreateButton({
+    Name = "Hop Server it nguoi",
+    Callback = function()
+        local ok,raw=pcall(function()
+            return game:HttpGet(string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100",game.PlaceId))
+        end)
+        if not ok or not raw then Rayfield:Notify({Title="Hop", Content="HttpGet fail!"}) return end
+        local ok2,dec=pcall(function() return HS:JSONDecode(raw) end)
+        if not ok2 or not dec or not dec.data then return end
+        local list={}
+        for _,s in ipairs(dec.data) do
+            if s.playing and s.playing<s.maxPlayers and s.id~=game.JobId then table.insert(list,s) end
+        end
+        if #list==0 then Rayfield:Notify({Title="Hop", Content="Khong server!"}) return end
+        table.sort(list,function(a,b) return a.playing<b.playing end)
+        task.wait(0.4)
+        pcall(function() TPS:TeleportToPlaceInstance(game.PlaceId,list[1].id,LP) end)
+    end
+})
+
+MainTab:CreateToggle({
+    Name = "Auto Fly ve grab",
+    CurrentValue = false,
+    Callback = function(v) egAutoOn=v end
+})
+
+MainTab:CreateSlider({
+    Name = "Fly toc do",
+    Range = {16,150},
+    Increment = 10,
+    Suffix = "studs",
+    CurrentValue = 150,
+    Callback = function(v) flySpeed=v end
+})
+
+local EggTab = Window:CreateTab("EGG", 4483362458)
+
+EggTab:CreateButton({
+    Name = "Quet Egg",
+    Callback = function()
+        sE=scanE()
+        Rayfield:Notify({Title="Quet", Content="Tim "..#sE.." egg"})
+    end
+})
+
+EggTab:CreateButton({
+    Name = "Debug - liet ke egg",
+    Callback = function()
+        local hits={}
+        for _,rt in ipairs({workspace,game:GetService("ReplicatedStorage")}) do
+            local ok,ls=pcall(function() return rt:GetDescendants() end)
+            if ok and ls then
+                for _,o in ipairs(ls) do
+                    if string.find(string.lower(o.Name),"egg",1,true) then table.insert(hits,o:GetFullName()) end
+                end
+            end
+        end
+        for _,p in ipairs(hits) do print("[EGG]",p) end
+        Rayfield:Notify({Title="Debug", Content=#hits.." object (xem Output)"})
+    end
+})
+
+EggTab:CreateToggle({
+    Name = "Follow Egg",
+    CurrentValue = false,
+    Callback = function(v)
+        if v then startFollow() else eS() end
+    end
+})
+
+EggTab:CreateSlider({
+    Name = "Follow toc do",
+    Range = {16,300},
+    Increment = 10,
+    Suffix = "studs",
+    CurrentValue = 100,
+    Callback = function(v)
+        eggSpd=v
+        if fe then local h=gh() if h then h.WalkSpeed=eggSpd end end
+    end
+})
+
+EggTab:CreateToggle({
+    Name = "ESP Egg",
+    CurrentValue = false,
+    Callback = function(v) espEggOn=v end
+})
+
+EggTab:CreateToggle({
+    Name = "ESP Pet",
+    CurrentValue = false,
+    Callback = function(v) espPetOn=v end
+})
+
+Rayfield:Notify({Title="huongcuto20m", Content="Script san sang!"})
