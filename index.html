@@ -22,6 +22,9 @@ local autoPetOn=false
 local espEggOn=false
 local espPetOn=false
 local hls={}
+local antiKnockOn=false
+local antiLockPos=nil
+local antiBpObj=nil
 
 local PET_AUTO={
     ["WINGED_IMP"]=true,
@@ -232,26 +235,6 @@ flyZ = function(tp,cb)
             if conn then conn:Disconnect() end
             if cb then cb() end return
         end
-        if not isCarrying() then
-            if conn then conn:Disconnect() end
-            egFC=nil
-            pausedFollow=false
-            Rayfield:Notify({Title="Auto Fly", Content="Roi pet! Quay lai nhat"})
-            task.spawn(function()
-                task.wait(0.3)
-                local target=findFallenPet()
-                if target then
-                    egCd=false
-                    flyZ(target, function()
-                        Rayfield:Notify({Title="Auto Fly", Content="Da toi pet roi!"})
-                        pausedFollow=false
-                    end)
-                else
-                    Rayfield:Notify({Title="Auto Fly", Content="Khong tim thay pet roi"})
-                end
-            end)
-            return
-        end
         local now=tick()
         local dt=now-lt lt=now
         local mp=root.Position
@@ -266,7 +249,8 @@ flyZ = function(tp,cb)
         if now-lf>0.3 then zs=-zs lf=now end
         local mD=dir.Unit
         local sV=pp*zs
-        local mvD=(mD*0.7+sV*0.3).Unit
+        local mvD=(mD*0.7+sV*0.3)
+        mvD=Vector3.new(mvD.X,0,mvD.Z).Unit
         local step=flySpeed*dt
         if step>dist then step=dist end
         local nPos=mp+mvD*step
@@ -410,6 +394,7 @@ end
 local function eS()
     fe=false
     if fcn then fcn:Disconnect() fcn=nil end
+    sFly()
     local ch=LP.Character
     local h=ch and ch:FindFirstChildOfClass("Humanoid")
     if h then h.WalkSpeed=os end
@@ -420,14 +405,12 @@ local function startFollow()
         Rayfield:Notify({Title="Follow", Content="Chua quet egg!"})
         return
     end
-    local ch=LP.Character
-    local h=ch and ch:FindFirstChildOfClass("Humanoid")
-    if not h then return end
-    os=h.WalkSpeed h.WalkSpeed=eggSpd fe=true
-    local lt=tick()
+    fe=true
+    local loopActive=true
     fcn=RS.Heartbeat:Connect(function()
-        if not fe then return end
+        if not fe or not loopActive then return end
         if pausedFollow then return end
+        -- loc egg con song
         local v={}
         for _,eg in ipairs(sE) do
             if eg and eg.Parent then table.insert(v,eg) end
@@ -439,10 +422,10 @@ local function startFollow()
                 if #sE==0 then eS() return end
             end
         end
+        -- tim egg gan nhat
         local c=LP.Character
         local r=c and c:FindFirstChild("HumanoidRootPart")
-        local hh=c and c:FindFirstChildOfClass("Humanoid")
-        if not r or not hh then return end
+        if not r then return end
         local mp=r.Position
         local cl=nil
         local cd=math.huge
@@ -454,18 +437,13 @@ local function startFollow()
             end
         end
         if not cl then return end
-        local nw=tick() local dt=nw-lt lt=nw
-        local d=cl-mp
-        local fl=Vector3.new(d.X,0,d.Z)
-        local m=fl.Magnitude
-        if m>1.5 then
-            local st=eggSpd*dt
-            if st>m then st=m end
-            local nP=r.Position+fl.Unit*st
-            r.Velocity=Vector3.new(0,0,0)
-            r.CFrame=CFrame.new(nP,nP+fl.Unit)
-            hh.WalkSpeed=0
-        else hh.WalkSpeed=0 end
+        -- neu chua toi -> fly toi
+        if cd > 3 and not egFC then
+            loopActive=false
+            flyZ(cl, function()
+                loopActive=true
+            end)
+        end
     end)
 end
 
@@ -569,6 +547,77 @@ task.spawn(function()
                 if data.gui then pcall(function() data.gui:Destroy() end) end
             end
             hls={}
+        end
+    end
+end)
+
+-- Anti Knock
+local function antiLockBody(root)
+    if not antiLockPos then return end
+    if antiBpObj and antiBpObj.Parent then
+        pcall(function() antiBpObj.Position = antiLockPos end)
+        return
+    end
+    local bp=Instance.new("BodyPosition")
+    bp.MaxForce=Vector3.new(math.huge,math.huge,math.huge)
+    bp.P=100000 bp.D=5000 bp.Position=antiLockPos
+    bp.Parent=root
+    antiBpObj=bp
+end
+
+local function antiUnlockBody()
+    if antiBpObj then
+        pcall(function() antiBpObj:Destroy() end)
+        antiBpObj=nil
+    end
+end
+
+task.spawn(function()
+    while task.wait(0.1) do
+        if antiKnockOn then
+            local ch=LP.Character
+            local root=ch and ch:FindFirstChild("HumanoidRootPart")
+            local h=ch and ch:FindFirstChildOfClass("Humanoid")
+            if root and h then
+                local st=h:GetState()
+                local isRag=(st==Enum.HumanoidStateType.Ragdoll) or (st==Enum.HumanoidStateType.FallingDown) or (st==Enum.HumanoidStateType.Physics)
+                local vel=root.Velocity.Magnitude
+                if isRag or vel>150 then
+                    if antiLockPos then
+                        antiLockBody(root)
+                        task.delay(2,function()
+                            if antiBpObj and root and root.Parent then
+                                local st2=h:GetState()
+                                if st2~=Enum.HumanoidStateType.Ragdoll and st2~=Enum.HumanoidStateType.FallingDown and root.Velocity.Magnitude<20 then
+                                    antiUnlockBody()
+                                end
+                            end
+                        end)
+                    end
+                else
+                    if not antiBpObj or not antiBpObj.Parent then
+                        antiLockPos=root.Position
+                    end
+                end
+            end
+        else
+            antiLockPos=nil
+            antiUnlockBody()
+        end
+    end
+end)
+
+task.spawn(function()
+    while task.wait(0.15) do
+        if antiKnockOn then
+            local ch=LP.Character
+            local h=ch and ch:FindFirstChildOfClass("Humanoid")
+            if h then
+                local st=h:GetState()
+                if st==Enum.HumanoidStateType.Ragdoll or st==Enum.HumanoidStateType.FallingDown then
+                    pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+                end
+            end
         end
     end
 end)
@@ -685,7 +734,7 @@ EggTab:CreateButton({
 })
 
 EggTab:CreateToggle({
-    Name = "Follow Egg",
+    Name = "Follow Egg (bay theo)",
     CurrentValue = false,
     Callback = function(v)
         if v then startFollow() else eS() end
@@ -700,7 +749,7 @@ EggTab:CreateSlider({
     CurrentValue = 100,
     Callback = function(v)
         eggSpd=v
-        if fe then local h=gh() if h then h.WalkSpeed=eggSpd end end
+        flySpeed=v
     end
 })
 
@@ -720,6 +769,20 @@ EggTab:CreateToggle({
     Name = "ESP Pet",
     CurrentValue = false,
     Callback = function(v) espPetOn=v end
+})
+
+local PlayerTab = Window:CreateTab("PLAYER", 4483362458)
+
+PlayerTab:CreateToggle({
+    Name = "Anti Knockback (chong van xa)",
+    CurrentValue = false,
+    Callback = function(v)
+        antiKnockOn=v
+        if not v then
+            antiLockPos=nil
+            antiUnlockBody()
+        end
+    end
 })
 
 Rayfield:Notify({Title="huongcuto20m", Content="Script san sang!"})
