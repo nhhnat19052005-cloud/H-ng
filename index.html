@@ -45,6 +45,12 @@ end
 capS()
 LP.CharacterAdded:Connect(function() task.wait(0.5) capS() end)
 
+local function isCarrying()
+    local c = LP:GetAttribute("Carrying")
+    if not c or c == false or c == "" then return false end
+    return true
+end
+
 local function autoSaveSafe()
     local ch=LP.Character
     local r=ch and ch:FindFirstChild("HumanoidRootPart")
@@ -189,6 +195,13 @@ local function flyZ(tp,cb)
             if conn then conn:Disconnect() end
             if cb then cb() end return
         end
+        if not isCarrying() then
+            if conn then conn:Disconnect() end
+            egFC=nil
+            pausedFollow=false
+            Rayfield:Notify({Title="Auto Fly", Content="Roi pet! Quay lai nhat"})
+            return
+        end
         local now=tick()
         local dt=now-lt lt=now
         local mp=root.Position
@@ -214,6 +227,7 @@ local function flyZ(tp,cb)
 end
 local function flyHome()
     if egCd then return end
+    if not isCarrying() then return end
     egCd=true
     sFly()
     sNC()
@@ -234,9 +248,11 @@ local function hookP(p)
     pcall(function()
         p.Triggered:Connect(function(pl)
             if pl==LP and egAutoOn then
-                pausedFollow=true
-                task.wait(0.15)
-                flyHome()
+                task.wait(0.3)
+                if isCarrying() then
+                    pausedFollow=true
+                    flyHome()
+                end
             end
         end)
     end)
@@ -244,9 +260,11 @@ end
 pcall(function()
     PPS.PromptTriggered:Connect(function(pr,pl)
         if pl==LP and egAutoOn then
-            pausedFollow=true
-            task.wait(0.15)
-            flyHome()
+            task.wait(0.3)
+            if isCarrying() then
+                pausedFollow=true
+                flyHome()
+            end
         end
     end)
 end)
@@ -582,7 +600,7 @@ MainTab:CreateButton({
 })
 
 MainTab:CreateToggle({
-    Name = "Auto Fly ve Safe Zone",
+    Name = "Auto Fly ve Safe Zone (chi khi cam pet)",
     CurrentValue = false,
     Callback = function(v) egAutoOn=v end
 })
