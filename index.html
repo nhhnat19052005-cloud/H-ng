@@ -25,6 +25,7 @@ local hls={}
 local antiKnockOn=false
 local antiLockPos=nil
 local antiBpObj=nil
+local autoPickaxeOn=false
 
 local PET_AUTO={
     ["WINGED_IMP"]=true,
@@ -136,6 +137,46 @@ task.spawn(function()
                 if h.WalkSpeed~=tg then h.WalkSpeed=tg end
             end
         end)
+    end
+end)
+
+local function findPickaxe()
+    local backpack=LP:FindFirstChild("Backpack")
+    if not backpack then return nil end
+    for _,tool in ipairs(backpack:GetChildren()) do
+        if tool:IsA("Tool") then
+            local n=string.lower(tool.Name)
+            if string.find(n,"pickaxe") or string.find(n,"pick") then
+                return tool
+            end
+        end
+    end
+    return nil
+end
+
+task.spawn(function()
+    while task.wait(0.5) do
+        if autoPickaxeOn then
+            local ch=LP.Character
+            local h=ch and ch:FindFirstChildOfClass("Humanoid")
+            if h then
+                local holding=nil
+                for _,t in ipairs(ch:GetChildren()) do
+                    if t:IsA("Tool") then
+                        local n=string.lower(t.Name)
+                        if string.find(n,"pickaxe") or string.find(n,"pick") then
+                            holding=t break
+                        end
+                    end
+                end
+                if not holding then
+                    local p=findPickaxe()
+                    if p then
+                        pcall(function() h:EquipTool(p) end)
+                    end
+                end
+            end
+        end
     end
 end)
 
@@ -396,15 +437,15 @@ local function ep(i)
     end
 end
 local function scanE()
-    local seen={} local list={}
-    for _,rt in ipairs({workspace,game:GetService("ReplicatedStorage")}) do
-        local ok,ls=pcall(function() return rt:GetDescendants() end)
-        if ok and ls then
-            for _,o in ipairs(ls) do
-                if not seen[o] and isE(o) then
-                    seen[o]=true table.insert(list,o)
-                end
-            end
+    local list={}
+    local zone=workspace:FindFirstChild("Build")
+    if zone then zone=zone:FindFirstChild("ZoneBuilds") end
+    if zone then zone=zone:FindFirstChild("Zone9") end
+    if zone then zone=zone:FindFirstChild("Eggs") end
+    if not zone then return list end
+    for _,o in ipairs(zone:GetDescendants()) do
+        if o:IsA("Model") and isE(o) then
+            table.insert(list,o)
         end
     end
     return list
@@ -419,14 +460,24 @@ local function eS()
 end
 
 local function startFollow()
+    if #sE==0 then sE=scanE() end
     if #sE==0 then
-        Rayfield:Notify({Title="Follow", Content="Chua quet egg!"})
+        Rayfield:Notify({Title="Follow", Content="Khong tim thay egg!"})
         return
     end
     local ch=LP.Character
     local h=ch and ch:FindFirstChildOfClass("Humanoid")
     if not h then return end
     os=h.WalkSpeed h.WalkSpeed=eggSpd fe=true
+    -- refresh egg list moi 60s
+    task.spawn(function()
+        while fe do
+            task.wait(60)
+            if not fe then break end
+            local nl=scanE()
+            if #nl>0 then sE=nl end
+        end
+    end)
     local lt=tick()
     fcn=RS.Heartbeat:Connect(function()
         if not fe then return end
@@ -472,7 +523,6 @@ local function startFollow()
     end)
 end
 
--- Anti Knock
 local function antiLockBody(root)
     if not antiLockPos then return end
     if antiBpObj and antiBpObj.Parent then
@@ -734,32 +784,27 @@ MainTab:CreateSlider({
 local EggTab = Window:CreateTab("EGG", 4483362458)
 
 EggTab:CreateButton({
-    Name = "Quet Egg",
-    Callback = function()
-        sE=scanE()
-        Rayfield:Notify({Title="Quet", Content="Tim "..#sE.." egg"})
-    end
-})
-
-EggTab:CreateButton({
     Name = "Debug - liet ke egg",
     Callback = function()
         local hits={}
-        for _,rt in ipairs({workspace,game:GetService("ReplicatedStorage")}) do
-            local ok,ls=pcall(function() return rt:GetDescendants() end)
-            if ok and ls then
-                for _,o in ipairs(ls) do
-                    if string.find(string.lower(o.Name),"egg",1,true) then table.insert(hits,o:GetFullName()) end
+        local zone=workspace:FindFirstChild("Build")
+        if zone then zone=zone:FindFirstChild("ZoneBuilds") end
+        if zone then zone=zone:FindFirstChild("Zone9") end
+        if zone then zone=zone:FindFirstChild("Eggs") end
+        if zone then
+            for _,o in ipairs(zone:GetDescendants()) do
+                if o:IsA("Model") and isE(o) then
+                    table.insert(hits,o:GetFullName())
                 end
             end
         end
         for _,p in ipairs(hits) do print("[EGG]",p) end
-        Rayfield:Notify({Title="Debug", Content=#hits.." object (xem Output)"})
+        Rayfield:Notify({Title="Debug", Content=#hits.." egg (xem Output)"})
     end
 })
 
 EggTab:CreateToggle({
-    Name = "Follow Egg",
+    Name = "Follow Egg (tu scan 60s)",
     CurrentValue = false,
     Callback = function(v)
         if v then startFollow() else eS() end
@@ -808,6 +853,12 @@ PlayerTab:CreateToggle({
             antiUnlockBody()
         end
     end
+})
+
+PlayerTab:CreateToggle({
+    Name = "Auto Equip Pickaxe",
+    CurrentValue = false,
+    Callback = function(v) autoPickaxeOn=v end
 })
 
 Rayfield:Notify({Title="huongcuto20m", Content="Script san sang!"})
