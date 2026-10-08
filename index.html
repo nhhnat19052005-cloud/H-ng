@@ -17,6 +17,7 @@ local egAutoOn=false
 local egNC,egGC,egFC,egCd,egMH=false,nil,nil,false,nil
 local sE={}
 local fe,fcn,os=false,nil,16
+local pausedFollow=false
 local espEggOn=false
 local espPetOn=false
 local hls={}
@@ -30,6 +31,34 @@ local function capS()
 end
 capS()
 LP.CharacterAdded:Connect(function() task.wait(0.5) capS() end)
+
+local function autoSaveSafe()
+    local ch=LP.Character
+    local r=ch and ch:FindFirstChild("HumanoidRootPart")
+    if r then
+        svC=r.CFrame
+        egSvPos=r.Position
+        return true
+    end
+    return false
+end
+
+if not autoSaveSafe() then
+    LP.CharacterAdded:Wait()
+    task.wait(1.5)
+    autoSaveSafe()
+end
+
+LP.CharacterAdded:Connect(function()
+    task.wait(1.5)
+    autoSaveSafe()
+end)
+
+task.delay(3, function()
+    if svC then
+        Rayfield:Notify({Title="Safe Zone", Content="Da tu luu vi tri!"})
+    end
+end)
 
 PPS.PromptShown:Connect(function(p)
     if ap and p and p.Enabled then
@@ -178,18 +207,21 @@ local function flyHome()
     disB()
     sGod()
     if not egSvPos then
-        Rayfield:Notify({Title="Auto Fly", Content="Chua luu grab!"})
+        Rayfield:Notify({Title="Auto Fly", Content="Chua luu vi tri!"})
         xNC() xGod() egCd=false return
     end
     flyZ(egSvPos, function()
         xNC() xGod()
         egCd=false
+        pausedFollow=false
+        Rayfield:Notify({Title="Auto Fly", Content="Ve safe zone xong, follow lai!"})
     end)
 end
 local function hookP(p)
     pcall(function()
         p.Triggered:Connect(function(pl)
             if pl==LP and egAutoOn then
+                pausedFollow=true
                 task.wait(0.15)
                 flyHome()
             end
@@ -199,6 +231,7 @@ end
 pcall(function()
     PPS.PromptTriggered:Connect(function(pr,pl)
         if pl==LP and egAutoOn then
+            pausedFollow=true
             task.wait(0.15)
             flyHome()
         end
@@ -209,7 +242,6 @@ for _,d in ipairs(workspace:GetDescendants()) do
     if d:IsA("ProximityPrompt") then hookP(d) end
 end
 
--- EGG scan
 local WL={["Sun Egg"]=true,["Starry Egg"]=true,["BlackHole Egg"]=true}
 local PT={"Sun Egg","Starry Egg","BlackHole Egg"}
 
@@ -263,6 +295,7 @@ local function startFollow()
     local lt=tick()
     fcn=RS.Heartbeat:Connect(function()
         if not fe then return end
+        if pausedFollow then return end
         local v={}
         for _,eg in ipairs(sE) do
             if eg and eg.Parent then table.insert(v,eg) end
@@ -271,10 +304,7 @@ local function startFollow()
             sE=v
             if #sE==0 then
                 sE=scanE()
-                if #sE==0 then
-                    eS()
-                    return
-                end
+                if #sE==0 then eS() return end
             end
         end
         local c=LP.Character
@@ -307,7 +337,6 @@ local function startFollow()
     end)
 end
 
--- ESP
 local EGG_ESP={
     ["Sun Egg"]=Color3.fromRGB(255,180,0),
     ["Starry Egg"]=Color3.fromRGB(180,100,255),
@@ -412,7 +441,6 @@ task.spawn(function()
     end
 end)
 
--- UI RAYFIELD
 local Window = Rayfield:CreateWindow({
     Name = "huongcuto20m",
     LoadingTitle = "Dang tai...",
@@ -433,28 +461,6 @@ MainTab:CreateToggle({
     Name = "Auto TP Ragdoll",
     CurrentValue = false,
     Callback = function(v) ar=v end
-})
-
-MainTab:CreateButton({
-    Name = "Grab Position (luu vi tri)",
-    Callback = function()
-        local ch=LP.Character
-        local r=ch and ch:FindFirstChild("HumanoidRootPart")
-        if r then
-            svC=r.CFrame egSvPos=r.Position
-            Rayfield:Notify({Title="Grab", Content="Da luu vi tri"})
-        end
-    end
-})
-
-MainTab:CreateButton({
-    Name = "Teleport Manual",
-    Callback = function()
-        if not svC then Rayfield:Notify({Title="TP", Content="Chua Grab!"}) return end
-        local ch=LP.Character
-        local r=ch and ch:FindFirstChild("HumanoidRootPart")
-        if r then r.CFrame=svC end
-    end
 })
 
 MainTab:CreateToggle({
@@ -505,7 +511,7 @@ MainTab:CreateButton({
 })
 
 MainTab:CreateToggle({
-    Name = "Auto Fly ve grab",
+    Name = "Auto Fly ve Safe Zone",
     CurrentValue = false,
     Callback = function(v) egAutoOn=v end
 })
