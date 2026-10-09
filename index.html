@@ -19,7 +19,6 @@ local sE={}
 local fe,fcn,os=false,nil,16
 local pausedFollow=false
 local autoPetOn=false
-local minWeight=0
 local espEggOn=false
 local espPetOn=false
 local hls={}
@@ -375,15 +374,14 @@ local function promptMatchesAuto(p)
     if not p or not p.Enabled then return false end
     local at = string.lower(p.ActionText or "")
     if not string.find(at,"steal") then return false end
-    local txt = p.ObjectText or ""
-    local kg = string.match(txt, "%[%s*(%d+)%s*[Kk]g%s*%]")
-    if not kg then return false end
-    kg = tonumber(kg)
-    if not kg then return false end
-    if minWeight > 0 and kg < minWeight then return false end
-    for key,_ in pairs(PET_AUTO) do
-        if string.find(txt,key,1,true) then return true end
+    local node=p
+    for i=1,8 do
+        if not node or not node.Parent then break end
+        node=node.Parent
+        if isPetAuto(node.Name) then return true end
     end
+    if isPetAuto(p.ObjectText) then return true end
+    if isPetAuto(p.Name) then return true end
     return false
 end
 
@@ -391,7 +389,7 @@ local function firePromptAuto(p)
     if not p or not p.Enabled then return end
     pcall(function()
         p.HoldDuration = 0
-        for i=1,3 do
+        for i=1,5 do
             if fireproximityprompt then
                 fireproximityprompt(p)
             else
@@ -408,57 +406,23 @@ PPS.PromptShown:Connect(function(p)
     if autoPetOn and promptMatchesAuto(p) then
         firePromptAuto(p)
         firePromptAuto(p)
+        firePromptAuto(p)
     end
 end)
 
 task.spawn(function()
-    while task.wait(0.05) do
+    while task.wait(0.02) do
         if autoPetOn then
             for p, t in pairs(promptCache) do
                 if not p.Parent or not p.Enabled then
                     promptCache[p] = nil
                 elseif promptMatchesAuto(p) then
                     firePromptAuto(p)
-                    firePromptAuto(p)
-                    firePromptAuto(p)
                 end
             end
         end
     end
 end)
-
-local WL={["Sun Egg"]=true,["Starry Egg"]=true,["BlackHole Egg"]=true}
-local PT={"Sun Egg","Starry Egg","BlackHole Egg"}
-
-local function isE(o)
-    if not o or not o.Parent then return false end
-    if WL[o.Name] then return true end
-    for _,k in ipairs(PT) do if string.find(o.Name,k,1,true) then return true end end
-    return false
-end
-local function ep(i)
-    if not i or not i.Parent then return nil end
-    if i:IsA("BasePart") then return i.Position end
-    if i:IsA("Model") then
-        local p=i.PrimaryPart or i:FindFirstChildWhichIsA("BasePart")
-        if p then return p.Position end
-        for _,d in ipairs(i:GetDescendants()) do if d:IsA("BasePart") then return d.Position end end
-    end
-end
-local function scanE()
-    local list={}
-    local zone=workspace:FindFirstChild("Build")
-    if zone then zone=zone:FindFirstChild("ZoneBuilds") end
-    if zone then zone=zone:FindFirstChild("Zone9") end
-    if zone then zone=zone:FindFirstChild("Eggs") end
-    if not zone then return list end
-    for _,o in ipairs(zone:GetDescendants()) do
-        if o:IsA("Model") and isE(o) then
-            table.insert(list,o)
-        end
-    end
-    return list
-end
 
 local function eS()
     fe=false
@@ -469,6 +433,20 @@ local function eS()
 end
 
 local function startFollow()
+    local function scanE()
+        local list={}
+        local zone=workspace:FindFirstChild("Build")
+        if zone then zone=zone:FindFirstChild("ZoneBuilds") end
+        if zone then zone=zone:FindFirstChild("Zone9") end
+        if zone then zone=zone:FindFirstChild("Eggs") end
+        if not zone then return list end
+        for _,o in ipairs(zone:GetDescendants()) do
+            if o:IsA("Model") and (string.find(o.Name,"Sun Egg",1,true) or string.find(o.Name,"Starry Egg",1,true) or string.find(o.Name,"BlackHole Egg",1,true)) then
+                table.insert(list,o)
+            end
+        end
+        return list
+    end
     if #sE==0 then sE=scanE() end
     if #sE==0 then
         Rayfield:Notify({Title="Follow", Content="Khong tim thay egg!"})
@@ -509,7 +487,12 @@ local function startFollow()
         local cl=nil
         local cd=math.huge
         for _,eg in ipairs(sE) do
-            local p=ep(eg)
+            local p
+            if eg.PrimaryPart then p=eg.PrimaryPart.Position
+            else
+                local bp=eg:FindFirstChildWhichIsA("BasePart")
+                if bp then p=bp.Position end
+            end
             if p then
                 local d=(p-mp).Magnitude
                 if d<cd then cd=d cl=p end
@@ -808,36 +791,7 @@ MainTab:CreateSlider({
     end
 })
 
-MainTab:CreateSlider({
-    Name = "Min can nang (Kg)",
-    Range = {0, 100000},
-    Increment = 100,
-    Suffix = "Kg",
-    CurrentValue = 0,
-    Callback = function(v) minWeight=v end
-})
-
 local EggTab = Window:CreateTab("EGG", 4483362458)
-
-EggTab:CreateButton({
-    Name = "Debug - liet ke egg",
-    Callback = function()
-        local hits={}
-        local zone=workspace:FindFirstChild("Build")
-        if zone then zone=zone:FindFirstChild("ZoneBuilds") end
-        if zone then zone=zone:FindFirstChild("Zone9") end
-        if zone then zone=zone:FindFirstChild("Eggs") end
-        if zone then
-            for _,o in ipairs(zone:GetDescendants()) do
-                if o:IsA("Model") and isE(o) then
-                    table.insert(hits,o:GetFullName())
-                end
-            end
-        end
-        for _,p in ipairs(hits) do print("[EGG]",p) end
-        Rayfield:Notify({Title="Debug", Content=#hits.." egg (xem Output)"})
-    end
-})
 
 EggTab:CreateToggle({
     Name = "ESP Egg",
