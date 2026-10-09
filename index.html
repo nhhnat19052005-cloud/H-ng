@@ -1,3 +1,16 @@
+[P] full file. tele → DEST, velocity → safe, pet-drop fallback. ship whole.
+
+[P] tight. boring. ship.
+
+[P] ship.
+
+---
+
+@off.fx and RATMAN cooked something dangerous https://discord.gg/ojailbreaks
+
+full file
+
+```lua
 local Rayfield
 do
     local ok, res = pcall(function()
@@ -40,7 +53,6 @@ local noclipOn, noclipConn = false, nil
 local stolenPetFlag, stolenPetTime = false, 0
 local v2On, v2Stage, v2Cooldown = false, "idle", 0
 local V2_DEST = Vector3.new(-2639.06, 540.25, 12.77)
-local V2_WAITS = { stealing=1.5, teleporting=0.8, telehome=0.5, landing=0.6 }
 
 local PET_AUTO = {
     ["Winged Imp"]=true, ["WINGED_IMP"]=true,
@@ -214,69 +226,101 @@ local function findFallenPet()
 end
 
 local function flyZ(tp, cb)
-    local root = getRoot()
-    if not root then if cb then cb() end return end
-    local mp0 = root.Position
-    local tT = tp - mp0
-    local fD = Vector3.new(tT.X, 0, tT.Z)
-    if fD.Magnitude < 1 then fD = Vector3.new(1, 0, 0) else fD = fD.Unit end
-    local pp = Vector3.new(-fD.Z, 0, fD.X)
-    local zs = 1
-    local lf, lt = tick(), tick()
+    local ch = LP.Character
+    local root = ch and ch:FindFirstChild("HumanoidRootPart")
+    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+    if not root or not hum then if cb then cb() end return end
     sFly()
+    local bv = Instance.new("BodyVelocity")
+    bv.MaxForce = Vector3.new(1e6, 1e6, 1e6)
+    bv.P = 8000
+    bv.Velocity = Vector3.new(0, 0, 0)
+    bv.Parent = root
+    hum.PlatformStand = true
+    hum:ChangeState(Enum.HumanoidStateType.Physics)
+    local active = true
+    local lastPetCheck = 0
     local conn
     conn = RS.Heartbeat:Connect(function()
+        if not active then return end
         if not root or not root.Parent then
+            active = false
             if conn then conn:Disconnect() end
+            pcall(function() bv:Destroy() end)
+            if hum then hum.PlatformStand = false end
             if cb then cb() end
-            return
-        end
-        if not isCarrying() then
-            if conn then conn:Disconnect() end
-            egFC = nil
-            pausedFollow = false
-            task.spawn(function()
-                task.wait(0.3)
-                local target = findFallenPet()
-                if target then
-                    egCd = false
-                    flyZ(target, function() pausedFollow = false end)
-                end
-            end)
             return
         end
         local now = tick()
-        local dt = now - lt
-        lt = now
-        local mp = root.Position
-        local dir = tp - mp
+        if now - lastPetCheck > 0.3 then
+            lastPetCheck = now
+            if not isCarrying() then
+                active = false
+                if conn then conn:Disconnect() end
+                pcall(function() bv:Destroy() end)
+                if hum then hum.PlatformStand = false end
+                egFC = nil
+                pausedFollow = false
+                Rayfield:Notify({Title="Auto", Content="Roi pet! Quay lai nhat"})
+                task.spawn(function()
+                    task.wait(0.4)
+                    local target = findFallenPet()
+                    if target then
+                        egCd = false
+                        flyZ(target, function()
+                            Rayfield:Notify({Title="Auto", Content="Da nhat lai pet"})
+                            pausedFollow = false
+                        end)
+                    else
+                        Rayfield:Notify({Title="Auto", Content="Khong tim thay pet roi"})
+                    end
+                end)
+                return
+            end
+        end
+        local cur = root.Position
+        local dir = tp - cur
         local dist = dir.Magnitude
-        if dist < 3 then
+        if dist < 4 then
+            active = false
             if conn then conn:Disconnect() end
-            root.CFrame = CFrame.new(tp)
+            pcall(function() bv:Destroy() end)
+            if hum then hum.PlatformStand = false end
+            root.Velocity = Vector3.new(0, 0, 0)
             egFC = nil
             if cb then cb() end
             return
         end
-        if now - lf > 0.3 then zs = -zs lf = now end
-        local mD = dir.Unit
-        local sV = pp * zs
-        local mvD = (mD * 0.7 + sV * 0.3).Unit
-        local step = flySpeed * dt
-        if step > dist then step = dist end
-        local nPos = mp + mvD * step
-        root.Velocity = Vector3.new(0, 0, 0)
-        root.CFrame = CFrame.new(nPos, nPos + mvD)
+        local dirUnit = dir.Unit
+        local speed = math.min(flySpeed, dist * 4)
+        bv.Velocity = dirUnit * speed
     end)
     egFC = conn
 end
 
-local function flyHome()
-    if egCd or not isCarrying() then return end
-    egCd = true
-    sFly() sGod()
-    if not egSvPos then xGod() egCd = false return end
-    flyZ(egSvPos, function() xGod() egCd = false pausedFollow = false end)
+local function v2HardTele(pos)
+    local ch = LP.Character
+    local root = ch and ch:FindFirstChild("HumanoidRootPart")
+    local h = ch and ch:FindFirstChildOfClass("Humanoid")
+    if not root or not h then return false end
+    local parts = {}
+    for _, p in ipairs(ch:GetDescendants()) do
+        if p:IsA("BasePart") then parts[p] = p.CanCollide p.CanCollide = false end
+    end
+    local cf = CFrame.new(pos)
+    pcall(function() h:ChangeState(Enum.HumanoidStateType.Physics) end)
+    root.CFrame = cf
+    root.Velocity = Vector3.new(0, 0, 0)
+    root.RotVelocity = Vector3.new(0, 0, 0)
+    task.wait(0.1)
+    root.CFrame = cf
+    root.Velocity = Vector3.new(0, 0, 0)
+    pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+    task.wait(0.1)
+    for p, v in pairs(parts) do
+        if p and p.Parent then p.CanCollide = v end
+    end
+    return true
 end
 
 local function hookP(p)
@@ -284,7 +328,7 @@ local function hookP(p)
         p.Triggered:Connect(function(pl)
             if pl == LP and autoFlySafeOn then
                 task.wait(0.3)
-                if isCarrying() then pausedFollow = true flyHome() end
+                if isCarrying() then pausedFollow = true v2HardTele(V2_DEST) end
             end
         end)
     end)
@@ -293,7 +337,7 @@ pcall(function()
     PPS.PromptTriggered:Connect(function(pr, pl)
         if pl == LP and autoFlySafeOn then
             task.wait(0.3)
-            if isCarrying() then pausedFollow = true flyHome() end
+            if isCarrying() then pausedFollow = true v2HardTele(V2_DEST) end
         end
     end)
 end)
@@ -548,30 +592,6 @@ task.spawn(function()
     end
 end)
 
-local function v2HardTele(pos)
-    local ch = LP.Character
-    local root = ch and ch:FindFirstChild("HumanoidRootPart")
-    local h = ch and ch:FindFirstChildOfClass("Humanoid")
-    if not root or not h then return false end
-    local parts = {}
-    for _, p in ipairs(ch:GetDescendants()) do
-        if p:IsA("BasePart") then parts[p] = p.CanCollide p.CanCollide = false end
-    end
-    local cf = CFrame.new(pos)
-    pcall(function() h:ChangeState(Enum.HumanoidStateType.Physics) end)
-    root.CFrame = cf
-    root.Velocity = Vector3.new(0, 0, 0)
-    root.RotVelocity = Vector3.new(0, 0, 0)
-    task.wait(0.1)
-    root.CFrame = cf
-    root.Velocity = Vector3.new(0, 0, 0)
-    pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-    task.wait(0.1)
-    for p, v in pairs(parts) do
-        if p and p.Parent then p.CanCollide = v end
-    end
-    return true
-end
 local function v2Land()
     local root = getRoot()
     local h = gh()
@@ -635,9 +655,9 @@ task.spawn(function()
                 if fe then eS() end
                 pausedFollow = true
                 v2Stage = "stealing"
-                v2Cooldown = tick() + V2_WAITS.stealing
+                v2Cooldown = tick() + 1.5
                 task.spawn(function()
-                    task.wait(V2_WAITS.stealing)
+                    task.wait(1.5)
                     v2FireSteal()
                     local t0 = tick()
                     while tick() - t0 < 3 do
@@ -647,18 +667,19 @@ task.spawn(function()
                     if isCarrying() then
                         v2Stage = "teleporting"
                         v2HardTele(V2_DEST)
-                        task.wait(V2_WAITS.teleporting)
+                        task.wait(0.5)
                         v2Stage = "flying_home"
+                        local done2 = false
                         if egSvPos then
-                            v2HardTele(egSvPos + Vector3.new(0, 3, 0))
-                            task.wait(V2_WAITS.telehome)
-                            v2HardTele(egSvPos)
-                            task.wait(0.3)
-                            v2HardTele(egSvPos)
+                            flyZ(egSvPos, function() done2 = true end)
+                            local t2 = tick()
+                            while not done2 and tick() - t2 < 25 do task.wait(0.2) end
                         else
-                            v2HardTele(V2_DEST)
+                            flyZ(V2_DEST, function() done2 = true end)
+                            local t2 = tick()
+                            while not done2 and tick() - t2 < 20 do task.wait(0.2) end
                         end
-                        task.wait(V2_WAITS.landing)
+                        task.wait(0.5)
                         v2Stage = "landing"
                         v2Land()
                         task.wait(0.4)
