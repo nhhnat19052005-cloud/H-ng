@@ -13,19 +13,22 @@ local cs,dws,itp=16,16,false
 local flySpeed=150
 local eggSpd=100
 local egSvPos=nil
-local egAutoOn=false
+local autoFlySafeOn=false
 local egNC,egGC,egFC,egCd,egMH=false,nil,nil,false,nil
 local sE={}
 local fe,fcn,os=false,nil,16
 local pausedFollow=false
 local autoPetOn=false
+local minWeight=0
 local espEggOn=false
 local espPetOn=false
 local hls={}
 local antiKnockOn=false
 local antiLockPos=nil
 local antiBpObj=nil
+local antiPaused=false
 local autoPickaxeOn=false
+local promptCache={}
 
 local PET_AUTO={
     ["WINGED_IMP"]=true,
@@ -342,7 +345,7 @@ end
 local function hookP(p)
     pcall(function()
         p.Triggered:Connect(function(pl)
-            if pl==LP and egAutoOn then
+            if pl==LP and autoFlySafeOn then
                 task.wait(0.3)
                 if isCarrying() then
                     pausedFollow=true
@@ -354,7 +357,7 @@ local function hookP(p)
 end
 pcall(function()
     PPS.PromptTriggered:Connect(function(pr,pl)
-        if pl==LP and egAutoOn then
+        if pl==LP and autoFlySafeOn then
             task.wait(0.3)
             if isCarrying() then
                 pausedFollow=true
@@ -372,14 +375,15 @@ local function promptMatchesAuto(p)
     if not p or not p.Enabled then return false end
     local at = string.lower(p.ActionText or "")
     if not string.find(at,"steal") then return false end
-    local node=p
-    for i=1,8 do
-        if not node or not node.Parent then break end
-        node=node.Parent
-        if isPetAuto(node.Name) then return true end
+    local txt = p.ObjectText or ""
+    local kg = string.match(txt, "%[%s*(%d+)%s*[Kk]g%s*%]")
+    if not kg then return false end
+    kg = tonumber(kg)
+    if not kg then return false end
+    if minWeight > 0 and kg < minWeight then return false end
+    for key,_ in pairs(PET_AUTO) do
+        if string.find(txt,key,1,true) then return true end
     end
-    if isPetAuto(p.ObjectText) then return true end
-    if isPetAuto(p.Name) then return true end
     return false
 end
 
@@ -387,34 +391,39 @@ local function firePromptAuto(p)
     if not p or not p.Enabled then return end
     pcall(function()
         p.HoldDuration = 0
-        if fireproximityprompt then
-            fireproximityprompt(p)
-        else
-            if p.InputHoldBegin then p:InputHoldBegin() end
-            task.wait(0.05)
-            if p.InputHoldEnd then p:InputHoldEnd() end
+        for i=1,3 do
+            if fireproximityprompt then
+                fireproximityprompt(p)
+            else
+                if p.InputHoldBegin then p:InputHoldBegin() end
+                task.wait(0.01)
+                if p.InputHoldEnd then p:InputHoldEnd() end
+            end
         end
     end)
 end
 
-task.spawn(function()
-    while task.wait(0.2) do
-        if autoPetOn then
-            for _,d in ipairs(workspace:GetDescendants()) do
-                if d:IsA("ProximityPrompt") and d.Enabled then
-                    if promptMatchesAuto(d) then
-                        firePromptAuto(d)
-                    end
-                end
-            end
-        end
+PPS.PromptShown:Connect(function(p)
+    promptCache[p] = tick()
+    if autoPetOn and promptMatchesAuto(p) then
+        firePromptAuto(p)
+        firePromptAuto(p)
     end
 end)
 
-PPS.PromptShown:Connect(function(p)
-    if not autoPetOn then return end
-    if promptMatchesAuto(p) then
-        firePromptAuto(p)
+task.spawn(function()
+    while task.wait(0.05) do
+        if autoPetOn then
+            for p, t in pairs(promptCache) do
+                if not p.Parent or not p.Enabled then
+                    promptCache[p] = nil
+                elseif promptMatchesAuto(p) then
+                    firePromptAuto(p)
+                    firePromptAuto(p)
+                    firePromptAuto(p)
+                end
+            end
+        end
     end
 end)
 
@@ -469,7 +478,6 @@ local function startFollow()
     local h=ch and ch:FindFirstChildOfClass("Humanoid")
     if not h then return end
     os=h.WalkSpeed h.WalkSpeed=eggSpd fe=true
-    -- refresh egg list moi 60s
     task.spawn(function()
         while fe do
             task.wait(60)
@@ -545,7 +553,7 @@ end
 
 task.spawn(function()
     while task.wait(0.1) do
-        if antiKnockOn then
+        if antiKnockOn and not antiPaused then
             local ch=LP.Character
             local root=ch and ch:FindFirstChild("HumanoidRootPart")
             local h=ch and ch:FindFirstChildOfClass("Humanoid")
@@ -555,15 +563,23 @@ task.spawn(function()
                 local vel=root.Velocity.Magnitude
                 if isRag or vel>150 then
                     if antiLockPos then
+                        pausedFollow = true
+                        local savedCFrame = CFrame.new(antiLockPos)
                         antiLockBody(root)
-                        task.delay(2,function()
-                            if antiBpObj and root and root.Parent then
-                                local st2=h:GetState()
-                                if st2~=Enum.HumanoidStateType.Ragdoll and st2~=Enum.HumanoidStateType.FallingDown and root.Velocity.Magnitude<20 then
-                                    antiUnlockBody()
-                                end
-                            end
-                        end)
+                        antiPaused=true
+                        task.wait(0.1)
+                        antiUnlockBody()
+                        if egSvPos then
+                            root.CFrame=CFrame.new(egSvPos + Vector3.new(0,3,0))
+                            root.Velocity=Vector3.new(0,0,0)
+                            pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+                            task.wait(0.5)
+                            root.CFrame=savedCFrame
+                            root.Velocity=Vector3.new(0,0,0)
+                        end
+                        task.wait(0.5)
+                        antiPaused=false
+                        pausedFollow = false
                     end
                 else
                     if not antiBpObj or not antiBpObj.Parent then
@@ -572,15 +588,17 @@ task.spawn(function()
                 end
             end
         else
-            antiLockPos=nil
-            antiUnlockBody()
+            if not antiKnockOn then
+                antiLockPos=nil
+                antiUnlockBody()
+            end
         end
     end
 end)
 
 task.spawn(function()
     while task.wait(0.15) do
-        if antiKnockOn then
+        if antiKnockOn and not antiPaused then
             local ch=LP.Character
             local h=ch and ch:FindFirstChildOfClass("Humanoid")
             if h then
@@ -714,15 +732,27 @@ MainTab:CreateToggle({
 })
 
 MainTab:CreateToggle({
-    Name = "Auto TP Ragdoll",
+    Name = "Auto Steal v1 (fly)",
     CurrentValue = false,
-    Callback = function(v) ar=v end
+    Callback = function(v) autoFlySafeOn=v end
 })
 
 MainTab:CreateToggle({
-    Name = "Auto TP Back",
+    Name = "Auto Steal v2 (tele)",
     CurrentValue = false,
-    Callback = function(v) abr=v end
+    Callback = function(v)
+        ar = v
+        abr = v
+        autoPetOn = v
+        antiKnockOn = v
+        if v then
+            if not fe then startFollow() end
+        else
+            if fe then eS() end
+            antiLockPos = nil
+            antiUnlockBody()
+        end
+    end
 })
 
 MainTab:CreateToggle({
@@ -766,19 +796,25 @@ MainTab:CreateButton({
     end
 })
 
-MainTab:CreateToggle({
-    Name = "Auto Fly Safe Zone (cam pet moi bay)",
-    CurrentValue = false,
-    Callback = function(v) egAutoOn=v end
+MainTab:CreateSlider({
+    Name = "Follow toc do",
+    Range = {16,300},
+    Increment = 10,
+    Suffix = "studs",
+    CurrentValue = 100,
+    Callback = function(v)
+        eggSpd=v
+        if fe then local h=gh() if h then h.WalkSpeed=eggSpd end end
+    end
 })
 
 MainTab:CreateSlider({
-    Name = "Fly toc do",
-    Range = {16,150},
-    Increment = 10,
-    Suffix = "studs",
-    CurrentValue = 150,
-    Callback = function(v) flySpeed=v end
+    Name = "Min can nang (Kg)",
+    Range = {0, 100000},
+    Increment = 100,
+    Suffix = "Kg",
+    CurrentValue = 0,
+    Callback = function(v) minWeight=v end
 })
 
 local EggTab = Window:CreateTab("EGG", 4483362458)
@@ -804,32 +840,6 @@ EggTab:CreateButton({
 })
 
 EggTab:CreateToggle({
-    Name = "Follow Egg (tu scan 60s)",
-    CurrentValue = false,
-    Callback = function(v)
-        if v then startFollow() else eS() end
-    end
-})
-
-EggTab:CreateSlider({
-    Name = "Follow toc do",
-    Range = {16,300},
-    Increment = 10,
-    Suffix = "studs",
-    CurrentValue = 100,
-    Callback = function(v)
-        eggSpd=v
-        if fe then local h=gh() if h then h.WalkSpeed=eggSpd end end
-    end
-})
-
-EggTab:CreateToggle({
-    Name = "Auto Pick Pet (Steal)",
-    CurrentValue = false,
-    Callback = function(v) autoPetOn=v end
-})
-
-EggTab:CreateToggle({
     Name = "ESP Egg",
     CurrentValue = false,
     Callback = function(v) espEggOn=v end
@@ -844,7 +854,7 @@ EggTab:CreateToggle({
 local PlayerTab = Window:CreateTab("PLAYER", 4483362458)
 
 PlayerTab:CreateToggle({
-    Name = "Anti Knockback (chong van xa)",
+    Name = "Anti Knockback (TP safe + ve cho cu)",
     CurrentValue = false,
     Callback = function(v)
         antiKnockOn=v
