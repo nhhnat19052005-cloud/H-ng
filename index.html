@@ -14,14 +14,9 @@ do
     Rayfield = res
 end
 
-local P    = game:GetService("Players")
-local PPS  = game:GetService("ProximityPromptService")
-local TPS  = game:GetService("TeleportService")
-local HS   = game:GetService("HttpService")
-local RS   = game:GetService("RunService")
-local UIS  = game:GetService("UserInputService")
-local Stats= game:GetService("Stats")
-local LP   = P.LocalPlayer
+local P, PPS, TPS, HS = game:GetService("Players"), game:GetService("ProximityPromptService"), game:GetService("TeleportService"), game:GetService("HttpService")
+local RS, UIS, Stats = game:GetService("RunService"), game:GetService("UserInputService"), game:GetService("Stats")
+local LP = P.LocalPlayer
 if not game:IsLoaded() then game.Loaded:Wait() end
 if not LP.Character then LP.CharacterAdded:Wait() end
 
@@ -43,7 +38,6 @@ local autoPickaxeOn, pingPanelOn, pingPanelObj = false, false, nil
 local promptCache = {}
 local noclipOn, noclipConn = false, nil
 local stolenPetFlag, stolenPetTime = false, 0
-
 local v2On, v2Stage, v2Cooldown = false, "idle", 0
 local V2_DEST = Vector3.new(-2639.06, 540.25, 12.77)
 local V2_WAITS = { stealing=1.5, teleporting=0.8, telehome=0.5, landing=0.6 }
@@ -82,13 +76,6 @@ local function getRoot()
     local ch = LP.Character
     return ch and ch:FindFirstChild("HumanoidRootPart")
 end
-local function capS()
-    local h = gh()
-    if h and not se then dws = h.WalkSpeed end
-end
-capS()
-LP.CharacterAdded:Connect(function() task.wait(0.5) capS() end)
-
 local function isPetAuto(name)
     if not name then return false end
     for k in pairs(PET_AUTO) do
@@ -96,7 +83,6 @@ local function isPetAuto(name)
     end
     return false
 end
-
 local function isCarrying()
     local c = LP:GetAttribute("Carrying")
     if c and c ~= false and c ~= "" then return true end
@@ -110,23 +96,23 @@ local function isCarrying()
     if stolenPetFlag and (tick() - stolenPetTime) < 30 then return true end
     return false
 end
-
 local function autoSaveSafe()
     local r = getRoot()
     if r then svC = r.CFrame egSvPos = r.Position return true end
     return false
 end
-
+local function capS()
+    local h = gh()
+    if h and not se then dws = h.WalkSpeed end
+end
+capS()
+LP.CharacterAdded:Connect(function() task.wait(0.5) capS() end)
 if not autoSaveSafe() then
     LP.CharacterAdded:Wait()
     task.wait(1.5)
     autoSaveSafe()
 end
 LP.CharacterAdded:Connect(function() task.wait(1.5) autoSaveSafe() end)
-
-task.delay(3, function()
-    if svC then Rayfield:Notify({Title="Safe Zone", Content="Da luu vi tri!"}) end
-end)
 
 PPS.PromptShown:Connect(function(p)
     if ap and p and p.Enabled then
@@ -159,7 +145,6 @@ local function findPickaxe()
         end
     end
 end
-
 task.spawn(function()
     while task.wait(0.5) do
         if autoPickaxeOn then
@@ -170,9 +155,7 @@ task.spawn(function()
                 for _, t in ipairs(ch:GetChildren()) do
                     if t:IsA("Tool") then
                         local n = string.lower(t.Name)
-                        if string.find(n, "pickaxe") or string.find(n, "pick") then
-                            holding = t break
-                        end
+                        if string.find(n, "pickaxe") or string.find(n, "pick") then holding = t break end
                     end
                 end
                 if not holding then
@@ -203,7 +186,6 @@ local function xGod()
         if h.Health > egMH then h.Health = egMH end
     end
 end
-
 local function sFly() if egFC then egFC:Disconnect() egFC = nil end end
 
 local function findFallenPet()
@@ -215,8 +197,7 @@ local function findFallenPet()
         if obj:IsA("Model") and isPetAuto(obj.Name) then
             local has = false
             for _, d in ipairs(obj:GetDescendants()) do
-                if d:IsA("ProximityPrompt")
-                   and string.find(string.lower(d.ActionText or ""), "steal") then
+                if d:IsA("ProximityPrompt") and string.find(string.lower(d.ActionText or ""), "steal") then
                     has = true break
                 end
             end
@@ -294,12 +275,8 @@ local function flyHome()
     if egCd or not isCarrying() then return end
     egCd = true
     sFly() sGod()
-    if not egSvPos then
-        xGod() egCd = false return
-    end
-    flyZ(egSvPos, function()
-        xGod() egCd = false pausedFollow = false
-    end)
+    if not egSvPos then xGod() egCd = false return end
+    flyZ(egSvPos, function() xGod() egCd = false pausedFollow = false end)
 end
 
 local function hookP(p)
@@ -307,10 +284,7 @@ local function hookP(p)
         p.Triggered:Connect(function(pl)
             if pl == LP and autoFlySafeOn then
                 task.wait(0.3)
-                if isCarrying() then
-                    pausedFollow = true
-                    flyHome()
-                end
+                if isCarrying() then pausedFollow = true flyHome() end
             end
         end)
     end)
@@ -337,7 +311,6 @@ local function promptMatchesAuto(p)
     end
     return isPetAuto(p.ObjectText) or isPetAuto(p.Name)
 end
-
 local function firePromptAuto(p)
     if not p or not p.Enabled then return end
     pcall(function()
@@ -347,14 +320,12 @@ local function firePromptAuto(p)
         end
     end)
 end
-
 PPS.PromptShown:Connect(function(p)
     promptCache[p] = tick()
     if autoPetOn and promptMatchesAuto(p) then
         firePromptAuto(p) firePromptAuto(p) firePromptAuto(p)
     end
 end)
-
 task.spawn(function()
     while task.wait(0.02) do
         if autoPetOn then
@@ -379,9 +350,7 @@ local function autoStealScan()
             local p = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)
             if p and (p.Position - myPos).Magnitude < 15 then
                 for _, d in ipairs(obj:GetDescendants()) do
-                    if d:IsA("ProximityPrompt")
-                       and string.find(string.lower(d.ActionText or ""), "steal")
-                       and d.Enabled then
+                    if d:IsA("ProximityPrompt") and string.find(string.lower(d.ActionText or ""), "steal") and d.Enabled then
                         pcall(function()
                             d.HoldDuration = 0
                             if fireproximityprompt then fireproximityprompt(d) end
@@ -392,7 +361,6 @@ local function autoStealScan()
         end
     end
 end
-
 task.spawn(function()
     while task.wait(0.05) do
         if autoPetOn then pcall(autoStealScan) end
@@ -405,7 +373,6 @@ local function eS()
     local h = gh()
     if h then h.WalkSpeed = os end
 end
-
 local function scanE()
     local list = {}
     local zone = workspace:FindFirstChild("Build")
@@ -414,15 +381,12 @@ local function scanE()
     if zone then zone = zone:FindFirstChild("Eggs") end
     if not zone then return list end
     for _, o in ipairs(zone:GetDescendants()) do
-        if o:IsA("Model") and (string.find(o.Name, "Sun Egg", 1, true)
-            or string.find(o.Name, "Starry Egg", 1, true)
-            or string.find(o.Name, "BlackHole Egg", 1, true)) then
+        if o:IsA("Model") and (string.find(o.Name, "Sun Egg", 1, true) or string.find(o.Name, "Starry Egg", 1, true) or string.find(o.Name, "BlackHole Egg", 1, true)) then
             table.insert(list, o)
         end
     end
     return list
 end
-
 local function startFollow()
     if #sE == 0 then sE = scanE() end
     if #sE == 0 then return end
@@ -499,11 +463,8 @@ task.spawn(function()
                 local r = ch and ch:FindFirstChild("HumanoidRootPart")
                 if h and r then
                     local st = h:GetState()
-                    local rg = (st == Enum.HumanoidStateType.Ragdoll)
-                        or (st == Enum.HumanoidStateType.FallingDown)
-                        or (st == Enum.HumanoidStateType.Physics)
-                    local fl = math.abs(r.Orientation.Z) > 60
-                        or math.abs(r.Orientation.X) > 60
+                    local rg = (st == Enum.HumanoidStateType.Ragdoll) or (st == Enum.HumanoidStateType.FallingDown) or (st == Enum.HumanoidStateType.Physics)
+                    local fl = math.abs(r.Orientation.Z) > 60 or math.abs(r.Orientation.X) > 60
                     if rg or fl then
                         itp = true
                         lastRag = r.CFrame
@@ -539,12 +500,10 @@ local function findCarriedPet()
     end
     return closest
 end
-
 local function petRoot(pet)
     if not pet or not pet.Parent then return nil end
     return pet.PrimaryPart or pet:FindFirstChildWhichIsA("BasePart", true)
 end
-
 local function pinToPet()
     local root = getRoot()
     local h = gh()
@@ -553,9 +512,7 @@ local function pinToPet()
     local pr = petRoot(pet)
     if not pr then return end
     local st = h:GetState()
-    local isRag = (st == Enum.HumanoidStateType.Ragdoll)
-        or (st == Enum.HumanoidStateType.FallingDown)
-        or (st == Enum.HumanoidStateType.Physics)
+    local isRag = (st == Enum.HumanoidStateType.Ragdoll) or (st == Enum.HumanoidStateType.FallingDown) or (st == Enum.HumanoidStateType.Physics)
     local vel = root.Velocity.Magnitude
     if isRag or vel > 120 then
         local anchor = pr.Position
@@ -572,7 +529,6 @@ local function pinToPet()
         pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp) end)
     end
 end
-
 task.spawn(function()
     while task.wait(0.02) do
         if antiKnockOn and not antiPaused and petPinOn and isCarrying() then
@@ -580,14 +536,12 @@ task.spawn(function()
         end
     end
 end)
-
 task.spawn(function()
     while task.wait(0.15) do
         local h = gh()
         if h then
             local st = h:GetState()
-            if st == Enum.HumanoidStateType.Ragdoll
-               or st == Enum.HumanoidStateType.FallingDown then
+            if st == Enum.HumanoidStateType.Ragdoll or st == Enum.HumanoidStateType.FallingDown then
                 pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp) end)
             end
         end
@@ -618,7 +572,6 @@ local function v2HardTele(pos)
     end
     return true
 end
-
 local function v2Land()
     local root = getRoot()
     local h = gh()
@@ -628,7 +581,6 @@ local function v2Land()
     root.Velocity = Vector3.new(0, 0, 0)
     pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp) end)
 end
-
 local function v2FindPetInRange(radius)
     local root = getRoot()
     if not root then return nil end
@@ -645,7 +597,6 @@ local function v2FindPetInRange(radius)
     end
     return closest
 end
-
 local function v2FireSteal()
     local root = getRoot()
     if not root then return end
@@ -655,9 +606,7 @@ local function v2FireSteal()
             local p = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)
             if p and (p.Position - myPos).Magnitude < 15 then
                 for _, d in ipairs(obj:GetDescendants()) do
-                    if d:IsA("ProximityPrompt")
-                       and string.find(string.lower(d.ActionText or ""), "steal")
-                       and d.Enabled then
+                    if d:IsA("ProximityPrompt") and string.find(string.lower(d.ActionText or ""), "steal") and d.Enabled then
                         pcall(function()
                             d.HoldDuration = 0
                             if fireproximityprompt then
@@ -672,7 +621,6 @@ local function v2FireSteal()
         end
     end
 end
-
 task.spawn(function()
     while task.wait(0.4) do
         if not v2On then continue end
@@ -773,7 +721,6 @@ local function mList(name, list)
         if string.find(name, k, 1, true) then return c end
     end
 end
-
 task.spawn(function()
     while task.wait(0.3) do
         if espEggOn or espPetOn then
@@ -885,7 +832,6 @@ local function createPingPanel()
     end)
     pingPanelObj = SG
 end
-
 local function destroyPingPanel()
     if pingPanelObj then pcall(function() pingPanelObj:Destroy() end) pingPanelObj = nil end
     local pgui = LP:FindFirstChild("PlayerGui")
@@ -933,72 +879,59 @@ local function safeTab(name, icon)
     if not ok then warn("[UI] Tab fail:", name, tab) return nil end
     return tab
 end
-
 local MainTab = safeTab("MAIN", 4483362458)
 local EspTab  = safeTab("ESP",  4483362458)
 local PetTab  = safeTab("PET",  4483362458)
 local MiscTab = safeTab("MISC", 4483362458)
-
 local function safeBtn(t, o) if t then pcall(function() t:CreateButton(o) end) end end
 local function safeTgl(t, o) if t then pcall(function() t:CreateToggle(o) end) end end
 local function safeSld(t, o) if t then pcall(function() t:CreateSlider(o) end) end end
 
 if MainTab then
-    safeTgl(MainTab, {Name="Auto Pick", CurrentValue=false,
-        Callback=function(v) ap = v end})
-    safeTgl(MainTab, {Name="Auto Steal v1 (fly)", CurrentValue=false,
-        Callback=function(v) autoFlySafeOn = v end})
-    safeTgl(MainTab, {Name="Auto Steal v2 (loop)", CurrentValue=false,
-        Callback=function(v)
-            v2On = v
-            v2Stage = v and "following" or "idle"
-            v2Cooldown = 0
-            if v then
-                pausedFollow = false
-                antiKnockOn = true petPinOn = true
-                if not fe then startFollow() end
-            else
-                if fe then eS() end
-                pausedFollow = false
-            end
-        end})
-    safeTgl(MainTab, {Name="WalkSpeed", CurrentValue=false,
-        Callback=function(v)
-            se = v
-            local h = gh() if h then h.WalkSpeed = v and cs or dws end
-        end})
-    safeSld(MainTab, {Name="Walk toc do", Range={16,200}, Increment=10,
-        Suffix="studs", CurrentValue=16,
-        Callback=function(v)
-            cs = v
-            if se then local h = gh() if h then h.WalkSpeed = cs end end
-        end})
-    safeSld(MainTab, {Name="Fly Speed", Range={50,500}, Increment=25,
-        Suffix="studs/s", CurrentValue=150,
-        Callback=function(v) flySpeed = v end})
-    safeSld(MainTab, {Name="Egg Speed", Range={16,200}, Increment=10,
-        Suffix="studs", CurrentValue=100,
-        Callback=function(v) eggSpd = v end})
-    safeBtn(MainTab, {Name="Hop Server it nguoi",
-        Callback=function()
-            local ok, raw = pcall(function()
-                return game:HttpGet(string.format(
-                    "https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100",
-                    game.PlaceId))
-            end)
-            if not ok or not raw then return end
-            local dec = HS:JSONDecode(raw)
-            local data = dec and dec.data
-            if not data or #data == 0 then return end
-            table.sort(data, function(a, b) return (a.playing or 0) < (b.playing or 0) end)
-            local pick = nil
-            for _, srv in ipairs(data) do
-                if srv.id and srv.id ~= game.JobId then pick = srv.id break end
-            end
-            if pick then
-                pcall(function() TPS:TeleportToPlaceInstance(game.PlaceId, pick, LP) end)
-            end
-        end})
+    safeTgl(MainTab, {Name="Auto Pick", CurrentValue=false, Callback=function(v) ap = v end})
+    safeTgl(MainTab, {Name="Auto Steal v1 (fly)", CurrentValue=false, Callback=function(v) autoFlySafeOn = v end})
+    safeTgl(MainTab, {Name="Auto Steal v2 (loop)", CurrentValue=false, Callback=function(v)
+        v2On = v
+        v2Stage = v and "following" or "idle"
+        v2Cooldown = 0
+        if v then
+            pausedFollow = false
+            antiKnockOn = true petPinOn = true
+            if not fe then startFollow() end
+        else
+            if fe then eS() end
+            pausedFollow = false
+        end
+    end})
+    safeTgl(MainTab, {Name="WalkSpeed", CurrentValue=false, Callback=function(v)
+        se = v
+        local h = gh() if h then h.WalkSpeed = v and cs or dws end
+    end})
+    safeSld(MainTab, {Name="Walk toc do", Range={16,200}, Increment=10, Suffix="studs", CurrentValue=16, Callback=function(v)
+        cs = v
+        if se then local h = gh() if h then h.WalkSpeed = cs end end
+    end})
+    safeSld(MainTab, {Name="Fly Speed", Range={50,500}, Increment=25, Suffix="studs/s", CurrentValue=150, Callback=function(v) flySpeed = v end})
+    safeSld(MainTab, {Name="Egg Speed", Range={16,200}, Increment=10, Suffix="studs", CurrentValue=100, Callback=function(v) eggSpd = v end})
+    safeBtn(MainTab, {Name="Hop Server it nguoi", Callback=function()
+        local ok, raw = pcall(function()
+            return game:HttpGet(string.format(
+                "https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100",
+                game.PlaceId))
+        end)
+        if not ok or not raw then return end
+        local dec = HS:JSONDecode(raw)
+        local data = dec and dec.data
+        if not data or #data == 0 then return end
+        table.sort(data, function(a, b) return (a.playing or 0) < (b.playing or 0) end)
+        local pick = nil
+        for _, srv in ipairs(data) do
+            if srv.id and srv.id ~= game.JobId then pick = srv.id break end
+        end
+        if pick then
+            pcall(function() TPS:TeleportToPlaceInstance(game.PlaceId, pick, LP) end)
+        end
+    end})
 end
 
 if EspTab then
@@ -1009,21 +942,17 @@ end
 if PetTab then
     safeTgl(PetTab, {Name="Auto Pet", CurrentValue=false, Callback=function(v) autoPetOn = v end})
     safeTgl(PetTab, {Name="Auto Pickaxe", CurrentValue=false, Callback=function(v) autoPickaxeOn = v end})
-    safeTgl(PetTab, {Name="Anti Knock", CurrentValue=false,
-        Callback=function(v)
-            antiKnockOn = v petPinOn = v
-            if not v then antiPaused = false end
-        end})
-    safeTgl(PetTab, {Name="Godmode", CurrentValue=false,
-        Callback=function(v) if v then sGod() else xGod() end end})
-    safeTgl(PetTab, {Name="Noclip", CurrentValue=false,
-        Callback=function(v) if v then startNoClip() else stopNoClip() end end})
+    safeTgl(PetTab, {Name="Anti Knock", CurrentValue=false, Callback=function(v)
+        antiKnockOn = v petPinOn = v
+        if not v then antiPaused = false end
+    end})
+    safeTgl(PetTab, {Name="Godmode", CurrentValue=false, Callback=function(v) if v then sGod() else xGod() end end})
+    safeTgl(PetTab, {Name="Noclip", CurrentValue=false, Callback=function(v) if v then startNoClip() else stopNoClip() end end})
 end
 
 if MiscTab then
-    safeTgl(MiscTab, {Name="Ping Panel", CurrentValue=false,
-        Callback=function(v)
-            pingPanelOn = v
-            if v then createPingPanel() else destroyPingPanel() end
-        end})
+    safeTgl(MiscTab, {Name="Ping Panel", CurrentValue=false, Callback=function(v)
+        pingPanelOn = v
+        if v then createPingPanel() else destroyPingPanel() end
+    end})
 end
