@@ -1,12 +1,12 @@
 --[[
   farm (full)
   - Prompt Steal loop: cache 3s → rarity filter → fire.
-  - Ragdoll detect: state + event → spam → safe → về → spam 2.
-  - Zone10 farm.
-  - Server hop + auto rejoin + nút REJOIN.
-  - WalkSpeed slider (16-200).
-  - Pill: huongcuto20m + ping/fps.
-  - Mobile + PC, scroll mobile OK.
+  - AUTO STEAL (LOOP TP): ragdoll → spam → safe → về → spam 2.
+  - Zone10 farm + toggle UI.
+  - WalkSpeed slider (16-200), nút REJOIN.
+  - Server hop + auto rejoin.
+  - Pill nhỏ: huongcuto20m + ping/fps (220×36).
+  - Mobile + PC, drag panel, scroll OK.
 --]]
 
 local Players                = game:GetService("Players")
@@ -31,8 +31,8 @@ local CONFIG = {
     EnableRagdollTele = true,
     RagdollSpamTime   = 2.5,
     RagdollSpamInterval = 0.1,
-    TeleportInterval  = 4.0,
-    RagdollStayTime   = 2.5,
+    TeleportInterval  = 1.0,
+    RagdollStayTime   = 1.0,
     TeleportCooldown  = 0.5,
 
     SafeZone         = CFrame.new(-56.86, 3.50, 0.91),
@@ -40,7 +40,7 @@ local CONFIG = {
     EnableZone10Farm = true,
     Zone10Pos        = Vector3.new(-2873.74, 3.50, 1.24),
     TreadmillSearchName = "Treadmill",
-    TreadmillMaxDistance = 30,
+    TreadmillMaxDistance = 100,
     TreadmillTime    = 1.5,
     TreadmillJumpTime = 0.8,
     Zone10LoopDelay  = 2,
@@ -118,26 +118,6 @@ local function teleportChar(pos)
     return true
 end
 
-local function walkTo(pos, timeout)
-    timeout = timeout or 5
-    local char = LP.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if not hrp or not hum then return false end
-    local oldWS = hum.WalkSpeed
-    hum.WalkSpeed = CONFIG.WalkSpeedBoost
-    local deadline = tick() + timeout
-    while tick() < deadline do
-        local cur = hrp.Position
-        local delta = Vector3.new(pos.X - cur.X, 0, pos.Z - cur.Z)
-        if delta.Magnitude < 5 then break end
-        hum:MoveTo(Vector3.new(pos.X, cur.Y, pos.Z))
-        task.wait(0.1)
-    end
-    hum.WalkSpeed = oldWS
-    return true
-end
-
 local function setWalkSpeed(v)
     v = math.clamp(v or 16, 16, CONFIG.WalkSpeedMax)
     CONFIG.WalkSpeed = v
@@ -157,7 +137,6 @@ local function rejoinServer()
     end)
 end
 
--- auto apply WalkSpeed khi respawn
 LP.CharacterAdded:Connect(function(char)
     task.wait(1)
     local hum = char:WaitForChild("Humanoid", 5)
@@ -370,7 +349,7 @@ LP.CharacterAdded:Connect(function(c)
 end)
 
 -- =========================================================================
---  RAGDOLL TELE
+--  AUTO STEAL (LOOP TP)
 -- =========================================================================
 
 local function ragdollTeleportLoop()
@@ -456,6 +435,9 @@ local function getTreadmillPos(tm)
     if tm:IsA("Model") then
         local ok, piv = pcall(function() return tm:GetPivot().Position end)
         if ok then return piv end
+        for _, d in ipairs(tm:GetDescendants()) do
+            if d:IsA("BasePart") then return d.Position end
+        end
     end
     if tm:IsA("BasePart") then return tm.Position end
     return nil
@@ -463,6 +445,8 @@ end
 
 local function findTreadmill()
     local origin = charOrigin()
+    if not origin then return nil, nil end
+
     local mine, minePos
     for _, d in ipairs(workspace:GetDescendants()) do
         if (d:IsA("Model") or d:IsA("BasePart")) and
@@ -470,7 +454,6 @@ local function findTreadmill()
             if isMyTreadmill(d) == true then
                 local pos = getTreadmillPos(d)
                 if pos then
-                    if not origin then mine, minePos = d, pos; break end
                     if not minePos or (minePos - origin).Magnitude > (pos - origin).Magnitude then
                         mine, minePos = d, pos
                     end
@@ -481,17 +464,15 @@ local function findTreadmill()
     if mine then return mine, minePos end
 
     local best, bestPos, bestDist
-    if origin then
-        for _, d in ipairs(workspace:GetDescendants()) do
-            if (d:IsA("Model") or d:IsA("BasePart")) and
-                d.Name:find(CONFIG.TreadmillSearchName, 1, true) then
-                local pos = getTreadmillPos(d)
-                if pos then
-                    local dist = (pos - origin).Magnitude
-                    if dist <= CONFIG.TreadmillMaxDistance
-                        and (not bestDist or dist < bestDist) then
-                        best, bestPos, bestDist = d, pos, dist
-                    end
+    for _, d in ipairs(workspace:GetDescendants()) do
+        if (d:IsA("Model") or d:IsA("BasePart")) and
+            d.Name:find(CONFIG.TreadmillSearchName, 1, true) then
+            local pos = getTreadmillPos(d)
+            if pos then
+                local dist = (pos - origin).Magnitude
+                if dist <= CONFIG.TreadmillMaxDistance
+                    and (not bestDist or dist < bestDist) then
+                    best, bestPos, bestDist = d, pos, dist
                 end
             end
         end
@@ -501,16 +482,22 @@ end
 
 local function runZone10Once()
     local tm, tmPos = findTreadmill()
-    if not tm or not tmPos then return false end
-    teleportChar(tmPos + Vector3.new(0, 2, 0))
-    task.wait(0.4)
-    walkTo(tmPos, 3)
-    task.wait(0.2)
+    if not tm or not tmPos then
+        log("zone10: bỏ qua")
+        return false
+    end
+
+    log("zone10: tele lên treadmill")
+    teleportChar(tmPos + Vector3.new(0, 3, 0))
+    task.wait(0.5)
     task.wait(CONFIG.TreadmillTime)
+
     local char = LP.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if hum then hum.Jump = true end
+    if hum then pcall(function() hum.Jump = true end) end
     task.wait(CONFIG.TreadmillJumpTime)
+
+    log("zone10: tele zone10")
     teleportChar(CONFIG.Zone10Pos)
     return true
 end
@@ -644,7 +631,7 @@ local function setupAutoRejoin()
 end
 
 -- =========================================================================
---  FPS + PING (cached)
+--  FPS + PING
 -- =========================================================================
 
 local fps = 60
@@ -708,14 +695,15 @@ local function stroke(o, col, t)
     s.Thickness = t or 1; s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; s.Parent = o
 end
 
+-- Pill nhỏ
 local pill = Instance.new("Frame")
-pill.Size = UDim2.fromOffset(280, 48)
-pill.Position = UDim2.new(0.5, -140, 0, 20)
+pill.Size = UDim2.fromOffset(220, 36)
+pill.Position = UDim2.new(0.5, -110, 0, 20)
 pill.BackgroundColor3 = C.bg
 pill.BorderSizePixel = 0
 pill.Active = true
 pill.Parent = screen
-corner(pill, 24); stroke(pill, C.accent, 2)
+corner(pill, 18); stroke(pill, C.accent, 2)
 
 do
     local dragging, dragStart, startPos
@@ -752,24 +740,25 @@ pillBtn.Text = ""
 pillBtn.Parent = pill
 
 local pillDot = Instance.new("Frame")
-pillDot.Size = UDim2.fromOffset(14, 14)
-pillDot.Position = UDim2.new(0, 18, 0.5, -7)
+pillDot.Size = UDim2.fromOffset(10, 10)
+pillDot.Position = UDim2.new(0, 14, 0.5, -5)
 pillDot.BackgroundColor3 = C.ok
 pillDot.Parent = pill
-corner(pillDot, 7)
+corner(pillDot, 5)
 
 local pillLabel = Instance.new("TextLabel")
-pillLabel.Size = UDim2.new(1, -60, 1, 0)
-pillLabel.Position = UDim2.new(0, 42, 0, 0)
+pillLabel.Size = UDim2.new(1, -40, 1, 0)
+pillLabel.Position = UDim2.new(0, 30, 0, 0)
 pillLabel.BackgroundTransparency = 1
 pillLabel.Font = Enum.Font.GothamBold
-pillLabel.TextSize = 13
+pillLabel.TextSize = 11
 pillLabel.TextColor3 = C.text
 pillLabel.TextXAlignment = Enum.TextXAlignment.Left
 pillLabel.Text = CONFIG.PillName .. " • loading..."
 pillLabel.Parent = pill
 
-local W, H = 320, 620
+-- Panel
+local W, H = 320, 500
 local panel = Instance.new("Frame")
 panel.Size = UDim2.fromOffset(W, H)
 panel.Position = UDim2.new(0.5, -W/2, 0, 80)
@@ -811,6 +800,34 @@ corner(closePill, 18)
 
 closePill.MouseButton1Click:Connect(function() panel.Visible = false end)
 pillBtn.MouseButton1Click:Connect(function() panel.Visible = not panel.Visible end)
+
+do
+    local dragging, dragStart, startPos
+    header.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = panel.Position
+        end
+    end)
+    header.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+            local d = input.Position - dragStart
+            panel.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + d.X,
+                startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+end
 
 local body = Instance.new("ScrollingFrame")
 body.Size = UDim2.new(1, -20, 1, -60)
@@ -888,9 +905,7 @@ local function toggleBtn(label, initial, colorOn, onChange)
     return b
 end
 
--- ===== WALKSPEED =====
 sectionLabel("WALKSPEED  (max " .. CONFIG.WalkSpeedMax .. ")")
-
 local wsRow = Instance.new("Frame")
 wsRow.Size = UDim2.new(1, 0, 0, 52)
 wsRow.BackgroundColor3 = C.card
@@ -941,162 +956,13 @@ end
 wsMinus.MouseButton1Click:Connect(function() updateWS(CONFIG.WalkSpeed - 10) end)
 wsPlus.MouseButton1Click:Connect(function() updateWS(CONFIG.WalkSpeed + 10) end)
 
--- ===== SAFE ZONE =====
-sectionLabel("SAFE ZONE XYZ")
-local xyzRow = Instance.new("Frame")
-xyzRow.Size = UDim2.new(1, 0, 0, 52)
-xyzRow.BackgroundColor3 = C.card
-xyzRow.BorderSizePixel = 0
-xyzRow.Parent = body
-corner(xyzRow, 10); stroke(xyzRow, C.line, 1)
-
-local function makeXYZBox(x, initial)
-    local box = Instance.new("TextBox")
-    box.Size = UDim2.new(0.30, -6, 1, -8)
-    box.Position = UDim2.new(x, 3, 0, 4)
-    box.BackgroundColor3 = C.bg
-    box.Text = initial
-    box.TextColor3 = C.text
-    box.Font = Enum.Font.Code
-    box.TextSize = 14
-    box.ClearTextOnFocus = false
-    box.Parent = xyzRow
-    corner(box, 6); stroke(box, C.line, 1)
-    return box
-end
-
-local boxX = makeXYZBox(0.00, string.format("%.2f", CONFIG.SafeZone.Position.X))
-local boxY = makeXYZBox(0.35, string.format("%.2f", CONFIG.SafeZone.Position.Y))
-local boxZ = makeXYZBox(0.70, string.format("%.2f", CONFIG.SafeZone.Position.Z))
-
-local applyRow = Instance.new("Frame")
-applyRow.Size = UDim2.new(1, 0, 0, 52)
-applyRow.BackgroundTransparency = 1
-applyRow.Parent = body
-
-local applyBtn = Instance.new("TextButton")
-applyBtn.Size = UDim2.new(0.5, -4, 1, 0)
-applyBtn.Position = UDim2.new(0, 0, 0, 0)
-applyBtn.BackgroundColor3 = C.ok
-applyBtn.Text = "✔ APPLY"
-applyBtn.TextColor3 = Color3.new(1,1,1)
-applyBtn.Font = Enum.Font.GothamBold
-applyBtn.TextSize = 14
-applyBtn.AutoButtonColor = false
-applyBtn.Parent = applyRow
-corner(applyBtn, 10); stroke(applyBtn, C.line, 1)
-
-local grabBtn = Instance.new("TextButton")
-grabBtn.Size = UDim2.new(0.5, -4, 1, 0)
-grabBtn.Position = UDim2.new(0.5, 4, 0, 0)
-grabBtn.BackgroundColor3 = C.blue
-grabBtn.Text = "📍 LẤY"
-grabBtn.TextColor3 = Color3.new(1,1,1)
-grabBtn.Font = Enum.Font.GothamBold
-grabBtn.TextSize = 14
-grabBtn.AutoButtonColor = false
-grabBtn.Parent = applyRow
-corner(grabBtn, 10); stroke(grabBtn, C.line, 1)
-
-applyBtn.MouseButton1Click:Connect(function()
-    local x = tonumber(boxX.Text) or 0
-    local y = tonumber(boxY.Text) or 0
-    local z = tonumber(boxZ.Text) or 0
-    CONFIG.SafeZone = CFrame.new(x, y, z)
-end)
-
-grabBtn.MouseButton1Click:Connect(function()
-    local char = LP.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        CONFIG.SafeZone = hrp.CFrame
-        boxX.Text = string.format("%.2f", hrp.Position.X)
-        boxY.Text = string.format("%.2f", hrp.Position.Y)
-        boxZ.Text = string.format("%.2f", hrp.Position.Z)
-    end
-end)
-
--- ===== ZONE10 =====
-sectionLabel("ZONE10")
-local z10Row = Instance.new("Frame")
-z10Row.Size = UDim2.new(1, 0, 0, 52)
-z10Row.BackgroundColor3 = C.card
-z10Row.BorderSizePixel = 0
-z10Row.Parent = body
-corner(z10Row, 10); stroke(z10Row, C.line, 1)
-
-local function makeZ10Box(x, initial)
-    local box = Instance.new("TextBox")
-    box.Size = UDim2.new(0.30, -6, 1, -8)
-    box.Position = UDim2.new(x, 3, 0, 4)
-    box.BackgroundColor3 = C.bg
-    box.Text = initial
-    box.TextColor3 = C.text
-    box.Font = Enum.Font.Code
-    box.TextSize = 14
-    box.ClearTextOnFocus = false
-    box.Parent = z10Row
-    corner(box, 6); stroke(box, C.line, 1)
-    return box
-end
-
-local z10X = makeZ10Box(0.00, string.format("%.2f", CONFIG.Zone10Pos.X))
-local z10Y = makeZ10Box(0.35, string.format("%.2f", CONFIG.Zone10Pos.Y))
-local z10Z = makeZ10Box(0.70, string.format("%.2f", CONFIG.Zone10Pos.Z))
-
-local z10ApplyRow = Instance.new("Frame")
-z10ApplyRow.Size = UDim2.new(1, 0, 0, 52)
-z10ApplyRow.BackgroundTransparency = 1
-z10ApplyRow.Parent = body
-
-local z10Apply = Instance.new("TextButton")
-z10Apply.Size = UDim2.new(0.5, -4, 1, 0)
-z10Apply.Position = UDim2.new(0, 0, 0, 0)
-z10Apply.BackgroundColor3 = C.ok
-z10Apply.Text = "✔ APPLY"
-z10Apply.TextColor3 = Color3.new(1,1,1)
-z10Apply.Font = Enum.Font.GothamBold
-z10Apply.TextSize = 14
-z10Apply.AutoButtonColor = false
-z10Apply.Parent = z10ApplyRow
-corner(z10Apply, 10); stroke(z10Apply, C.line, 1)
-
-local z10Grab = Instance.new("TextButton")
-z10Grab.Size = UDim2.new(0.5, -4, 1, 0)
-z10Grab.Position = UDim2.new(0.5, 4, 0, 0)
-z10Grab.BackgroundColor3 = C.blue
-z10Grab.Text = "📍 LẤY"
-z10Grab.TextColor3 = Color3.new(1,1,1)
-z10Grab.Font = Enum.Font.GothamBold
-z10Grab.TextSize = 14
-z10Grab.AutoButtonColor = false
-z10Grab.Parent = z10ApplyRow
-corner(z10Grab, 10); stroke(z10Grab, C.line, 1)
-
-z10Apply.MouseButton1Click:Connect(function()
-    local x = tonumber(z10X.Text) or 0
-    local y = tonumber(z10Y.Text) or 0
-    local z = tonumber(z10Z.Text) or 0
-    CONFIG.Zone10Pos = Vector3.new(x, y, z)
-end)
-
-z10Grab.MouseButton1Click:Connect(function()
-    local char = LP.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        CONFIG.Zone10Pos = hrp.Position
-        z10X.Text = string.format("%.2f", hrp.Position.X)
-        z10Y.Text = string.format("%.2f", hrp.Position.Y)
-        z10Z.Text = string.format("%.2f", hrp.Position.Z)
-    end
-end)
-
--- ===== TOGGLES =====
 sectionLabel("TOGGLES")
 toggleBtn("CHỈ NHẶT RARITY", CONFIG.CheckRarityFirst, C.ok,
     function(v) CONFIG.CheckRarityFirst = v end)
-toggleBtn("TELE KHI RAGDOLL", CONFIG.EnableRagdollTele, C.ok,
+toggleBtn("AUTO STEAL (LOOP TP)", CONFIG.EnableRagdollTele, C.ok,
     function(v) CONFIG.EnableRagdollTele = v end)
+toggleBtn("AUTO TELE ZONE10", CONFIG.EnableZone10Farm, C.ok,
+    function(v) CONFIG.EnableZone10Farm = v end)
 
 sectionLabel("SERVER HOP")
 toggleBtn("AUTO HOP (≤1 player)", CONFIG.EnableServerHop, C.ok,
@@ -1104,30 +970,13 @@ toggleBtn("AUTO HOP (≤1 player)", CONFIG.EnableServerHop, C.ok,
 toggleBtn("AUTO REJOIN", CONFIG.AutoRejoinOnDisconnect, C.ok,
     function(v) CONFIG.AutoRejoinOnDisconnect = v end)
 
--- ===== CONTROL =====
 sectionLabel("CONTROL")
 actionBtn("🔄  REJOIN SERVER", Color3.fromRGB(180,120,60), function()
     rejoinServer()
 end)
-actionBtn("🩺  LOG STATE", Color3.fromRGB(200,100,200), function()
-    local char = LP.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if hum then
-        log("State:", tostring(hum:GetState()))
-        log("PlatformStand:", tostring(hum.PlatformStand))
-        log("Health:", hum.Health)
-        log("WalkSpeed:", hum.WalkSpeed)
-        log("isRagdolled:", tostring(isRagdolled()))
-    else
-        log("no Humanoid")
-    end
-end)
 actionBtn("🔎  FIND 1-PLAYER SERVER", Color3.fromRGB(120,120,180), function()
     local jobId = findLowPopServer()
     if jobId then hopToServer(jobId) end
-end)
-actionBtn("♻  REFRESH CACHE", Color3.fromRGB(120,120,180), function()
-    refreshPromptCache()
 end)
 actionBtn("■  STOP", C.off, function()
     STATE.running = false
@@ -1138,7 +987,6 @@ actionBtn("▶  START", C.ok, function()
     STATE.running = true
     STATE.status = "running"
     pillDot.BackgroundColor3 = C.ok
-    CONFIG.EnableZone10Farm = true
 end)
 
 -- =========================================================================
@@ -1153,7 +1001,6 @@ end)
 
 setupAutoRejoin()
 
--- apply WalkSpeed lần đầu
 task.spawn(function()
     task.wait(2)
     setWalkSpeed(CONFIG.WalkSpeed)
@@ -1178,4 +1025,4 @@ task.spawn(function()
     end
 end)
 
-log(CONFIG.PillName .. " — farm full, walkspeed slider max 200")
+log(CONFIG.PillName .. " — farm full, pill 220×36")
