@@ -1,966 +1,835 @@
-local Rayfield
-do
-    local ok, res = pcall(function()
-        return loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+--[[
+  farm (full)
+  - Prompt Steal loop: cache + quét 0.6s → rarity filter → fire.
+  - Ragdoll tele: ragdoll → safe → về vị trí cũ.
+  - Zone10 farm: tìm treadmill CỦA MÌNH → walk vào → 1.5s → nhảy → tele zone10 → auto off.
+  - Safe (-56.86, 3.50, 0.91), Zone10 (-2873.74, 3.50, 1.24).
+--]]
+
+local Players                = game:GetService("Players")
+local ProximityPromptService = game:GetService("ProximityPromptService")
+
+local LP = Players.LocalPlayer
+
+local CONFIG = {
+    PetRarityFilter  = { "Celestial", "Inferno", "Void", "Omega" },
+    CheckRarityFirst = true,
+    RaritySearchNear = 12,
+
+    PromptActionText = "Steal",
+    WatcherRange     = 25,
+    PromptLoopInterval = 0.6,
+    CacheRefreshInterval = 10,
+
+    EnableRagdollTele = true,
+    TeleportInterval  = 4.0,
+    RagdollStayTime   = 2.5,
+    TeleportCooldown  = 0.5,
+
+    SafeZone         = CFrame.new(-56.86, 3.50, 0.91),
+
+    EnableZone10Farm = true,
+    Zone10Pos        = Vector3.new(-2873.74, 3.50, 1.24),
+    TreadmillSearchName = "Treadmill",
+    TreadmillMaxDistance = 30,
+    TreadmillTime    = 1.5,
+    TreadmillJumpTime = 0.8,
+    Zone10LoopDelay  = 2,
+    WalkSpeedBoost   = 100,
+
+    EnableLogging    = true,
+}
+
+local STATE = { running = true, status = "auto" }
+local STEAL_PROMPTS = {}
+local zone10ToggleBtn = nil
+
+local function log(...)
+    if CONFIG.EnableLogging then print("[farm]", ...) end
+end
+
+local function firePrompt(prompt)
+    if not prompt then return false end
+    return pcall(function()
+        if fireproximityprompt then fireproximityprompt(prompt); return end
+        if promptfire then promptfire(prompt); return end
+        if fireprompt then fireprompt(prompt); return end
+        error("no prompt fire fn")
     end)
-    if not ok or not res then
-        ok, res = pcall(function()
-            return loadstring(game:HttpGet(
-                "https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua"
-            ))()
-        end)
-    end
-    if not ok or not res then warn("[UI] Rayfield load fail") return end
-    Rayfield = res
 end
 
-local P, PPS, TPS, HS = game:GetService("Players"), game:GetService("ProximityPromptService"), game:GetService("TeleportService"), game:GetService("HttpService")
-local RS, Stats = game:GetService("RunService"), game:GetService("Stats")
-local LP = P.LocalPlayer
-if not game:IsLoaded() then game.Loaded:Wait() end
-if not LP.Character then LP.CharacterAdded:Wait() end
+-- =========================================================================
+--  HELPERS
+-- =========================================================================
 
-local svC, lastRag = nil, nil
-local ap, se = false, false
-local cs, dws, itp = 16, 16, false
-local flySpeed, eggSpd = 150, 100
-local egSvPos = nil
-local autoFlySafeOn = false
-local egFC, egCd = nil, false
-local sE = {}
-local fe, fcn, os = false, nil, 16
-local pausedFollow = false
-local autoPetOn, espEggOn, espPetOn = false, false, false
-local hls = {}
-local antiKnockOn, antiPaused = false, false
-local petPinOn = false
-local autoPickaxeOn, pingPanelOn, pingPanelObj = false, false, nil
-local promptCache = {}
-local stolenPetFlag, stolenPetTime = false, 0
-local v2On, v2Stage, v2Cooldown = false, "idle", 0
-local V2_DEST = Vector3.new(-2639.06, 540.25, 12.77)
-
-local PET_AUTO = {
-    ["Winged Imp"]=true, ["WINGED_IMP"]=true,
-    ["Caladrius"]=true, ["CALADRIUS"]=true,
-    ["Velociraptor"]=true, ["VELOCIRAPTOR"]=true,
-    ["Fire Dragon"]=true, ["FIRE_DRAGON"]=true, ["FIREDRAGON"]=true,
-    ["Qilin"]=true, ["QILIN"]=true,
-}
-local EGG_ESP = {
-    ["Sun Egg"]=Color3.fromRGB(255,180,0),
-    ["Starry Egg"]=Color3.fromRGB(180,100,255),
-    ["BlackHole Egg"]=Color3.fromRGB(80,80,80),
-}
-local PET_ESP = {
-    ["Winged Imp"]=Color3.fromRGB(255,80,80),
-    ["WINGED_IMP"]=Color3.fromRGB(255,80,80),
-    ["Caladrius"]=Color3.fromRGB(255,255,150),
-    ["CALADRIUS"]=Color3.fromRGB(255,255,150),
-    ["Velociraptor"]=Color3.fromRGB(100,180,255),
-    ["VELOCIRAPTOR"]=Color3.fromRGB(100,180,255),
-    ["Fire Dragon"]=Color3.fromRGB(255,100,50),
-    ["FIRE_DRAGON"]=Color3.fromRGB(255,100,50),
-    ["FIREDRAGON"]=Color3.fromRGB(255,100,50),
-    ["Qilin"]=Color3.fromRGB(255,180,100),
-    ["QILIN"]=Color3.fromRGB(255,180,100),
-}
-
-local function gh()
-    local ch = LP.Character
-    return ch and ch:FindFirstChildOfClass("Humanoid"), ch
+local function charOrigin()
+    local char = LP.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    return hrp and hrp.Position or nil
 end
-local function getRoot()
-    local ch = LP.Character
-    return ch and ch:FindFirstChild("HumanoidRootPart")
-end
-local function isPetAuto(name)
-    if not name then return false end
-    for k in pairs(PET_AUTO) do
-        if string.find(name, k, 1, true) then return true end
+
+local function isRagdolled()
+    local char = LP.Character
+    if not char then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return false end
+    if hum.PlatformStand then return true end
+    local state = hum:GetState()
+    if state == Enum.HumanoidStateType.Ragdoll
+        or state == Enum.HumanoidStateType.FallingDown then
+        return true
     end
     return false
 end
-local function isInZone(obj)
-    if not obj then return false end
-    local node = obj
-    for _ = 1, 12 do
-        if not node or not node.Parent then break end
-        node = node.Parent
-        if node == workspace then break end
-        local n = string.lower(node.Name or "")
-        if string.find(n, "zone", 1, true) then return true end
-    end
-    return false
+
+local function teleportChar(pos)
+    local char = LP.Character
+    if not char then return false end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    local cf = CFrame.new(pos, pos + hrp.CFrame.LookVector)
+    pcall(function() char:PivotTo(cf) end)
+    pcall(function() hrp.CFrame = cf end)
+    return true
 end
-local function isCarrying()
-    local c = LP:GetAttribute("Carrying")
-    if c and c ~= false and c ~= "" then return true end
-    local ch = LP.Character
-    if ch then
-        for _, obj in ipairs(ch:GetChildren()) do
-            if obj:IsA("Model") and isPetAuto(obj.Name) then return true end
-            if obj:IsA("Tool") and isPetAuto(obj.Name) then return true end
+
+local function walkTo(pos, timeout)
+    timeout = timeout or 5
+    local char = LP.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum then return false end
+
+    local oldWS = hum.WalkSpeed
+    hum.WalkSpeed = CONFIG.WalkSpeedBoost
+
+    local deadline = tick() + timeout
+    while tick() < deadline do
+        local cur = hrp.Position
+        local delta = Vector3.new(pos.X - cur.X, 0, pos.Z - cur.Z)
+        if delta.Magnitude < 5 then break end
+        hum:MoveTo(Vector3.new(pos.X, cur.Y, pos.Z))
+        task.wait(0.1)
+    end
+
+    hum.WalkSpeed = oldWS
+    return true
+end
+
+-- =========================================================================
+--  RARITY
+-- =========================================================================
+
+local RARITY_KEYWORDS = {
+    "Celestial", "Inferno", "Void", "Omega",
+    "Divine", "Common", "Rare", "Epic", "Legendary", "Mythic", "Godly"
+}
+
+local function getPetRarity(pet)
+    if not pet then return nil end
+    for _, attr in ipairs({ "Rarity", "rarity", "Tier", "tier", "RarityName" }) do
+        local v = pet:GetAttribute(attr)
+        if type(v) == "string" and v ~= "" then return v end
+    end
+    for _, d in ipairs(pet:GetDescendants()) do
+        if d:IsA("StringValue") then
+            local n = d.Name:lower()
+            if n:find("rarit") or n:find("tier") then return d.Value end
         end
     end
-    if stolenPetFlag and (tick() - stolenPetTime) < 30 then return true end
-    return false
-end
-local function autoSaveSafe()
-    local r = getRoot()
-    if r then svC = r.CFrame egSvPos = r.Position return true end
-    return false
-end
-local function capS()
-    local h = gh()
-    if h and not se then dws = h.WalkSpeed end
-end
-capS()
-LP.CharacterAdded:Connect(function() task.wait(0.5) capS() end)
-if not autoSaveSafe() then
-    LP.CharacterAdded:Wait()
-    task.wait(1.5)
-    autoSaveSafe()
-end
-LP.CharacterAdded:Connect(function() task.wait(1.5) autoSaveSafe() end)
-
-PPS.PromptShown:Connect(function(p)
-    if ap and p and p.Enabled then
-        pcall(function()
-            p.HoldDuration = 0
-            if fireproximityprompt then fireproximityprompt(p) end
-        end)
-    end
-end)
-
-task.spawn(function()
-    while task.wait(0.1) do
-        pcall(function()
-            local h = gh()
-            if h then
-                local tg = se and cs or dws
-                if h.WalkSpeed ~= tg then h.WalkSpeed = tg end
+    for _, d in ipairs(pet:GetDescendants()) do
+        if d:IsA("TextLabel") and d.Text ~= "" then
+            local txt = d.Text:lower()
+            for _, kw in ipairs(RARITY_KEYWORDS) do
+                if txt:find(kw:lower(), 1, true) then return d.Text end
             end
-        end)
-    end
-end)
-
-local function findPickaxe()
-    local bp = LP:FindFirstChild("Backpack")
-    if not bp then return nil end
-    for _, t in ipairs(bp:GetChildren()) do
-        if t:IsA("Tool") then
-            local n = string.lower(t.Name)
-            if string.find(n, "pickaxe") or string.find(n, "pick") then return t end
         end
     end
+    return nil
 end
-task.spawn(function()
-    while task.wait(0.5) do
-        if autoPickaxeOn then
-            local ch = LP.Character
-            local h = ch and ch:FindFirstChildOfClass("Humanoid")
-            if h then
-                local holding = nil
-                for _, t in ipairs(ch:GetChildren()) do
-                    if t:IsA("Tool") then
-                        local n = string.lower(t.Name)
-                        if string.find(n, "pickaxe") or string.find(n, "pick") then holding = t break end
-                    end
-                end
-                if not holding then
-                    local p = findPickaxe()
-                    if p then pcall(function() h:EquipTool(p) end) end
+
+local function petMatchesRarity(rarity)
+    if not CONFIG.CheckRarityFirst then return true end
+    if not rarity or rarity == "" then return false end
+    local r = rarity:lower()
+    for _, f in ipairs(CONFIG.PetRarityFilter) do
+        local fl = f:lower()
+        if r == fl then return true end
+        if r:find("%f[%a]" .. fl .. "%f[%A]") then return true end
+    end
+    return false
+end
+
+local function findPetNearPrompt(promptPos, radius, promptInst)
+    if promptInst then
+        local parent = promptInst.Parent
+        local char = LP.Character
+        while parent and parent ~= workspace do
+            if parent:IsA("Model") and not parent:IsA("Accessory") then
+                if not (char and parent:IsDescendantOf(char)) then
+                    return parent
                 end
             end
+            parent = parent.Parent
         end
     end
-end)
-
-local function sFly() if egFC then egFC:Disconnect() egFC = nil end end
-
-local function findFallenPet()
-    local myRoot = getRoot()
-    if not myRoot then return nil end
-    local myPos = myRoot.Position
-    local closest, cd = nil, math.huge
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") and isPetAuto(obj.Name) and isInZone(obj) then
-            local p = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-            if p then
-                local dist = (p.Position - myPos).Magnitude
-                if dist < cd then cd = dist closest = p.Position end
-            end
-        end
-    end
-    return closest
-end
-
-local function flyZ(tp, cb)
-    local ch = LP.Character
-    local root = ch and ch:FindFirstChild("HumanoidRootPart")
-    local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-    if not root or not hum then if cb then cb() end return end
-    sFly()
-    local bv = Instance.new("BodyVelocity")
-    bv.MaxForce = Vector3.new(1e6, 1e6, 1e6)
-    bv.P = 8000
-    bv.Velocity = Vector3.new(0, 0, 0)
-    bv.Parent = root
-    hum.PlatformStand = true
-    hum:ChangeState(Enum.HumanoidStateType.Physics)
-    local active = true
-    local lastPetCheck = 0
-    local conn
-    conn = RS.Heartbeat:Connect(function()
-        if not active then return end
-        if not root or not root.Parent then
-            active = false
-            if conn then conn:Disconnect() end
-            pcall(function() bv:Destroy() end)
-            if hum then hum.PlatformStand = false end
-            if cb then cb() end
-            return
-        end
-        local now = tick()
-        if now - lastPetCheck > 0.3 then
-            lastPetCheck = now
-            if not isCarrying() and not stolenPetFlag and not pausedFollow then
-                active = false
-                if conn then conn:Disconnect() end
-                pcall(function() bv:Destroy() end)
-                if hum then hum.PlatformStand = false end
-                egFC = nil
-                pausedFollow = false
-                Rayfield:Notify({Title="Auto", Content="Roi pet! Quay lai nhat"})
-                task.spawn(function()
-                    task.wait(0.4)
-                    local target = findFallenPet()
-                    if target then
-                        egCd = false
-                        flyZ(target, function()
-                            Rayfield:Notify({Title="Auto", Content="Da nhat lai pet"})
-                            pausedFollow = false
-                        end)
+    if not promptPos then return nil end
+    local best, bestDist
+    local char = LP.Character
+    for _, d in ipairs(workspace:GetDescendants()) do
+        if d:IsA("Model") and not d:IsA("Accessory") then
+            if not (char and d:IsDescendantOf(char)) then
+                local hasBB = false
+                for _, c in ipairs(d:GetDescendants()) do
+                    if c:IsA("BillboardGui") then hasBB = true; break end
+                end
+                if hasBB then
+                    local pos
+                    if d.PrimaryPart then pos = d.PrimaryPart.Position
                     else
-                        Rayfield:Notify({Title="Auto", Content="Khong tim thay pet roi"})
+                        local ok, piv = pcall(function() return d:GetPivot().Position end)
+                        if ok then pos = piv end
                     end
-                end)
-                return
+                    if pos then
+                        local dist = (pos - promptPos).Magnitude
+                        if dist <= radius and (not bestDist or dist < bestDist) then
+                            best, bestDist = d, dist
+                        end
+                    end
+                end
             end
         end
-        local cur = root.Position
-        local dir = tp - cur
-        local dist = dir.Magnitude
-        if dist < 4 then
-            active = false
-            if conn then conn:Disconnect() end
-            pcall(function() bv:Destroy() end)
-            if hum then hum.PlatformStand = false end
-            root.Velocity = Vector3.new(0, 0, 0)
-            egFC = nil
-            if cb then cb() end
-            return
-        end
-        local dirUnit = dir.Unit
-        local speed = math.min(flySpeed, dist * 4)
-        bv.Velocity = dirUnit * speed
-    end)
-    egFC = conn
+    end
+    return best
 end
 
-local function v2HardTele(pos)
-    local ch = LP.Character
-    local root = ch and ch:FindFirstChild("HumanoidRootPart")
-    local h = ch and ch:FindFirstChildOfClass("Humanoid")
-    if not root or not h then return false end
-    local parts = {}
-    for _, p in ipairs(ch:GetDescendants()) do
-        if p:IsA("BasePart") then parts[p] = p.CanCollide p.CanCollide = false end
+-- =========================================================================
+--  STEAL PROMPT CACHE
+-- =========================================================================
+
+local function isStealPrompt(p)
+    local n = tostring(p.Name):lower()
+    local a = tostring(p.ActionText or ""):lower()
+    local target = tostring(CONFIG.PromptActionText or ""):lower()
+    if target ~= "" then
+        return (a == target) or a:find(target, 1, true)
+            or (n == target) or n:find(target, 1, true)
     end
-    local cf = CFrame.new(pos)
-    pcall(function() h:ChangeState(Enum.HumanoidStateType.Physics) end)
-    root.CFrame = cf
-    root.Velocity = Vector3.new(0, 0, 0)
-    root.RotVelocity = Vector3.new(0, 0, 0)
-    task.wait(0.1)
-    root.CFrame = cf
-    root.Velocity = Vector3.new(0, 0, 0)
-    pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-    task.wait(0.1)
-    for p, v in pairs(parts) do
-        if p and p.Parent then p.CanCollide = v end
+    return a:find("steal", 1, true) or n:find("steal", 1, true)
+end
+
+local function refreshPromptCache()
+    STEAL_PROMPTS = {}
+    local n = 0
+    for _, d in ipairs(workspace:GetDescendants()) do
+        if d:IsA("ProximityPrompt") and isStealPrompt(d) then
+            STEAL_PROMPTS[d] = true
+            n = n + 1
+        end
+    end
+    log("cache:", n, "steal prompts")
+end
+
+-- =========================================================================
+--  PROMPT STEAL LOOP
+-- =========================================================================
+
+local function promptStealLoop()
+    task.wait(1)
+    refreshPromptCache()
+    local lastCache = tick()
+
+    while STATE.running do
+        if tick() - lastCache > CONFIG.CacheRefreshInterval then
+            refreshPromptCache()
+            lastCache = tick()
+        end
+
+        local origin = charOrigin()
+        if not origin then task.wait(0.5); continue end
+
+        local best, bestDist
+        for prompt in pairs(STEAL_PROMPTS) do
+            if prompt and prompt.Parent and prompt.Enabled then
+                local p = prompt.Parent
+                local pos
+                if p:IsA("BasePart") then pos = p.Position
+                elseif p:IsA("Attachment") then pos = p.WorldPosition end
+                if pos then
+                    local dist = (pos - origin).Magnitude
+                    if dist <= CONFIG.WatcherRange and (not bestDist or dist < bestDist) then
+                        best, bestDist = prompt, dist
+                    end
+                end
+            else
+                STEAL_PROMPTS[prompt] = nil
+            end
+        end
+
+        if best then
+            local p = best.Parent
+            local promptPos
+            if p and p:IsA("BasePart") then promptPos = p.Position
+            elseif p and p:IsA("Attachment") then promptPos = p.WorldPosition end
+
+            if CONFIG.CheckRarityFirst and promptPos then
+                local pet = findPetNearPrompt(promptPos, CONFIG.RaritySearchNear, best)
+                local rarity = getPetRarity(pet)
+                if petMatchesRarity(rarity) then
+                    firePrompt(best)
+                end
+            else
+                firePrompt(best)
+            end
+        end
+
+        task.wait(CONFIG.PromptLoopInterval)
+    end
+end
+
+-- =========================================================================
+--  RAGDOLL TELE LOOP
+-- =========================================================================
+
+local function ragdollTeleportLoop()
+    while STATE.running do
+        if not CONFIG.EnableRagdollTele then task.wait(0.5); continue end
+        if not CONFIG.SafeZone then task.wait(0.5); continue end
+        if not isRagdolled() then task.wait(0.1); continue end
+
+        local char = LP.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then task.wait(0.5); continue end
+
+        local savedPos = hrp.Position
+        log("ragdoll — tele safe")
+
+        teleportChar(CONFIG.SafeZone.Position)
+        task.wait(CONFIG.TeleportCooldown)
+        task.wait(CONFIG.RagdollStayTime)
+
+        log("tele về vị trí cũ")
+        teleportChar(savedPos)
+
+        task.wait(CONFIG.TeleportInterval)
+    end
+end
+
+-- =========================================================================
+--  ZONE10 FARM
+-- =========================================================================
+
+local function getAttrSafe(inst, name)
+    local ok, v = pcall(function() return inst:GetAttribute(name) end)
+    if ok then return v end
+    return nil
+end
+
+local function isMyTreadmill(tm)
+    local userId = LP.UserId
+    local userName = LP.Name:lower()
+
+    for _, attr in ipairs({ "Owner", "OwnerId", "UserId", "Player", "PlayerId" }) do
+        local v = getAttrSafe(tm, attr)
+        if v ~= nil then
+            if type(v) == "number" and v == userId then return true end
+            if type(v) == "string" then
+                if v == tostring(userId) then return true end
+                if v:lower() == userName then return true end
+            end
+            return false
+        end
+    end
+
+    local n = tm.Name:lower()
+    if n:find(userName, 1, true) then return true end
+    if n:find(tostring(userId), 1, true) then return true end
+
+    return nil
+end
+
+local function getTreadmillPos(tm)
+    if not tm then return nil end
+    if tm:IsA("Model") and tm.PrimaryPart then return tm.PrimaryPart.Position end
+    if tm:IsA("Model") then
+        local ok, piv = pcall(function() return tm:GetPivot().Position end)
+        if ok then return piv end
+    end
+    if tm:IsA("BasePart") then return tm.Position end
+    return nil
+end
+
+local function findTreadmill()
+    local origin = charOrigin()
+
+    -- 1) ưu tiên treadmill có owner = mình
+    local mine, minePos
+    for _, d in ipairs(workspace:GetDescendants()) do
+        if (d:IsA("Model") or d:IsA("BasePart")) and
+            d.Name:find(CONFIG.TreadmillSearchName, 1, true) then
+            if isMyTreadmill(d) == true then
+                local pos = getTreadmillPos(d)
+                if pos then
+                    if not origin then
+                        mine, minePos = d, pos
+                        break
+                    end
+                    if not minePos or (minePos - origin).Magnitude > (pos - origin).Magnitude then
+                        mine, minePos = d, pos
+                    end
+                end
+            end
+        end
+    end
+    if mine then return mine, minePos end
+
+    -- 2) fallback: gần char nhất trong bán kính hẹp
+    local best, bestPos, bestDist
+    if origin then
+        for _, d in ipairs(workspace:GetDescendants()) do
+            if (d:IsA("Model") or d:IsA("BasePart")) and
+                d.Name:find(CONFIG.TreadmillSearchName, 1, true) then
+                local pos = getTreadmillPos(d)
+                if pos then
+                    local dist = (pos - origin).Magnitude
+                    if dist <= CONFIG.TreadmillMaxDistance
+                        and (not bestDist or dist < bestDist) then
+                        best, bestPos, bestDist = d, pos, dist
+                    end
+                end
+            end
+        end
+    end
+    return best, bestPos
+end
+
+local function runZone10Once()
+    local tm, tmPos = findTreadmill()
+    if not tm or not tmPos then
+        log("zone10: ko tìm được treadmill")
+        return false
+    end
+    log("zone10: treadmill @", tostring(tmPos))
+
+    teleportChar(tmPos + Vector3.new(0, 2, 0))
+    task.wait(0.4)
+    walkTo(tmPos, 3)
+    task.wait(0.2)
+
+    log("zone10: chạy", CONFIG.TreadmillTime, "s")
+    task.wait(CONFIG.TreadmillTime)
+
+    local char = LP.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then hum.Jump = true end
+    task.wait(CONFIG.TreadmillJumpTime)
+
+    log("zone10: tele zone10")
+    teleportChar(CONFIG.Zone10Pos)
+
+    -- auto off
+    task.wait(0.5)
+    CONFIG.EnableZone10Farm = false
+    log("zone10: DONE — tự tắt auto zone10")
+
+    if zone10ToggleBtn then
+        pcall(function()
+            zone10ToggleBtn.Text = "AUTO ZONE10 FARM: OFF"
+            zone10ToggleBtn.BackgroundColor3 = Color3.fromRGB(230,80,90)
+        end)
     end
     return true
 end
 
-local function hopServer()
-    local placeId = game.PlaceId
-    local raw = nil
-    local ok1, res1 = pcall(function()
-        return game:HttpGet(string.format(
-            "https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100",
-            placeId))
+local function zone10FarmingLoop()
+    while STATE.running do
+        if not CONFIG.EnableZone10Farm then
+            task.wait(1); continue
+        end
+        pcall(runZone10Once)
+        task.wait(CONFIG.Zone10LoopDelay)
+    end
+end
+
+-- =========================================================================
+--  UI
+-- =========================================================================
+local parentGui = (gethui and gethui())
+    or game:GetService("CoreGui")
+    or LP:WaitForChild("PlayerGui")
+
+local screen = Instance.new("ScreenGui")
+screen.Name = "FarmUI"
+screen.ResetOnSpawn = false
+screen.IgnoreGuiInset = true
+pcall(function() screen.Parent = parentGui end)
+if not screen.Parent then screen.Parent = LP:WaitForChild("PlayerGui") end
+
+local C = {
+    bg = Color3.fromRGB(22,24,30), card = Color3.fromRGB(32,35,44),
+    accent = Color3.fromRGB(255,105,150), purple = Color3.fromRGB(160,120,255),
+    ok = Color3.fromRGB(80,210,130), off = Color3.fromRGB(230,80,90),
+    blue = Color3.fromRGB(85,145,240), orange = Color3.fromRGB(220,140,60),
+    text = Color3.fromRGB(240,242,248), dim = Color3.fromRGB(150,155,168),
+    line = Color3.fromRGB(48,52,64),
+}
+
+local function corner(o, r)
+    local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r or 8); c.Parent = o
+end
+local function stroke(o, col, t)
+    local s = Instance.new("UIStroke"); s.Color = col or C.line
+    s.Thickness = t or 1; s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; s.Parent = o
+end
+
+local pill = Instance.new("Frame")
+pill.Size = UDim2.fromOffset(220, 44)
+pill.Position = UDim2.new(0.5, -110, 0, 18)
+pill.BackgroundColor3 = C.bg
+pill.BorderSizePixel = 0
+pill.Active = true
+pill.Parent = screen
+corner(pill, 22); stroke(pill, C.accent, 2)
+
+local pillBtn = Instance.new("TextButton")
+pillBtn.Size = UDim2.new(1, 0, 1, 0)
+pillBtn.BackgroundTransparency = 1
+pillBtn.Text = ""
+pillBtn.Parent = pill
+
+local pillDot = Instance.new("Frame")
+pillDot.Size = UDim2.fromOffset(12, 12)
+pillDot.Position = UDim2.new(0, 16, 0.5, -6)
+pillDot.BackgroundColor3 = C.ok
+pillDot.Parent = pill
+corner(pillDot, 6)
+
+local pillLabel = Instance.new("TextLabel")
+pillLabel.Size = UDim2.new(1, -50, 1, 0)
+pillLabel.Position = UDim2.new(0, 38, 0, 0)
+pillLabel.BackgroundTransparency = 1
+pillLabel.Font = Enum.Font.GothamBold
+pillLabel.TextSize = 13
+pillLabel.TextColor3 = C.text
+pillLabel.TextXAlignment = Enum.TextXAlignment.Left
+pillLabel.Text = "farm • auto"
+pillLabel.Parent = pill
+
+local W, H = 320, 580
+local panel = Instance.new("Frame")
+panel.Size = UDim2.fromOffset(W, H)
+panel.Position = UDim2.new(0.5, -W/2, 0, 72)
+panel.BackgroundColor3 = C.bg
+panel.BorderSizePixel = 0
+panel.Visible = false
+panel.Active = true
+panel.Parent = screen
+corner(panel, 14); stroke(panel, C.line, 1)
+
+local header = Instance.new("Frame")
+header.Size = UDim2.new(1, 0, 0, 46)
+header.BackgroundTransparency = 1
+header.Parent = panel
+
+local headerLbl = Instance.new("TextLabel")
+headerLbl.Size = UDim2.new(1, -60, 1, 0)
+headerLbl.Position = UDim2.new(0, 16, 0, 0)
+headerLbl.BackgroundTransparency = 1
+headerLbl.Font = Enum.Font.GothamBold
+headerLbl.TextSize = 16
+headerLbl.TextColor3 = C.accent
+headerLbl.TextXAlignment = Enum.TextXAlignment.Left
+headerLbl.Text = "steal + tele + zone10"
+headerLbl.Parent = header
+
+local closePill = Instance.new("TextButton")
+closePill.Size = UDim2.fromOffset(32, 32)
+closePill.Position = UDim2.new(1, -42, 0, 7)
+closePill.BackgroundColor3 = C.off
+closePill.Text = "×"
+closePill.TextColor3 = Color3.new(1,1,1)
+closePill.Font = Enum.Font.GothamBold
+closePill.TextSize = 18
+closePill.AutoButtonColor = false
+closePill.Parent = header
+corner(closePill, 16)
+
+closePill.MouseButton1Click:Connect(function() panel.Visible = false end)
+pillBtn.MouseButton1Click:Connect(function() panel.Visible = not panel.Visible end)
+
+local body = Instance.new("ScrollingFrame")
+body.Size = UDim2.new(1, -20, 1, -60)
+body.Position = UDim2.new(0, 10, 0, 52)
+body.BackgroundTransparency = 1
+body.BorderSizePixel = 0
+body.ScrollBarThickness = 3
+body.ScrollBarImageColor3 = C.accent
+body.CanvasSize = UDim2.new(0, 0, 0, 0)
+body.AutomaticCanvasSize = Enum.AutomaticSize.Y
+body.Parent = panel
+
+local list = Instance.new("UIListLayout")
+list.SortOrder = Enum.SortOrder.LayoutOrder
+list.Padding = UDim.new(0, 8)
+list.Parent = body
+
+local function sectionLabel(text)
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(1, 0, 0, 22)
+    l.BackgroundTransparency = 1
+    l.Font = Enum.Font.GothamBold
+    l.TextSize = 12
+    l.TextColor3 = C.purple
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Text = text
+    l.Parent = body
+    return l
+end
+
+local function actionBtn(label, color, onClick)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, 0, 0, 46)
+    b.BackgroundColor3 = color
+    b.Text = label
+    b.TextColor3 = Color3.new(1,1,1)
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 14
+    b.AutoButtonColor = false
+    b.Parent = body
+    corner(b, 10); stroke(b, C.line, 1)
+    b.MouseButton1Click:Connect(onClick)
+    return b
+end
+
+local function toggleBtn(label, initial, colorOn, onChange)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, 0, 0, 52)
+    b.BackgroundColor3 = initial and (colorOn or C.ok) or C.off
+    b.Text = label .. ": " .. (initial and "ON" or "OFF")
+    b.TextColor3 = Color3.new(1,1,1)
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 14
+    b.AutoButtonColor = false
+    b.Parent = body
+    corner(b, 10); stroke(b, C.line, 1)
+    local state = initial
+    b.MouseButton1Click:Connect(function()
+        state = not state
+        b.BackgroundColor3 = state and (colorOn or C.ok) or C.off
+        b.Text = label .. ": " .. (state and "ON" or "OFF")
+        onChange(state)
     end)
-    if ok1 and res1 then raw = res1 end
-    if not raw and request then
-        local ok2, res2 = pcall(function()
-            return request({
-                Url = string.format(
-                    "https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100",
-                    placeId),
-                Method = "GET",
-            })
+    return b
+end
+
+sectionLabel("SAFE ZONE XYZ")
+local xyzRow = Instance.new("Frame")
+xyzRow.Size = UDim2.new(1, 0, 0, 48)
+xyzRow.BackgroundColor3 = C.card
+xyzRow.BorderSizePixel = 0
+xyzRow.Parent = body
+corner(xyzRow, 10); stroke(xyzRow, C.line, 1)
+
+local function makeXYZBox(x, initial)
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(0.30, -6, 1, -8)
+    box.Position = UDim2.new(x, 3, 0, 4)
+    box.BackgroundColor3 = C.bg
+    box.Text = initial
+    box.TextColor3 = C.text
+    box.Font = Enum.Font.Code
+    box.TextSize = 14
+    box.ClearTextOnFocus = false
+    box.Parent = xyzRow
+    corner(box, 6); stroke(box, C.line, 1)
+    return box
+end
+
+local boxX = makeXYZBox(0.00, string.format("%.2f", CONFIG.SafeZone.Position.X))
+local boxY = makeXYZBox(0.35, string.format("%.2f", CONFIG.SafeZone.Position.Y))
+local boxZ = makeXYZBox(0.70, string.format("%.2f", CONFIG.SafeZone.Position.Z))
+
+local applyRow = Instance.new("Frame")
+applyRow.Size = UDim2.new(1, 0, 0, 46)
+applyRow.BackgroundTransparency = 1
+applyRow.Parent = body
+
+local applyBtn = Instance.new("TextButton")
+applyBtn.Size = UDim2.new(0.5, -4, 1, 0)
+applyBtn.Position = UDim2.new(0, 0, 0, 0)
+applyBtn.BackgroundColor3 = C.ok
+applyBtn.Text = "✔ APPLY"
+applyBtn.TextColor3 = Color3.new(1,1,1)
+applyBtn.Font = Enum.Font.GothamBold
+applyBtn.TextSize = 14
+applyBtn.AutoButtonColor = false
+applyBtn.Parent = applyRow
+corner(applyBtn, 10); stroke(applyBtn, C.line, 1)
+
+local grabBtn = Instance.new("TextButton")
+grabBtn.Size = UDim2.new(0.5, -4, 1, 0)
+grabBtn.Position = UDim2.new(0.5, 4, 0, 0)
+grabBtn.BackgroundColor3 = C.blue
+grabBtn.Text = "📍 LẤY"
+grabBtn.TextColor3 = Color3.new(1,1,1)
+grabBtn.Font = Enum.Font.GothamBold
+grabBtn.TextSize = 14
+grabBtn.AutoButtonColor = false
+grabBtn.Parent = applyRow
+corner(grabBtn, 10); stroke(grabBtn, C.line, 1)
+
+applyBtn.MouseButton1Click:Connect(function()
+    local x = tonumber(boxX.Text) or 0
+    local y = tonumber(boxY.Text) or 0
+    local z = tonumber(boxZ.Text) or 0
+    CONFIG.SafeZone = CFrame.new(x, y, z)
+    log(string.format("safe zone = (%.2f, %.2f, %.2f)", x, y, z))
+end)
+
+grabBtn.MouseButton1Click:Connect(function()
+    local char = LP.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        CONFIG.SafeZone = hrp.CFrame
+        boxX.Text = string.format("%.2f", hrp.Position.X)
+        boxY.Text = string.format("%.2f", hrp.Position.Y)
+        boxZ.Text = string.format("%.2f", hrp.Position.Z)
+    end
+end)
+
+sectionLabel("ZONE10")
+local z10Row = Instance.new("Frame")
+z10Row.Size = UDim2.new(1, 0, 0, 48)
+z10Row.BackgroundColor3 = C.card
+z10Row.BorderSizePixel = 0
+z10Row.Parent = body
+corner(z10Row, 10); stroke(z10Row, C.line, 1)
+
+local function makeZ10Box(x, initial)
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(0.30, -6, 1, -8)
+    box.Position = UDim2.new(x, 3, 0, 4)
+    box.BackgroundColor3 = C.bg
+    box.Text = initial
+    box.TextColor3 = C.text
+    box.Font = Enum.Font.Code
+    box.TextSize = 14
+    box.ClearTextOnFocus = false
+    box.Parent = z10Row
+    corner(box, 6); stroke(box, C.line, 1)
+    return box
+end
+
+local z10X = makeZ10Box(0.00, string.format("%.2f", CONFIG.Zone10Pos.X))
+local z10Y = makeZ10Box(0.35, string.format("%.2f", CONFIG.Zone10Pos.Y))
+local z10Z = makeZ10Box(0.70, string.format("%.2f", CONFIG.Zone10Pos.Z))
+
+local z10ApplyRow = Instance.new("Frame")
+z10ApplyRow.Size = UDim2.new(1, 0, 0, 46)
+z10ApplyRow.BackgroundTransparency = 1
+z10ApplyRow.Parent = body
+
+local z10Apply = Instance.new("TextButton")
+z10Apply.Size = UDim2.new(0.5, -4, 1, 0)
+z10Apply.Position = UDim2.new(0, 0, 0, 0)
+z10Apply.BackgroundColor3 = C.ok
+z10Apply.Text = "✔ APPLY"
+z10Apply.TextColor3 = Color3.new(1,1,1)
+z10Apply.Font = Enum.Font.GothamBold
+z10Apply.TextSize = 14
+z10Apply.AutoButtonColor = false
+z10Apply.Parent = z10ApplyRow
+corner(z10Apply, 10); stroke(z10Apply, C.line, 1)
+
+local z10Grab = Instance.new("TextButton")
+z10Grab.Size = UDim2.new(0.5, -4, 1, 0)
+z10Grab.Position = UDim2.new(0.5, 4, 0, 0)
+z10Grab.BackgroundColor3 = C.blue
+z10Grab.Text = "📍 LẤY"
+z10Grab.TextColor3 = Color3.new(1,1,1)
+z10Grab.Font = Enum.Font.GothamBold
+z10Grab.TextSize = 14
+z10Grab.AutoButtonColor = false
+z10Grab.Parent = z10ApplyRow
+corner(z10Grab, 10); stroke(z10Grab, C.line, 1)
+
+z10Apply.MouseButton1Click:Connect(function()
+    local x = tonumber(z10X.Text) or 0
+    local y = tonumber(z10Y.Text) or 0
+    local z = tonumber(z10Z.Text) or 0
+    CONFIG.Zone10Pos = Vector3.new(x, y, z)
+    log(string.format("zone10 = (%.2f, %.2f, %.2f)", x, y, z))
+end)
+
+z10Grab.MouseButton1Click:Connect(function()
+    local char = LP.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        CONFIG.Zone10Pos = hrp.Position
+        z10X.Text = string.format("%.2f", hrp.Position.X)
+        z10Y.Text = string.format("%.2f", hrp.Position.Y)
+        z10Z.Text = string.format("%.2f", hrp.Position.Z)
+    end
+end)
+
+sectionLabel("TOGGLES")
+toggleBtn("CHỈ NHẶT RARITY", CONFIG.CheckRarityFirst, C.ok,
+    function(v) CONFIG.CheckRarityFirst = v end)
+toggleBtn("TELE KHI RAGDOLL", CONFIG.EnableRagdollTele, C.ok,
+    function(v) CONFIG.EnableRagdollTele = v end)
+
+zone10ToggleBtn = toggleBtn("AUTO ZONE10 FARM", CONFIG.EnableZone10Farm, C.ok,
+    function(v) CONFIG.EnableZone10Farm = v end)
+
+sectionLabel("CONTROL")
+actionBtn("🚀  TEST ZONE10", C.orange, function()
+    task.spawn(function() pcall(runZone10Once) end)
+end)
+actionBtn("♻  REFRESH CACHE", Color3.fromRGB(120,120,180), function()
+    refreshPromptCache()
+end)
+actionBtn("■  STOP", C.off, function()
+    STATE.running = false
+    STATE.status = "stopped"
+    pillDot.BackgroundColor3 = C.off
+    log("stopped")
+end)
+actionBtn("▶  START", C.ok, function()
+    STATE.running = true
+    STATE.status = "running"
+    pillDot.BackgroundColor3 = C.ok
+    log("started")
+end)
+
+-- =========================================================================
+--  AUTO START
+-- =========================================================================
+
+workspace.DescendantAdded:Connect(function(d)
+    if d:IsA("ProximityPrompt") and isStealPrompt(d) then
+        STEAL_PROMPTS[d] = true
+    end
+end)
+
+task.spawn(promptStealLoop)
+task.spawn(ragdollTeleportLoop)
+task.spawn(zone10FarmingLoop)
+
+task.spawn(function()
+    while true do
+        pcall(function()
+            pillLabel.Text = string.format("farm • %s",
+                STATE.running and "on" or "off")
         end)
-        if ok2 and res2 and res2.Body then raw = res2.Body end
-    end
-    if not raw then
-        Rayfield:Notify({Title="Hop", Content="Khong lay duoc danh sach server"})
-        return
-    end
-    local ok3, dec = pcall(function() return HS:JSONDecode(raw) end)
-    if not ok3 or not dec or not dec.data or #dec.data == 0 then
-        Rayfield:Notify({Title="Hop", Content="Khong co server nao"})
-        return
-    end
-    table.sort(dec.data, function(a, b)
-        return (a.playing or 0) < (b.playing or 0)
-    end)
-    local pick = nil
-    for _, srv in ipairs(dec.data) do
-        if srv.id and srv.id ~= game.JobId then pick = srv.id break end
-    end
-    if not pick then
-        Rayfield:Notify({Title="Hop", Content="Khong co server phu hop"})
-        return
-    end
-    local okTp = pcall(function()
-        TPS:TeleportToPlaceInstance(placeId, pick, LP)
-    end)
-    if not okTp then
-        pcall(function() TPS:Teleport(placeId, LP) end)
-    end
-end
-
-local function hookP(p)
-    pcall(function()
-        p.Triggered:Connect(function(pl)
-            if pl == LP and autoFlySafeOn then
-                task.wait(0.3)
-                if isCarrying() then pausedFollow = true v2HardTele(V2_DEST) end
-            end
-        end)
-    end)
-end
-pcall(function()
-    PPS.PromptTriggered:Connect(function(pr, pl)
-        if pl == LP and autoFlySafeOn then
-            task.wait(0.3)
-            if isCarrying() then pausedFollow = true v2HardTele(V2_DEST) end
-        end
-    end)
-end)
-PPS.PromptShown:Connect(function(p) hookP(p) end)
-
-local function promptMatchesAuto(p)
-    if not p or not p.Enabled then return false end
-    local node = p
-    for _ = 1, 8 do
-        if not node or not node.Parent then break end
-        node = node.Parent
-        if isPetAuto(node.Name) then return true end
-    end
-    return isPetAuto(p.ObjectText) or isPetAuto(p.Name)
-end
-local function firePromptAuto(p)
-    if not p or not p.Enabled then return end
-    pcall(function()
-        p.HoldDuration = 0
-        for _ = 1, 5 do
-            if fireproximityprompt then fireproximityprompt(p) end
-        end
-    end)
-end
-PPS.PromptShown:Connect(function(p)
-    promptCache[p] = tick()
-    if autoPetOn and promptMatchesAuto(p) then
-        firePromptAuto(p) firePromptAuto(p) firePromptAuto(p)
-    end
-end)
-task.spawn(function()
-    while task.wait(0.02) do
-        if autoPetOn then
-            for p in pairs(promptCache) do
-                if not p.Parent or not p.Enabled then
-                    promptCache[p] = nil
-                elseif promptMatchesAuto(p) then
-                    firePromptAuto(p)
-                end
-            end
-        end
+        task.wait(0.5)
     end
 end)
 
-local function autoStealScan()
-    if not autoPetOn then return end
-    local root = getRoot()
-    if not root then return end
-    local myPos = root.Position
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") and isPetAuto(obj.Name) and isInZone(obj) then
-            local p = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)
-            if p and (p.Position - myPos).Magnitude < 20 then
-                for _, d in ipairs(obj:GetDescendants()) do
-                    if d:IsA("ProximityPrompt") and d.Enabled then
-                        pcall(function()
-                            d.HoldDuration = 0
-                            if fireproximityprompt then fireproximityprompt(d) end
-                        end)
-                    end
-                end
-            end
-        end
-    end
-end
-task.spawn(function()
-    while task.wait(0.05) do
-        if autoPetOn then pcall(autoStealScan) end
-    end
-end)
-
-local function eS()
-    fe = false
-    if fcn then fcn:Disconnect() fcn = nil end
-    local h = gh()
-    if h then h.WalkSpeed = os end
-end
-local function scanE()
-    local list = {}
-    local zone = workspace:FindFirstChild("Build")
-    if zone then zone = zone:FindFirstChild("ZoneBuilds") end
-    if zone then zone = zone:FindFirstChild("Zone9") end
-    if zone then zone = zone:FindFirstChild("Eggs") end
-    if not zone then return list end
-    for _, o in ipairs(zone:GetDescendants()) do
-        if o:IsA("Model") and (string.find(o.Name, "Sun Egg", 1, true) or string.find(o.Name, "Starry Egg", 1, true) or string.find(o.Name, "BlackHole Egg", 1, true)) then
-            table.insert(list, o)
-        end
-    end
-    return list
-end
-local function startFollow()
-    if #sE == 0 then sE = scanE() end
-    if #sE == 0 then return end
-    local h = gh()
-    if not h then return end
-    os = h.WalkSpeed
-    h.WalkSpeed = eggSpd
-    fe = true
-    task.spawn(function()
-        while fe do
-            task.wait(60)
-            if not fe then break end
-            local nl = scanE()
-            if #nl > 0 then sE = nl end
-        end
-    end)
-    local lt = tick()
-    fcn = RS.Heartbeat:Connect(function()
-        if not fe or pausedFollow then return end
-        local v = {}
-        for _, eg in ipairs(sE) do
-            if eg and eg.Parent then table.insert(v, eg) end
-        end
-        if #v < #sE then
-            sE = v
-            if #sE == 0 then
-                sE = scanE()
-                if #sE == 0 then eS() return end
-            end
-        end
-        local r = getRoot()
-        local hh = gh()
-        if not r or not hh then return end
-        local mp = r.Position
-        local cl, cd = nil, math.huge
-        for _, eg in ipairs(sE) do
-            local p
-            if eg.PrimaryPart then p = eg.PrimaryPart.Position
-            else
-                local bp = eg:FindFirstChildWhichIsA("BasePart")
-                if bp then p = bp.Position end
-            end
-            if p then
-                local d = (p - mp).Magnitude
-                if d < cd then cd = d cl = p end
-            end
-        end
-        if not cl then return end
-        local nw = tick()
-        local dt = nw - lt
-        lt = nw
-        local d = cl - mp
-        local fl = Vector3.new(d.X, 0, d.Z)
-        local m = fl.Magnitude
-        if m > 1.5 then
-            local st = eggSpd * dt
-            if st > m then st = m end
-            local nP = r.Position + fl.Unit * st
-            r.Velocity = Vector3.new(0, 0, 0)
-            r.CFrame = CFrame.new(nP, nP + fl.Unit)
-            hh.WalkSpeed = 0
-        else
-            hh.WalkSpeed = 0
-        end
-    end)
-end
-
-task.spawn(function()
-    while task.wait(0.05) do
-        if svC and not itp then
-            pcall(function()
-                local ch = LP.Character
-                local h = ch and ch:FindFirstChildOfClass("Humanoid")
-                local r = ch and ch:FindFirstChild("HumanoidRootPart")
-                if h and r then
-                    local st = h:GetState()
-                    local rg = (st == Enum.HumanoidStateType.Ragdoll) or (st == Enum.HumanoidStateType.FallingDown) or (st == Enum.HumanoidStateType.Physics)
-                    local fl = math.abs(r.Orientation.Z) > 60 or math.abs(r.Orientation.X) > 60
-                    if rg or fl then
-                        itp = true
-                        lastRag = r.CFrame
-                        h:ChangeState(Enum.HumanoidStateType.GettingUp)
-                        r.CFrame = svC
-                        r.Velocity = Vector3.new(0, 0, 0)
-                        task.wait(0.5)
-                        itp = false
-                    end
-                end
-            end)
-        end
-    end
-end)
-
-local function findCarriedPet()
-    local ch = LP.Character
-    if not ch then return nil end
-    local c = LP:GetAttribute("Carrying")
-    if typeof(c) == "Instance" and c:IsA("Model") then return c end
-    local myRoot = getRoot()
-    if not myRoot then return nil end
-    local myPos = myRoot.Position
-    local closest, cd = nil, 12
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") and isPetAuto(obj.Name) then
-            local p = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-            if p then
-                local d = (p.Position - myPos).Magnitude
-                if d < cd then cd = d closest = obj end
-            end
-        end
-    end
-    return closest
-end
-local function petRoot(pet)
-    if not pet or not pet.Parent then return nil end
-    return pet.PrimaryPart or pet:FindFirstChildWhichIsA("BasePart", true)
-end
-local function pinToPet()
-    local root = getRoot()
-    local h = gh()
-    if not root or not h then return end
-    local pet = findCarriedPet()
-    local pr = petRoot(pet)
-    if not pr then return end
-    local st = h:GetState()
-    local isRag = (st == Enum.HumanoidStateType.Ragdoll) or (st == Enum.HumanoidStateType.FallingDown) or (st == Enum.HumanoidStateType.Physics)
-    local vel = root.Velocity.Magnitude
-    if isRag or vel > 120 then
-        local anchor = pr.Position
-        local keepDist = 2.5
-        local dir = (root.Position - anchor)
-        dir = Vector3.new(dir.X, 0, dir.Z)
-        if dir.Magnitude < 0.1 then dir = Vector3.new(1, 0, 0) end
-        dir = dir.Unit
-        local target = anchor + dir * keepDist
-        target = Vector3.new(target.X, anchor.Y + 2, target.Z)
-        root.Velocity = Vector3.new(0, 0, 0)
-        root.RotVelocity = Vector3.new(0, 0, 0)
-        root.CFrame = root.CFrame:Lerp(CFrame.new(target), 0.6)
-        pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-    end
-end
-task.spawn(function()
-    while task.wait(0.02) do
-        if antiKnockOn and not antiPaused and petPinOn and isCarrying() then
-            pcall(pinToPet)
-        end
-    end
-end)
-task.spawn(function()
-    while task.wait(0.15) do
-        local h = gh()
-        if h then
-            local st = h:GetState()
-            if st == Enum.HumanoidStateType.Ragdoll or st == Enum.HumanoidStateType.FallingDown then
-                pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-            end
-        end
-    end
-end)
-
-local function v2Land()
-    local root = getRoot()
-    local h = gh()
-    if not root or not h then return end
-    root.Velocity = Vector3.new(0, -50, 0)
-    task.wait(0.3)
-    root.Velocity = Vector3.new(0, 0, 0)
-    pcall(function() h:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-end
-local function v2FindPetInRange()
-    local root = getRoot()
-    if not root then return nil, nil end
-    local myPos = root.Position
-    local closest, closestPos, cd = nil, nil, math.huge
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") and isPetAuto(obj.Name) and isInZone(obj) then
-            local p = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)
-            if p then
-                local d = (p.Position - myPos).Magnitude
-                if d < cd then cd = d closest = obj closestPos = p.Position end
-            end
-        end
-    end
-    return closest, closestPos
-end
-local function v2FireSteal()
-    local root = getRoot()
-    if not root then return end
-    local myPos = root.Position
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") and isPetAuto(obj.Name) and isInZone(obj) then
-            local p = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)
-            if p and (p.Position - myPos).Magnitude < 20 then
-                for _, d in ipairs(obj:GetDescendants()) do
-                    if d:IsA("ProximityPrompt") and d.Enabled then
-                        pcall(function()
-                            d.HoldDuration = 0
-                            if fireproximityprompt then
-                                for _ = 1, 10 do fireproximityprompt(d) end
-                            end
-                        end)
-                        stolenPetFlag = true
-                        stolenPetTime = tick()
-                    end
-                end
-            end
-        end
-    end
-end
-
-task.spawn(function()
-    while task.wait(0.4) do
-        if not v2On then continue end
-        if tick() < v2Cooldown then continue end
-        if v2Stage ~= "idle" and v2Stage ~= "following" then continue end
-        if pausedFollow then continue end
-
-        local pet, petPos = v2FindPetInRange()
-        if pet then
-            if fe then eS() end
-            pausedFollow = true
-            v2Stage = "flying_to_pet"
-            v2Cooldown = tick() + 1.5
-            task.spawn(function()
-                local myRoot = getRoot()
-                local dist = myRoot and petPos and (petPos - myRoot.Position).Magnitude or 0
-                if dist > 8 then
-                    local arrived = false
-                    flyZ(petPos, function() arrived = true end)
-                    local t0 = tick()
-                    while not arrived and tick() - t0 < 20 do task.wait(0.2) end
-                    task.wait(0.4)
-                end
-                v2Stage = "stealing"
-                v2FireSteal()
-                local t1 = tick()
-                while tick() - t1 < 3 do
-                    task.wait(0.1)
-                    if isCarrying() then break end
-                end
-                if isCarrying() then
-                    v2Stage = "teleporting"
-                    v2HardTele(V2_DEST)
-                    task.wait(0.5)
-                    v2Stage = "flying_home"
-                    local done2 = false
-                    if egSvPos then
-                        flyZ(egSvPos, function() done2 = true end)
-                        local t2 = tick()
-                        while not done2 and tick() - t2 < 25 do task.wait(0.2) end
-                    else
-                        flyZ(V2_DEST, function() done2 = true end)
-                        local t2 = tick()
-                        while not done2 and tick() - t2 < 20 do task.wait(0.2) end
-                    end
-                    task.wait(0.5)
-                    v2Stage = "landing"
-                    v2Land()
-                    task.wait(0.4)
-                else
-                    Rayfield:Notify({Title="v2", Content="Khong cam duoc pet"})
-                end
-                pausedFollow = false
-                v2Stage = "following"
-                v2Cooldown = tick() + 0.5
-            end)
-        else
-            if not fe and not pausedFollow then
-                startFollow()
-                v2Stage = "following"
-            end
-        end
-    end
-end)
-
-local function cName(n)
-    local p = string.find(n, ": ")
-    if p then return string.sub(n, p + 2) end
-    return n
-end
-local function addESP(inst, color)
-    if hls[inst] then
-        hls[inst].hl.FillColor = color
-        hls[inst].hl.OutlineColor = color
-        if hls[inst].gui then hls[inst].gui.TextLabel.TextColor3 = color end
-        return
-    end
-    local hl = Instance.new("Highlight")
-    hl.FillColor = color
-    hl.FillTransparency = 0.4
-    hl.OutlineColor = color
-    hl.OutlineTransparency = 0
-    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    hl.Adornee = inst
-    hl.Parent = game:GetService("CoreGui")
-    local host = inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart", true)
-    local bb = nil
-    if host then
-        bb = Instance.new("BillboardGui")
-        bb.Size = UDim2.new(0, 200, 0, 30)
-        bb.StudsOffset = Vector3.new(0, 3, 0)
-        bb.AlwaysOnTop = true
-        bb.Adornee = host
-        bb.Parent = host
-        local lbl = Instance.new("TextLabel")
-        lbl.Size = UDim2.new(1, 0, 1, 0)
-        lbl.BackgroundTransparency = 1
-        lbl.Text = cName(inst.Name)
-        lbl.TextColor3 = color
-        lbl.TextSize = 16
-        lbl.TextStrokeTransparency = 0
-        lbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-        lbl.Font = Enum.Font.SourceSansBold
-        lbl.Parent = bb
-    end
-    hls[inst] = {hl = hl, gui = bb}
-end
-local function mList(name, list)
-    for k, c in pairs(list) do
-        if string.find(name, k, 1, true) then return c end
-    end
-end
-task.spawn(function()
-    while task.wait(0.3) do
-        if espEggOn or espPetOn then
-            for _, obj in ipairs(workspace:GetDescendants()) do
-                if obj:IsA("Model") then
-                    if espEggOn then
-                        local c = mList(obj.Name, EGG_ESP)
-                        if c then addESP(obj, c) end
-                    end
-                    if espPetOn then
-                        local c = mList(obj.Name, PET_ESP)
-                        if c then addESP(obj, c) end
-                    end
-                end
-            end
-            for inst, data in pairs(hls) do
-                if not inst.Parent then
-                    pcall(function() data.hl:Destroy() end)
-                    if data.gui then pcall(function() data.gui:Destroy() end) end
-                    hls[inst] = nil
-                end
-            end
-        else
-            for _, data in pairs(hls) do
-                pcall(function() data.hl:Destroy() end)
-                if data.gui then pcall(function() data.gui:Destroy() end) end
-            end
-            hls = {}
-        end
-    end
-end)
-
-local function createPingPanel()
-    if pingPanelObj then return end
-    local pgui = LP:FindFirstChild("PlayerGui")
-    if not pgui then return end
-    if pgui:FindFirstChild("pingPanelUI") then pgui.pingPanelUI:Destroy() end
-    local SG = Instance.new("ScreenGui")
-    SG.Name = "pingPanelUI"
-    SG.ResetOnSpawn = false
-    SG.Parent = pgui
-    local Box = Instance.new("Frame")
-    Box.Size = UDim2.new(0, 200, 0, 100)
-    Box.Position = UDim2.new(0.75, 0, 0.02, 0)
-    Box.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    Box.BorderSizePixel = 0
-    Box.Active = true
-    Box.Parent = SG
-    local bc = Instance.new("UICorner") bc.CornerRadius = UDim.new(0, 8) bc.Parent = Box
-    local bs = Instance.new("UIStroke") bs.Color = Color3.fromRGB(50, 180, 80) bs.Thickness = 1 bs.Parent = Box
-    local TT = Instance.new("TextLabel")
-    TT.Size = UDim2.new(1, 0, 0, 22)
-    TT.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-    TT.Text = "NETWORK"
-    TT.TextColor3 = Color3.fromRGB(255, 255, 255)
-    TT.TextSize = 11
-    TT.Font = Enum.Font.SourceSansBold
-    TT.Parent = Box
-    local ttc = Instance.new("UICorner") ttc.CornerRadius = UDim.new(0, 8) ttc.Parent = TT
-    local PingLbl = Instance.new("TextLabel")
-    PingLbl.Size = UDim2.new(0.9, 0, 0, 24)
-    PingLbl.Position = UDim2.new(0.05, 0, 0.30, 0)
-    PingLbl.BackgroundTransparency = 1
-    PingLbl.Text = "Ping: -- ms"
-    PingLbl.TextColor3 = Color3.fromRGB(80, 220, 100)
-    PingLbl.TextSize = 16
-    PingLbl.Font = Enum.Font.SourceSansBold
-    PingLbl.TextXAlignment = Enum.TextXAlignment.Left
-    PingLbl.Parent = Box
-    local FpsLbl = Instance.new("TextLabel")
-    FpsLbl.Size = UDim2.new(0.9, 0, 0, 20)
-    FpsLbl.Position = UDim2.new(0.05, 0, 0.55, 0)
-    FpsLbl.BackgroundTransparency = 1
-    FpsLbl.Text = "FPS: --"
-    FpsLbl.TextColor3 = Color3.fromRGB(200, 200, 200)
-    FpsLbl.TextSize = 13
-    FpsLbl.Font = Enum.Font.SourceSansBold
-    FpsLbl.TextXAlignment = Enum.TextXAlignment.Left
-    FpsLbl.Parent = Box
-    local fps = 0 local frameCount = 0 local lastUpdate = tick()
-    RS.RenderStepped:Connect(function()
-        frameCount = frameCount + 1
-        local now = tick()
-        if now - lastUpdate >= 1 then
-            fps = frameCount frameCount = 0 lastUpdate = now
-        end
-    end)
-    task.spawn(function()
-        while pingPanelOn do
-            task.wait(0.5)
-            local ok, ping = pcall(function()
-                return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
-            end)
-            if ok and ping then
-                local ms = math.floor(ping)
-                PingLbl.Text = "Ping: " .. ms .. " ms"
-                if ms < 80 then
-                    PingLbl.TextColor3 = Color3.fromRGB(80, 220, 100)
-                elseif ms < 150 then
-                    PingLbl.TextColor3 = Color3.fromRGB(255, 200, 50)
-                else
-                    PingLbl.TextColor3 = Color3.fromRGB(220, 80, 80)
-                end
-            else
-                PingLbl.Text = "Ping: N/A"
-            end
-            FpsLbl.Text = "FPS: " .. fps
-        end
-    end)
-    pingPanelObj = SG
-end
-local function destroyPingPanel()
-    if pingPanelObj then pcall(function() pingPanelObj:Destroy() end) pingPanelObj = nil end
-    local pgui = LP:FindFirstChild("PlayerGui")
-    if pgui and pgui:FindFirstChild("pingPanelUI") then pgui.pingPanelUI:Destroy() end
-end
-
-local okWin, Window = pcall(function()
-    return Rayfield:CreateWindow({
-        Name = "huongcuto20m",
-        LoadingTitle = "Dang tai...",
-        LoadingSubtitle = "by olliE",
-        ConfigurationSaving = {Enabled = false},
-        KeySystem = false,
-    })
-end)
-if not okWin or not Window then warn("[UI] CreateWindow fail:", Window) return end
-
-local function safeTab(name, icon)
-    local ok, tab = pcall(function() return Window:CreateTab(name, icon) end)
-    if not ok then warn("[UI] Tab fail:", name, tab) return nil end
-    return tab
-end
-local MainTab = safeTab("MAIN", 4483362458)
-local EspTab  = safeTab("ESP",  4483362458)
-local PetTab  = safeTab("PET",  4483362458)
-local MiscTab = safeTab("MISC", 4483362458)
-local function safeBtn(t, o) if t then pcall(function() t:CreateButton(o) end) end end
-local function safeTgl(t, o) if t then pcall(function() t:CreateToggle(o) end) end end
-local function safeSld(t, o) if t then pcall(function() t:CreateSlider(o) end) end end
-
-if MainTab then
-    safeTgl(MainTab, {Name="Auto Pick", CurrentValue=false, Callback=function(v) ap = v end})
-    safeTgl(MainTab, {Name="Auto Steal v1 (fly)", CurrentValue=false, Callback=function(v) autoFlySafeOn = v end})
-    safeTgl(MainTab, {Name="Auto Steal v2 (loop)", CurrentValue=false, Callback=function(v)
-        v2On = v
-        v2Stage = v and "following" or "idle"
-        v2Cooldown = 0
-        if v then
-            pausedFollow = false
-            stolenPetFlag = false
-            stolenPetTime = 0
-            antiKnockOn = true petPinOn = true
-            if not fe then startFollow() end
-        else
-            if fe then eS() end
-            pausedFollow = false
-            stolenPetFlag = false
-        end
-    end})
-    safeTgl(MainTab, {Name="WalkSpeed", CurrentValue=false, Callback=function(v)
-        se = v
-        local h = gh() if h then h.WalkSpeed = v and cs or dws end
-    end})
-    safeSld(MainTab, {Name="Walk toc do", Range={16,200}, Increment=10, Suffix="studs", CurrentValue=16, Callback=function(v)
-        cs = v
-        if se then local h = gh() if h then h.WalkSpeed = cs end end
-    end})
-    safeSld(MainTab, {Name="Fly Speed", Range={50,500}, Increment=25, Suffix="studs/s", CurrentValue=150, Callback=function(v) flySpeed = v end})
-    safeSld(MainTab, {Name="Egg Speed", Range={16,200}, Increment=10, Suffix="studs", CurrentValue=100, Callback=function(v) eggSpd = v end})
-    safeBtn(MainTab, {Name="Hop Server it nguoi", Callback=hopServer})
-end
-
-if EspTab then
-    safeTgl(EspTab, {Name="ESP Egg", CurrentValue=false, Callback=function(v) espEggOn = v end})
-    safeTgl(EspTab, {Name="ESP Pet", CurrentValue=false, Callback=function(v) espPetOn = v end})
-end
-
-if PetTab then
-    safeTgl(PetTab, {Name="Auto Pet", CurrentValue=false, Callback=function(v) autoPetOn = v end})
-    safeTgl(PetTab, {Name="Auto Pickaxe", CurrentValue=false, Callback=function(v) autoPickaxeOn = v end})
-    safeTgl(PetTab, {Name="Anti Knock", CurrentValue=false, Callback=function(v)
-        antiKnockOn = v petPinOn = v
-        if not v then antiPaused = false end
-    end})
-end
-
-if MiscTab then
-    safeTgl(MiscTab, {Name="Ping Panel", CurrentValue=false, Callback=function(v)
-        pingPanelOn = v
-        if v then createPingPanel() else destroyPingPanel() end
-    end})
-end
+log(string.format("farm — safe(%.2f,%.2f,%.2f) zone10(%.2f,%.2f,%.2f) treadmill %.1fs",
+    CONFIG.SafeZone.Position.X,
+    CONFIG.SafeZone.Position.Y,
+    CONFIG.SafeZone.Position.Z,
+    CONFIG.Zone10Pos.X,
+    CONFIG.Zone10Pos.Y,
+    CONFIG.Zone10Pos.Z,
+    CONFIG.TreadmillTime))
