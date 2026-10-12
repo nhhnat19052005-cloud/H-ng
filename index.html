@@ -5,8 +5,10 @@
   - AUTO STEAL: ragdoll → tele safe NGAY → về → spam 2.
   - Zone10 farm.
   - TELEPORT_LOCK mutex.
-  - WalkSpeed slider, REJOIN (TeleportAsync), server hop.
-  - AUTO RE-EXECUTE khi rejoin.
+  - WalkSpeed slider.
+  - REJOIN: kick + queue_on_teleport (Roblox tự prompt rejoin).
+  - AUTO REJOIN khi disconnect tự nhiên.
+  - Server hop có cooldown.
   - Pill.
   - Mobile + PC.
 --]]
@@ -64,6 +66,7 @@ local CONFIG = {
     ServerHopMinPlayers = 0,
     ServerHopMaxPlayers = 1,
     ServerHopScanTime   = 30,
+    HopCooldown         = 30,
     AutoRejoinOnDisconnect = true,
     LastServerJobId     = "",
     Cookie              = "",
@@ -82,11 +85,21 @@ local STEAL_PROMPTS = {}
 local RAGDOLL_EVENT = false
 local arPaused = false
 local TELEPORT_LOCK = false
+local REJOINING = false
+local LAST_HOP_TIME = 0
 
 local arHoldingPos = false
 local arSavedPos = nil
 local arIsMoving = false
 local arKeyState = { W=false, A=false, S=false, D=false }
+
+-- cache API
+local HAS_ASYNC = false
+local HAS_OPTS = false
+pcall(function()
+    HAS_ASYNC = TeleportService.TeleportAsync ~= nil
+    HAS_OPTS = TeleportOptions ~= nil
+end)
 
 local function log(...)
     if CONFIG.EnableLogging then print("[farm]", ...) end
@@ -160,37 +173,14 @@ local function setWalkSpeed(v)
     if hum then hum.WalkSpeed = v end
 end
 
+-- REJOIN: kick + queue
 local function rejoinServer()
-    log("rejoin attempt:", game.JobId)
+    log("rejoin: kick + queue")
     queueScript()
-
-    -- TeleportAsync với ServerInstanceId
-    if TeleportService.TeleportAsync and TeleportOptions then
-        local ok = pcall(function()
-            local opts = Instance.new("TeleportOptions")
-            opts.ServerInstanceId = game.JobId
-            TeleportService:TeleportAsync(game.PlaceId, {LP}, opts)
-        end)
-        if ok then
-            log("rejoin: TeleportAsync sent")
-            return true
-        end
-        log("rejoin: TeleportAsync failed")
-    end
-
-    -- fallback: TeleportToPlaceInstance
-    if game.JobId and game.JobId ~= "" then
-        local ok = pcall(function()
-            TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP)
-        end)
-        if ok then
-            log("rejoin: TeleportToPlaceInstance sent")
-            return true
-        end
-    end
-
-    log("rejoin: all failed")
-    return false
+    task.wait(0.3)
+    pcall(function()
+        LP:Kick("Rejoining...")
+    end)
 end
 
 local function getHRP(char)
@@ -605,6 +595,7 @@ LP.CharacterAdded:Connect(function(c)
     arSavedPos = nil
     arIsMoving = false
     TELEPORT_LOCK = false
+    REJOINING = false
     attachRagdollWatcher(c)
 end)
 
@@ -845,9 +836,14 @@ end
 
 local function hopToServer(jobId)
     if not jobId or jobId == "" then return false end
+    if tick() - LAST_HOP_TIME < CONFIG.HopCooldown then
+        log("hop: cooldown")
+        return false
+    end
+    LAST_HOP_TIME = tick()
     queueScript()
-    -- TeleportAsync nếu có
-    if TeleportService.TeleportAsync and TeleportOptions then
+
+    if HAS_ASYNC and HAS_OPTS then
         local ok = pcall(function()
             local opts = Instance.new("TeleportOptions")
             opts.ServerInstanceId = jobId
@@ -859,7 +855,7 @@ local function hopToServer(jobId)
             return true
         end
     end
-    -- fallback
+
     local ok = pcall(function()
         TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId, LP)
     end)
@@ -870,13 +866,12 @@ local function hopToServer(jobId)
 end
 
 local function serverHopLoop()
-    task.wait(5)
+    task.wait(10)
     while STATE.running do
         if CONFIG.EnableServerHop then
-            local jobId = findLowPopServer()
-            if jobId and jobId ~= game.JobId then
+            local ok, jobId = pcall(findLowPopServer)
+            if ok and jobId and jobId ~= game.JobId then
                 hopToServer(jobId)
-                task.wait(5)
             end
         end
         task.wait(CONFIG.ServerHopScanTime)
@@ -889,22 +884,19 @@ local function setupAutoRejoin()
     end
     Players.PlayerRemoving:Connect(function(plr)
         if plr == LP and CONFIG.AutoRejoinOnDisconnect
-            and CONFIG.LastServerJobId ~= "" then
+            and CONFIG.LastServerJobId ~= "" and not REJOINING then
+            REJOINING = true
             queueScript()
             task.wait(2)
-            -- ưu tiên TeleportAsync
-            if TeleportService.TeleportAsync and TeleportOptions then
-                local ok = pcall(function()
+            pcall(function()
+                if HAS_ASYNC and HAS_OPTS then
                     local opts = Instance.new("TeleportOptions")
                     opts.ServerInstanceId = CONFIG.LastServerJobId
                     TeleportService:TeleportAsync(game.PlaceId, {LP}, opts)
-                end)
-                if ok then return end
-            end
-            -- fallback
-            pcall(function()
-                TeleportService:TeleportToPlaceInstance(
-                    game.PlaceId, CONFIG.LastServerJobId, LP)
+                else
+                    TeleportService:TeleportToPlaceInstance(
+                        game.PlaceId, CONFIG.LastServerJobId, LP)
+                end
             end)
         end
     end)
@@ -1311,4 +1303,4 @@ task.spawn(function()
     end
 end)
 
-log(CONFIG.PillName .. " — farm full, rejoin via TeleportAsync")
+log(CONFIG.PillName .. " — farm full, rejoin kick + queue")
