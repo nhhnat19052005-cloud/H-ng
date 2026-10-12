@@ -1,13 +1,19 @@
 --[[
   farm (full)
-  - Prompt Steal loop: cache + quét 0.6s → rarity filter → fire.
-  - Ragdoll tele: ragdoll → safe → về vị trí cũ.
-  - Zone10 farm: tìm treadmill CỦA MÌNH → walk vào → 1.5s → nhảy → tele zone10 → auto off.
-  - Safe (-56.86, 3.50, 0.91), Zone10 (-2873.74, 3.50, 1.24).
+  - Prompt Steal loop: cache 3s → rarity filter → fire.
+  - Ragdoll tele: spam → safe → về cũ → spam 2.
+  - Zone10 farm.
+  - Server hop + auto rejoin.
+  - Pill: huongcuto20m + ping/fps (cache 1s).
+  - Mobile + PC.
 --]]
 
 local Players                = game:GetService("Players")
-local ProximityPromptService = game:GetService("ProximityPromptService")
+local RunService             = game:GetService("RunService")
+local TeleportService        = game:GetService("TeleportService")
+local HttpService            = game:GetService("HttpService")
+local Stats                  = game:GetService("Stats")
+local UserInputService       = game:GetService("UserInputService")
 
 local LP = Players.LocalPlayer
 
@@ -19,9 +25,11 @@ local CONFIG = {
     PromptActionText = "Steal",
     WatcherRange     = 25,
     PromptLoopInterval = 0.6,
-    CacheRefreshInterval = 10,
+    CacheRefreshInterval = 3,
 
     EnableRagdollTele = true,
+    RagdollSpamTime   = 2.5,
+    RagdollSpamInterval = 0.1,
     TeleportInterval  = 4.0,
     RagdollStayTime   = 2.5,
     TeleportCooldown  = 0.5,
@@ -37,12 +45,22 @@ local CONFIG = {
     Zone10LoopDelay  = 2,
     WalkSpeedBoost   = 100,
 
+    EnableServerHop    = false,
+    ServerHopMinPlayers = 0,
+    ServerHopMaxPlayers = 1,
+    ServerHopScanTime   = 30,
+    AutoRejoinOnDisconnect = true,
+    LastServerJobId     = "",
+    Cookie              = "",
+
+    PillName = "huongcuto20m",
+    StatUpdateInterval = 1,
+
     EnableLogging    = true,
 }
 
 local STATE = { running = true, status = "auto" }
 local STEAL_PROMPTS = {}
-local zone10ToggleBtn = nil
 
 local function log(...)
     if CONFIG.EnableLogging then print("[farm]", ...) end
@@ -99,10 +117,8 @@ local function walkTo(pos, timeout)
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum then return false end
-
     local oldWS = hum.WalkSpeed
     hum.WalkSpeed = CONFIG.WalkSpeedBoost
-
     local deadline = tick() + timeout
     while tick() < deadline do
         local cur = hrp.Position
@@ -111,7 +127,6 @@ local function walkTo(pos, timeout)
         hum:MoveTo(Vector3.new(pos.X, cur.Y, pos.Z))
         task.wait(0.1)
     end
-
     hum.WalkSpeed = oldWS
     return true
 end
@@ -204,7 +219,7 @@ local function findPetNearPrompt(promptPos, radius, promptInst)
 end
 
 -- =========================================================================
---  STEAL PROMPT CACHE
+--  STEAL CACHE
 -- =========================================================================
 
 local function isStealPrompt(p)
@@ -227,27 +242,42 @@ local function refreshPromptCache()
             n = n + 1
         end
     end
-    log("cache:", n, "steal prompts")
+    log("cache:", n, "steal")
 end
 
--- =========================================================================
---  PROMPT STEAL LOOP
--- =========================================================================
+local function fireNearestStealPrompt()
+    local origin = charOrigin()
+    if not origin then return false end
+    local best, bestDist
+    for prompt in pairs(STEAL_PROMPTS) do
+        if prompt and prompt.Parent and prompt.Enabled then
+            local p = prompt.Parent
+            local pos
+            if p:IsA("BasePart") then pos = p.Position
+            elseif p:IsA("Attachment") then pos = p.WorldPosition end
+            if pos then
+                local dist = (pos - origin).Magnitude
+                if dist <= CONFIG.WatcherRange and (not bestDist or dist < bestDist) then
+                    best, bestDist = prompt, dist
+                end
+            end
+        end
+    end
+    if best then firePrompt(best); return true end
+    return false
+end
 
 local function promptStealLoop()
     task.wait(1)
     refreshPromptCache()
     local lastCache = tick()
-
     while STATE.running do
         if tick() - lastCache > CONFIG.CacheRefreshInterval then
             refreshPromptCache()
             lastCache = tick()
         end
-
         local origin = charOrigin()
         if not origin then task.wait(0.5); continue end
-
         local best, bestDist
         for prompt in pairs(STEAL_PROMPTS) do
             if prompt and prompt.Parent and prompt.Enabled then
@@ -265,30 +295,25 @@ local function promptStealLoop()
                 STEAL_PROMPTS[prompt] = nil
             end
         end
-
         if best then
             local p = best.Parent
             local promptPos
             if p and p:IsA("BasePart") then promptPos = p.Position
             elseif p and p:IsA("Attachment") then promptPos = p.WorldPosition end
-
             if CONFIG.CheckRarityFirst and promptPos then
                 local pet = findPetNearPrompt(promptPos, CONFIG.RaritySearchNear, best)
                 local rarity = getPetRarity(pet)
-                if petMatchesRarity(rarity) then
-                    firePrompt(best)
-                end
+                if petMatchesRarity(rarity) then firePrompt(best) end
             else
                 firePrompt(best)
             end
         end
-
         task.wait(CONFIG.PromptLoopInterval)
     end
 end
 
 -- =========================================================================
---  RAGDOLL TELE LOOP
+--  RAGDOLL TELE
 -- =========================================================================
 
 local function ragdollTeleportLoop()
@@ -302,21 +327,37 @@ local function ragdollTeleportLoop()
         if not hrp then task.wait(0.5); continue end
 
         local savedPos = hrp.Position
-        log("ragdoll — tele safe")
+        log("ragdoll — spam lần 1")
+        local spamEnd = tick() + CONFIG.RagdollSpamTime
+        while tick() < spamEnd do
+            fireNearestStealPrompt()
+            task.wait(CONFIG.RagdollSpamInterval)
+        end
 
+        log("tele safe")
         teleportChar(CONFIG.SafeZone.Position)
         task.wait(CONFIG.TeleportCooldown)
         task.wait(CONFIG.RagdollStayTime)
 
         log("tele về vị trí cũ")
         teleportChar(savedPos)
+        task.wait(CONFIG.TeleportCooldown)
+
+        log("spam lần 2")
+        task.spawn(refreshPromptCache)
+        task.wait(0.2)
+        local spam2End = tick() + CONFIG.RagdollSpamTime
+        while tick() < spam2End do
+            fireNearestStealPrompt()
+            task.wait(CONFIG.RagdollSpamInterval)
+        end
 
         task.wait(CONFIG.TeleportInterval)
     end
 end
 
 -- =========================================================================
---  ZONE10 FARM
+--  ZONE10
 -- =========================================================================
 
 local function getAttrSafe(inst, name)
@@ -328,7 +369,6 @@ end
 local function isMyTreadmill(tm)
     local userId = LP.UserId
     local userName = LP.Name:lower()
-
     for _, attr in ipairs({ "Owner", "OwnerId", "UserId", "Player", "PlayerId" }) do
         local v = getAttrSafe(tm, attr)
         if v ~= nil then
@@ -340,11 +380,9 @@ local function isMyTreadmill(tm)
             return false
         end
     end
-
     local n = tm.Name:lower()
     if n:find(userName, 1, true) then return true end
     if n:find(tostring(userId), 1, true) then return true end
-
     return nil
 end
 
@@ -361,8 +399,6 @@ end
 
 local function findTreadmill()
     local origin = charOrigin()
-
-    -- 1) ưu tiên treadmill có owner = mình
     local mine, minePos
     for _, d in ipairs(workspace:GetDescendants()) do
         if (d:IsA("Model") or d:IsA("BasePart")) and
@@ -370,10 +406,7 @@ local function findTreadmill()
             if isMyTreadmill(d) == true then
                 local pos = getTreadmillPos(d)
                 if pos then
-                    if not origin then
-                        mine, minePos = d, pos
-                        break
-                    end
+                    if not origin then mine, minePos = d, pos; break end
                     if not minePos or (minePos - origin).Magnitude > (pos - origin).Magnitude then
                         mine, minePos = d, pos
                     end
@@ -383,7 +416,6 @@ local function findTreadmill()
     end
     if mine then return mine, minePos end
 
-    -- 2) fallback: gần char nhất trong bán kính hẹp
     local best, bestPos, bestDist
     if origin then
         for _, d in ipairs(workspace:GetDescendants()) do
@@ -405,50 +437,180 @@ end
 
 local function runZone10Once()
     local tm, tmPos = findTreadmill()
-    if not tm or not tmPos then
-        log("zone10: ko tìm được treadmill")
-        return false
-    end
-    log("zone10: treadmill @", tostring(tmPos))
-
+    if not tm or not tmPos then return false end
     teleportChar(tmPos + Vector3.new(0, 2, 0))
     task.wait(0.4)
     walkTo(tmPos, 3)
     task.wait(0.2)
-
-    log("zone10: chạy", CONFIG.TreadmillTime, "s")
     task.wait(CONFIG.TreadmillTime)
-
     local char = LP.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if hum then hum.Jump = true end
     task.wait(CONFIG.TreadmillJumpTime)
-
-    log("zone10: tele zone10")
     teleportChar(CONFIG.Zone10Pos)
-
-    -- auto off
-    task.wait(0.5)
-    CONFIG.EnableZone10Farm = false
-    log("zone10: DONE — tự tắt auto zone10")
-
-    if zone10ToggleBtn then
-        pcall(function()
-            zone10ToggleBtn.Text = "AUTO ZONE10 FARM: OFF"
-            zone10ToggleBtn.BackgroundColor3 = Color3.fromRGB(230,80,90)
-        end)
-    end
     return true
 end
 
 local function zone10FarmingLoop()
     while STATE.running do
-        if not CONFIG.EnableZone10Farm then
-            task.wait(1); continue
-        end
+        if not CONFIG.EnableZone10Farm then task.wait(1); continue end
         pcall(runZone10Once)
         task.wait(CONFIG.Zone10LoopDelay)
     end
+end
+
+-- =========================================================================
+--  SERVER HOP
+-- =========================================================================
+
+local function getHttpFn()
+    if syn and syn.request then return syn.request, "syn" end
+    if http_request then return http_request, "http_request" end
+    if http and http.request then return http.request, "http" end
+    if fluxus and fluxus.request then return fluxus.request, "fluxus" end
+    if krnl and krnl.request then return krnl.request, "krnl" end
+    if request then return request, "request" end
+    return nil, "none"
+end
+
+local function httpGet(url)
+    local fn, name = getHttpFn()
+    if not fn then log("HTTP: no wrapper"); return nil end
+    log("HTTP via:", name)
+    local headers = {
+        ["User-Agent"] = "Roblox/WinInet",
+        ["Accept"] = "application/json",
+    }
+    if CONFIG.Cookie ~= "" then
+        headers["Cookie"] = ".ROBLOSECURITY=" .. CONFIG.Cookie
+    end
+    local ok, res = pcall(fn, { Url = url, Method = "GET", Headers = headers })
+    if not ok or not res then log("HTTP err"); return nil end
+    local status = res.StatusCode or res.Status or res.status or "?"
+    local body = res.Body or res.body or ""
+    log("HTTP", status, "len:", #body)
+    if tostring(status) ~= "200" then log("body:", body:sub(1, 200)); return nil end
+    return body
+end
+
+local function findLowPopServer()
+    local list
+    if syn and syn.getservers then
+        local ok, r = pcall(syn.getservers, game.PlaceId)
+        if ok and r then list = r end
+    end
+    if not list and getgenv and getgenv().getservers then
+        local ok, r = pcall(getgenv().getservers, game.PlaceId)
+        if ok and r then list = r end
+    end
+    if list then
+        for _, srv in ipairs(list) do
+            local cnt = srv.playing or srv.Playing or srv.players
+            local id  = srv.id or srv.Id or srv.jobId
+            if id and cnt and cnt >= CONFIG.ServerHopMinPlayers
+                and cnt <= CONFIG.ServerHopMaxPlayers then
+                return id, cnt
+            end
+        end
+    end
+    local endpoints = {
+        string.format("https://games.roblox.com/v1/games/%d/servers/Public?limit=100&sortOrder=Asc", game.PlaceId),
+        string.format("https://games.roblox.com/v1/games/%d/servers/0?limit=100&sortOrder=Asc", game.PlaceId),
+    }
+    for i, url in ipairs(endpoints) do
+        log("try endpoint", i)
+        local body = httpGet(url)
+        if body then
+            local ok, data = pcall(function() return HttpService:JSONDecode(body) end)
+            if ok and data and data.data then
+                for _, srv in ipairs(data.data) do
+                    if srv.id and srv.playing ~= nil
+                        and srv.playing >= CONFIG.ServerHopMinPlayers
+                        and srv.playing <= CONFIG.ServerHopMaxPlayers then
+                        return srv.id, srv.playing
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function hopToServer(jobId)
+    if not jobId or jobId == "" then return false end
+    local ok, err = pcall(function()
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId, LP)
+    end)
+    if not ok then log("hop err:", err); return false end
+    CONFIG.LastServerJobId = jobId
+    log("hop →", jobId)
+    return true
+end
+
+local function serverHopLoop()
+    task.wait(5)
+    while STATE.running do
+        if CONFIG.EnableServerHop then
+            local jobId, count = findLowPopServer()
+            if jobId and jobId ~= game.JobId then
+                log("hop:", count, "player")
+                hopToServer(jobId)
+                task.wait(5)
+            end
+        end
+        task.wait(CONFIG.ServerHopScanTime)
+    end
+end
+
+local function setupAutoRejoin()
+    if game.JobId and game.JobId ~= "" then
+        CONFIG.LastServerJobId = game.JobId
+    end
+    Players.PlayerRemoving:Connect(function(plr)
+        if plr == LP and CONFIG.AutoRejoinOnDisconnect
+            and CONFIG.LastServerJobId ~= "" then
+            log("disconnect — rejoin")
+            task.wait(2)
+            pcall(function()
+                TeleportService:TeleportToPlaceInstance(
+                    game.PlaceId, CONFIG.LastServerJobId, LP)
+            end)
+        end
+    end)
+end
+
+-- =========================================================================
+--  FPS + PING (cached)
+-- =========================================================================
+
+local fps = 60
+local frameCount = 0
+local fpsStart = tick()
+
+RunService.Heartbeat:Connect(function()
+    frameCount = frameCount + 1
+    local now = tick()
+    if now - fpsStart >= 1 then
+        fps = frameCount
+        frameCount = 0
+        fpsStart = now
+    end
+end)
+
+local cachedPing = 0
+local lastPingUpdate = 0
+
+local function getPingCached()
+    local now = tick()
+    if now - lastPingUpdate < CONFIG.StatUpdateInterval then
+        return cachedPing
+    end
+    lastPingUpdate = now
+    local ok, val = pcall(function()
+        return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+    end)
+    if ok and val then cachedPing = math.floor(val) end
+    return cachedPing
 end
 
 -- =========================================================================
@@ -482,14 +644,43 @@ local function stroke(o, col, t)
     s.Thickness = t or 1; s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; s.Parent = o
 end
 
+-- Pill draggable
 local pill = Instance.new("Frame")
-pill.Size = UDim2.fromOffset(220, 44)
-pill.Position = UDim2.new(0.5, -110, 0, 18)
+pill.Size = UDim2.fromOffset(280, 48)
+pill.Position = UDim2.new(0.5, -140, 0, 20)
 pill.BackgroundColor3 = C.bg
 pill.BorderSizePixel = 0
 pill.Active = true
 pill.Parent = screen
-corner(pill, 22); stroke(pill, C.accent, 2)
+corner(pill, 24); stroke(pill, C.accent, 2)
+
+do
+    local dragging, dragStart, startPos
+    pill.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = pill.Position
+        end
+    end)
+    pill.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+            local d = input.Position - dragStart
+            pill.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + d.X,
+                startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+end
 
 local pillBtn = Instance.new("TextButton")
 pillBtn.Size = UDim2.new(1, 0, 1, 0)
@@ -498,27 +689,28 @@ pillBtn.Text = ""
 pillBtn.Parent = pill
 
 local pillDot = Instance.new("Frame")
-pillDot.Size = UDim2.fromOffset(12, 12)
-pillDot.Position = UDim2.new(0, 16, 0.5, -6)
+pillDot.Size = UDim2.fromOffset(14, 14)
+pillDot.Position = UDim2.new(0, 18, 0.5, -7)
 pillDot.BackgroundColor3 = C.ok
 pillDot.Parent = pill
-corner(pillDot, 6)
+corner(pillDot, 7)
 
 local pillLabel = Instance.new("TextLabel")
-pillLabel.Size = UDim2.new(1, -50, 1, 0)
-pillLabel.Position = UDim2.new(0, 38, 0, 0)
+pillLabel.Size = UDim2.new(1, -60, 1, 0)
+pillLabel.Position = UDim2.new(0, 42, 0, 0)
 pillLabel.BackgroundTransparency = 1
 pillLabel.Font = Enum.Font.GothamBold
 pillLabel.TextSize = 13
 pillLabel.TextColor3 = C.text
 pillLabel.TextXAlignment = Enum.TextXAlignment.Left
-pillLabel.Text = "farm • auto"
+pillLabel.Text = CONFIG.PillName .. " • loading..."
 pillLabel.Parent = pill
 
-local W, H = 320, 580
+-- Panel
+local W, H = 320, 600
 local panel = Instance.new("Frame")
 panel.Size = UDim2.fromOffset(W, H)
-panel.Position = UDim2.new(0.5, -W/2, 0, 72)
+panel.Position = UDim2.new(0.5, -W/2, 0, 80)
 panel.BackgroundColor3 = C.bg
 panel.BorderSizePixel = 0
 panel.Visible = false
@@ -539,20 +731,20 @@ headerLbl.Font = Enum.Font.GothamBold
 headerLbl.TextSize = 16
 headerLbl.TextColor3 = C.accent
 headerLbl.TextXAlignment = Enum.TextXAlignment.Left
-headerLbl.Text = "steal + tele + zone10"
+headerLbl.Text = CONFIG.PillName
 headerLbl.Parent = header
 
 local closePill = Instance.new("TextButton")
-closePill.Size = UDim2.fromOffset(32, 32)
-closePill.Position = UDim2.new(1, -42, 0, 7)
+closePill.Size = UDim2.fromOffset(36, 36)
+closePill.Position = UDim2.new(1, -46, 0, 5)
 closePill.BackgroundColor3 = C.off
 closePill.Text = "×"
 closePill.TextColor3 = Color3.new(1,1,1)
 closePill.Font = Enum.Font.GothamBold
-closePill.TextSize = 18
+closePill.TextSize = 20
 closePill.AutoButtonColor = false
 closePill.Parent = header
-corner(closePill, 16)
+corner(closePill, 18)
 
 closePill.MouseButton1Click:Connect(function() panel.Visible = false end)
 pillBtn.MouseButton1Click:Connect(function() panel.Visible = not panel.Visible end)
@@ -562,7 +754,7 @@ body.Size = UDim2.new(1, -20, 1, -60)
 body.Position = UDim2.new(0, 10, 0, 52)
 body.BackgroundTransparency = 1
 body.BorderSizePixel = 0
-body.ScrollBarThickness = 3
+body.ScrollBarThickness = 4
 body.ScrollBarImageColor3 = C.accent
 body.CanvasSize = UDim2.new(0, 0, 0, 0)
 body.AutomaticCanvasSize = Enum.AutomaticSize.Y
@@ -588,7 +780,7 @@ end
 
 local function actionBtn(label, color, onClick)
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(1, 0, 0, 46)
+    b.Size = UDim2.new(1, 0, 0, 52)
     b.BackgroundColor3 = color
     b.Text = label
     b.TextColor3 = Color3.new(1,1,1)
@@ -624,7 +816,7 @@ end
 
 sectionLabel("SAFE ZONE XYZ")
 local xyzRow = Instance.new("Frame")
-xyzRow.Size = UDim2.new(1, 0, 0, 48)
+xyzRow.Size = UDim2.new(1, 0, 0, 52)
 xyzRow.BackgroundColor3 = C.card
 xyzRow.BorderSizePixel = 0
 xyzRow.Parent = body
@@ -650,7 +842,7 @@ local boxY = makeXYZBox(0.35, string.format("%.2f", CONFIG.SafeZone.Position.Y))
 local boxZ = makeXYZBox(0.70, string.format("%.2f", CONFIG.SafeZone.Position.Z))
 
 local applyRow = Instance.new("Frame")
-applyRow.Size = UDim2.new(1, 0, 0, 46)
+applyRow.Size = UDim2.new(1, 0, 0, 52)
 applyRow.BackgroundTransparency = 1
 applyRow.Parent = body
 
@@ -683,7 +875,6 @@ applyBtn.MouseButton1Click:Connect(function()
     local y = tonumber(boxY.Text) or 0
     local z = tonumber(boxZ.Text) or 0
     CONFIG.SafeZone = CFrame.new(x, y, z)
-    log(string.format("safe zone = (%.2f, %.2f, %.2f)", x, y, z))
 end)
 
 grabBtn.MouseButton1Click:Connect(function()
@@ -699,7 +890,7 @@ end)
 
 sectionLabel("ZONE10")
 local z10Row = Instance.new("Frame")
-z10Row.Size = UDim2.new(1, 0, 0, 48)
+z10Row.Size = UDim2.new(1, 0, 0, 52)
 z10Row.BackgroundColor3 = C.card
 z10Row.BorderSizePixel = 0
 z10Row.Parent = body
@@ -725,7 +916,7 @@ local z10Y = makeZ10Box(0.35, string.format("%.2f", CONFIG.Zone10Pos.Y))
 local z10Z = makeZ10Box(0.70, string.format("%.2f", CONFIG.Zone10Pos.Z))
 
 local z10ApplyRow = Instance.new("Frame")
-z10ApplyRow.Size = UDim2.new(1, 0, 0, 46)
+z10ApplyRow.Size = UDim2.new(1, 0, 0, 52)
 z10ApplyRow.BackgroundTransparency = 1
 z10ApplyRow.Parent = body
 
@@ -758,7 +949,6 @@ z10Apply.MouseButton1Click:Connect(function()
     local y = tonumber(z10Y.Text) or 0
     local z = tonumber(z10Z.Text) or 0
     CONFIG.Zone10Pos = Vector3.new(x, y, z)
-    log(string.format("zone10 = (%.2f, %.2f, %.2f)", x, y, z))
 end)
 
 z10Grab.MouseButton1Click:Connect(function()
@@ -778,12 +968,16 @@ toggleBtn("CHỈ NHẶT RARITY", CONFIG.CheckRarityFirst, C.ok,
 toggleBtn("TELE KHI RAGDOLL", CONFIG.EnableRagdollTele, C.ok,
     function(v) CONFIG.EnableRagdollTele = v end)
 
-zone10ToggleBtn = toggleBtn("AUTO ZONE10 FARM", CONFIG.EnableZone10Farm, C.ok,
-    function(v) CONFIG.EnableZone10Farm = v end)
+sectionLabel("SERVER HOP")
+toggleBtn("AUTO HOP (≤1 player)", CONFIG.EnableServerHop, C.ok,
+    function(v) CONFIG.EnableServerHop = v end)
+toggleBtn("AUTO REJOIN", CONFIG.AutoRejoinOnDisconnect, C.ok,
+    function(v) CONFIG.AutoRejoinOnDisconnect = v end)
 
 sectionLabel("CONTROL")
-actionBtn("🚀  TEST ZONE10", C.orange, function()
-    task.spawn(function() pcall(runZone10Once) end)
+actionBtn("🔎  FIND 1-PLAYER SERVER", Color3.fromRGB(120,120,180), function()
+    local jobId = findLowPopServer()
+    if jobId then hopToServer(jobId) end
 end)
 actionBtn("♻  REFRESH CACHE", Color3.fromRGB(120,120,180), function()
     refreshPromptCache()
@@ -792,13 +986,12 @@ actionBtn("■  STOP", C.off, function()
     STATE.running = false
     STATE.status = "stopped"
     pillDot.BackgroundColor3 = C.off
-    log("stopped")
 end)
 actionBtn("▶  START", C.ok, function()
     STATE.running = true
     STATE.status = "running"
     pillDot.BackgroundColor3 = C.ok
-    log("started")
+    CONFIG.EnableZone10Farm = true
 end)
 
 -- =========================================================================
@@ -811,25 +1004,26 @@ workspace.DescendantAdded:Connect(function(d)
     end
 end)
 
+setupAutoRejoin()
+
 task.spawn(promptStealLoop)
 task.spawn(ragdollTeleportLoop)
 task.spawn(zone10FarmingLoop)
+task.spawn(serverHopLoop)
 
+-- Pill update (1s, cached ping/fps)
 task.spawn(function()
     while true do
         pcall(function()
-            pillLabel.Text = string.format("farm • %s",
-                STATE.running and "on" or "off")
+            pillLabel.Text = string.format(
+                "%s • %s • %dms • %dfps",
+                CONFIG.PillName,
+                STATE.running and "on" or "off",
+                getPingCached(),
+                fps)
         end)
-        task.wait(0.5)
+        task.wait(CONFIG.StatUpdateInterval)
     end
 end)
 
-log(string.format("farm — safe(%.2f,%.2f,%.2f) zone10(%.2f,%.2f,%.2f) treadmill %.1fs",
-    CONFIG.SafeZone.Position.X,
-    CONFIG.SafeZone.Position.Y,
-    CONFIG.SafeZone.Position.Z,
-    CONFIG.Zone10Pos.X,
-    CONFIG.Zone10Pos.Y,
-    CONFIG.Zone10Pos.Z,
-    CONFIG.TreadmillTime))
+log(CONFIG.PillName .. " — farm full, cache FPS/ping 1s")
