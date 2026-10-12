@@ -1,11 +1,12 @@
 --[[
   farm (full)
   - Prompt Steal loop: cache 3s → rarity filter → fire.
-  - Ragdoll tele: spam → safe → về cũ → spam 2.
+  - Ragdoll detect: state + event → spam → safe → về → spam 2.
   - Zone10 farm.
-  - Server hop + auto rejoin.
-  - Pill: huongcuto20m + ping/fps (cache 1s).
-  - Mobile + PC.
+  - Server hop + auto rejoin + nút REJOIN.
+  - WalkSpeed slider (16-200).
+  - Pill: huongcuto20m + ping/fps.
+  - Mobile + PC, scroll mobile OK.
 --]]
 
 local Players                = game:GetService("Players")
@@ -45,6 +46,9 @@ local CONFIG = {
     Zone10LoopDelay  = 2,
     WalkSpeedBoost   = 100,
 
+    WalkSpeed         = 16,
+    WalkSpeedMax      = 200,
+
     EnableServerHop    = false,
     ServerHopMinPlayers = 0,
     ServerHopMaxPlayers = 1,
@@ -61,6 +65,7 @@ local CONFIG = {
 
 local STATE = { running = true, status = "auto" }
 local STEAL_PROMPTS = {}
+local RAGDOLL_EVENT = false
 
 local function log(...)
     if CONFIG.EnableLogging then print("[farm]", ...) end
@@ -94,9 +99,11 @@ local function isRagdolled()
     if hum.PlatformStand then return true end
     local state = hum:GetState()
     if state == Enum.HumanoidStateType.Ragdoll
-        or state == Enum.HumanoidStateType.FallingDown then
+        or state == Enum.HumanoidStateType.FallingDown
+        or state == Enum.HumanoidStateType.Physics then
         return true
     end
+    if hum.Health <= 0 then return true end
     return false
 end
 
@@ -130,6 +137,32 @@ local function walkTo(pos, timeout)
     hum.WalkSpeed = oldWS
     return true
 end
+
+local function setWalkSpeed(v)
+    v = math.clamp(v or 16, 16, CONFIG.WalkSpeedMax)
+    CONFIG.WalkSpeed = v
+    local char = LP.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then hum.WalkSpeed = v end
+end
+
+local function rejoinServer()
+    if not game.JobId or game.JobId == "" then
+        log("ko có JobId")
+        return false
+    end
+    log("rejoin:", game.JobId)
+    return pcall(function()
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP)
+    end)
+end
+
+-- auto apply WalkSpeed khi respawn
+LP.CharacterAdded:Connect(function(char)
+    task.wait(1)
+    local hum = char:WaitForChild("Humanoid", 5)
+    if hum then hum.WalkSpeed = CONFIG.WalkSpeed end
+end)
 
 -- =========================================================================
 --  RARITY
@@ -313,6 +346,30 @@ local function promptStealLoop()
 end
 
 -- =========================================================================
+--  RAGDOLL WATCHER
+-- =========================================================================
+
+local function attachStateWatcher(char)
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    hum.StateChanged:Connect(function(_, new)
+        if new == Enum.HumanoidStateType.Ragdoll
+            or new == Enum.HumanoidStateType.FallingDown
+            or new == Enum.HumanoidStateType.Physics then
+            log("RAGDOLL state:", tostring(new))
+            RAGDOLL_EVENT = true
+        end
+    end)
+end
+
+if LP.Character then attachStateWatcher(LP.Character) end
+LP.CharacterAdded:Connect(function(c)
+    task.wait(0.5)
+    attachStateWatcher(c)
+end)
+
+-- =========================================================================
 --  RAGDOLL TELE
 -- =========================================================================
 
@@ -320,14 +377,21 @@ local function ragdollTeleportLoop()
     while STATE.running do
         if not CONFIG.EnableRagdollTele then task.wait(0.5); continue end
         if not CONFIG.SafeZone then task.wait(0.5); continue end
-        if not isRagdolled() then task.wait(0.1); continue end
+
+        local byState = isRagdolled()
+        local byEvent = RAGDOLL_EVENT
+        RAGDOLL_EVENT = false
+
+        if not (byState or byEvent) then task.wait(0.1); continue end
+        log("RAGDOLL detected")
 
         local char = LP.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         if not hrp then task.wait(0.5); continue end
 
         local savedPos = hrp.Position
-        log("ragdoll — spam lần 1")
+
+        log("spam 1")
         local spamEnd = tick() + CONFIG.RagdollSpamTime
         while tick() < spamEnd do
             fireNearestStealPrompt()
@@ -339,11 +403,11 @@ local function ragdollTeleportLoop()
         task.wait(CONFIG.TeleportCooldown)
         task.wait(CONFIG.RagdollStayTime)
 
-        log("tele về vị trí cũ")
+        log("tele về cũ")
         teleportChar(savedPos)
         task.wait(CONFIG.TeleportCooldown)
 
-        log("spam lần 2")
+        log("spam 2")
         task.spawn(refreshPromptCache)
         task.wait(0.2)
         local spam2End = tick() + CONFIG.RagdollSpamTime
@@ -644,7 +708,6 @@ local function stroke(o, col, t)
     s.Thickness = t or 1; s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; s.Parent = o
 end
 
--- Pill draggable
 local pill = Instance.new("Frame")
 pill.Size = UDim2.fromOffset(280, 48)
 pill.Position = UDim2.new(0.5, -140, 0, 20)
@@ -706,21 +769,21 @@ pillLabel.TextXAlignment = Enum.TextXAlignment.Left
 pillLabel.Text = CONFIG.PillName .. " • loading..."
 pillLabel.Parent = pill
 
--- Panel
-local W, H = 320, 600
+local W, H = 320, 620
 local panel = Instance.new("Frame")
 panel.Size = UDim2.fromOffset(W, H)
 panel.Position = UDim2.new(0.5, -W/2, 0, 80)
 panel.BackgroundColor3 = C.bg
 panel.BorderSizePixel = 0
 panel.Visible = false
-panel.Active = true
+panel.Active = false
 panel.Parent = screen
 corner(panel, 14); stroke(panel, C.line, 1)
 
 local header = Instance.new("Frame")
 header.Size = UDim2.new(1, 0, 0, 46)
 header.BackgroundTransparency = 1
+header.Active = true
 header.Parent = panel
 
 local headerLbl = Instance.new("TextLabel")
@@ -754,8 +817,14 @@ body.Size = UDim2.new(1, -20, 1, -60)
 body.Position = UDim2.new(0, 10, 0, 52)
 body.BackgroundTransparency = 1
 body.BorderSizePixel = 0
-body.ScrollBarThickness = 4
+body.ScrollBarThickness = 6
 body.ScrollBarImageColor3 = C.accent
+body.ScrollingDirection = Enum.ScrollingDirection.Y
+body.ScrollingEnabled = true
+body.ElasticBehavior = Enum.ElasticBehavior.Always
+body.Active = true
+body.Selectable = true
+body.ClipsDescendants = true
 body.CanvasSize = UDim2.new(0, 0, 0, 0)
 body.AutomaticCanvasSize = Enum.AutomaticSize.Y
 body.Parent = panel
@@ -764,6 +833,11 @@ local list = Instance.new("UIListLayout")
 list.SortOrder = Enum.SortOrder.LayoutOrder
 list.Padding = UDim.new(0, 8)
 list.Parent = body
+
+local pad = Instance.new("Frame")
+pad.Size = UDim2.new(1, 0, 0, 12)
+pad.BackgroundTransparency = 1
+pad.Parent = body
 
 local function sectionLabel(text)
     local l = Instance.new("TextLabel")
@@ -814,6 +888,60 @@ local function toggleBtn(label, initial, colorOn, onChange)
     return b
 end
 
+-- ===== WALKSPEED =====
+sectionLabel("WALKSPEED  (max " .. CONFIG.WalkSpeedMax .. ")")
+
+local wsRow = Instance.new("Frame")
+wsRow.Size = UDim2.new(1, 0, 0, 52)
+wsRow.BackgroundColor3 = C.card
+wsRow.BorderSizePixel = 0
+wsRow.Parent = body
+corner(wsRow, 10); stroke(wsRow, C.line, 1)
+
+local wsMinus = Instance.new("TextButton")
+wsMinus.Size = UDim2.new(0.28, -3, 1, -6)
+wsMinus.Position = UDim2.new(0, 3, 0, 3)
+wsMinus.BackgroundColor3 = C.off
+wsMinus.Text = "−"
+wsMinus.TextColor3 = Color3.new(1,1,1)
+wsMinus.Font = Enum.Font.GothamBold
+wsMinus.TextSize = 22
+wsMinus.AutoButtonColor = false
+wsMinus.Parent = wsRow
+corner(wsMinus, 8)
+
+local wsLbl = Instance.new("TextLabel")
+wsLbl.Size = UDim2.new(0.44, -6, 1, 0)
+wsLbl.Position = UDim2.new(0.28, 3, 0, 0)
+wsLbl.BackgroundTransparency = 1
+wsLbl.Font = Enum.Font.GothamBold
+wsLbl.TextSize = 18
+wsLbl.TextColor3 = C.text
+wsLbl.Text = tostring(CONFIG.WalkSpeed)
+wsLbl.Parent = wsRow
+
+local wsPlus = Instance.new("TextButton")
+wsPlus.Size = UDim2.new(0.28, -3, 1, -6)
+wsPlus.Position = UDim2.new(0.72, 0, 0, 3)
+wsPlus.BackgroundColor3 = C.ok
+wsPlus.Text = "+"
+wsPlus.TextColor3 = Color3.new(1,1,1)
+wsPlus.Font = Enum.Font.GothamBold
+wsPlus.TextSize = 22
+wsPlus.AutoButtonColor = false
+wsPlus.Parent = wsRow
+corner(wsPlus, 8)
+
+local function updateWS(v)
+    v = math.clamp(v, 16, CONFIG.WalkSpeedMax)
+    wsLbl.Text = tostring(v)
+    setWalkSpeed(v)
+end
+
+wsMinus.MouseButton1Click:Connect(function() updateWS(CONFIG.WalkSpeed - 10) end)
+wsPlus.MouseButton1Click:Connect(function() updateWS(CONFIG.WalkSpeed + 10) end)
+
+-- ===== SAFE ZONE =====
 sectionLabel("SAFE ZONE XYZ")
 local xyzRow = Instance.new("Frame")
 xyzRow.Size = UDim2.new(1, 0, 0, 52)
@@ -888,6 +1016,7 @@ grabBtn.MouseButton1Click:Connect(function()
     end
 end)
 
+-- ===== ZONE10 =====
 sectionLabel("ZONE10")
 local z10Row = Instance.new("Frame")
 z10Row.Size = UDim2.new(1, 0, 0, 52)
@@ -962,6 +1091,7 @@ z10Grab.MouseButton1Click:Connect(function()
     end
 end)
 
+-- ===== TOGGLES =====
 sectionLabel("TOGGLES")
 toggleBtn("CHỈ NHẶT RARITY", CONFIG.CheckRarityFirst, C.ok,
     function(v) CONFIG.CheckRarityFirst = v end)
@@ -974,7 +1104,24 @@ toggleBtn("AUTO HOP (≤1 player)", CONFIG.EnableServerHop, C.ok,
 toggleBtn("AUTO REJOIN", CONFIG.AutoRejoinOnDisconnect, C.ok,
     function(v) CONFIG.AutoRejoinOnDisconnect = v end)
 
+-- ===== CONTROL =====
 sectionLabel("CONTROL")
+actionBtn("🔄  REJOIN SERVER", Color3.fromRGB(180,120,60), function()
+    rejoinServer()
+end)
+actionBtn("🩺  LOG STATE", Color3.fromRGB(200,100,200), function()
+    local char = LP.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        log("State:", tostring(hum:GetState()))
+        log("PlatformStand:", tostring(hum.PlatformStand))
+        log("Health:", hum.Health)
+        log("WalkSpeed:", hum.WalkSpeed)
+        log("isRagdolled:", tostring(isRagdolled()))
+    else
+        log("no Humanoid")
+    end
+end)
 actionBtn("🔎  FIND 1-PLAYER SERVER", Color3.fromRGB(120,120,180), function()
     local jobId = findLowPopServer()
     if jobId then hopToServer(jobId) end
@@ -1006,12 +1153,17 @@ end)
 
 setupAutoRejoin()
 
+-- apply WalkSpeed lần đầu
+task.spawn(function()
+    task.wait(2)
+    setWalkSpeed(CONFIG.WalkSpeed)
+end)
+
 task.spawn(promptStealLoop)
 task.spawn(ragdollTeleportLoop)
 task.spawn(zone10FarmingLoop)
 task.spawn(serverHopLoop)
 
--- Pill update (1s, cached ping/fps)
 task.spawn(function()
     while true do
         pcall(function()
@@ -1026,4 +1178,4 @@ task.spawn(function()
     end
 end)
 
-log(CONFIG.PillName .. " — farm full, cache FPS/ping 1s")
+log(CONFIG.PillName .. " — farm full, walkspeed slider max 200")
