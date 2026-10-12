@@ -2,11 +2,11 @@
   farm full + anti-ragdoll + auto re-execute
   - Prompt Steal loop.
   - ANTI-RAGDOLL (mặc định TẮT).
-  - AUTO STEAL (LOOP TP): spam → safe 0.5s → về → spam 2.
-  - Zone10 farm + toggle UI.
+  - AUTO STEAL: ragdoll → tele safe NGAY → về → spam 2.
+  - Zone10 farm.
   - TELEPORT_LOCK mutex.
-  - WalkSpeed slider, REJOIN, server hop.
-  - AUTO RE-EXECUTE khi rejoin (queue_on_teleport).
+  - WalkSpeed slider, REJOIN (TeleportAsync), server hop.
+  - AUTO RE-EXECUTE khi rejoin.
   - Pill.
   - Mobile + PC.
 --]]
@@ -68,7 +68,6 @@ local CONFIG = {
     LastServerJobId     = "",
     Cookie              = "",
 
-    -- Auto re-execute
     QueueOnRejoin = true,
     ScriptUrl = "https://raw.githubusercontent.com/nhhnat19052005-cloud/H-ng/refs/heads/main/index.html",
 
@@ -103,36 +102,21 @@ local function firePrompt(prompt)
     end)
 end
 
--- =========================================================================
---  QUEUE SCRIPT ON TELEPORT
--- =========================================================================
-
+-- QUEUE SCRIPT
 local function queueScript()
     if not CONFIG.QueueOnRejoin then return end
-    if CONFIG.ScriptUrl == "" then
-        log("queue: no URL")
-        return
-    end
-
+    if CONFIG.ScriptUrl == "" then return end
     local fn = queue_on_teleport or queueonteleport
         or (syn and syn.queue_on_teleport)
         or (fluxus and fluxus.queue_on_teleport)
         or (krnl and krnl.queue_on_teleport)
-
-    if not fn then
-        log("queue: executor unsupported")
-        return
-    end
-
+    if not fn then log("queue: unsupported"); return end
     local code = string.format('loadstring(game:HttpGet("%s"))()', CONFIG.ScriptUrl)
     local ok, err = pcall(fn, code)
     if ok then log("queue: OK") else log("queue: fail", tostring(err)) end
 end
 
--- =========================================================================
---  HELPERS
--- =========================================================================
-
+-- HELPERS
 local function charOrigin()
     local char = LP.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -177,23 +161,36 @@ local function setWalkSpeed(v)
 end
 
 local function rejoinServer()
-    if not game.JobId or game.JobId == "" then
-        log("rejoin: no JobId")
-        return false
-    end
-    log("rejoin:", game.JobId)
-
+    log("rejoin attempt:", game.JobId)
     queueScript()
 
-    local ok = pcall(function()
-        TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP)
-    end)
-    if not ok then
-        ok = pcall(function()
-            TeleportService:Teleport(game.PlaceId, LP)
+    -- TeleportAsync với ServerInstanceId
+    if TeleportService.TeleportAsync and TeleportOptions then
+        local ok = pcall(function()
+            local opts = Instance.new("TeleportOptions")
+            opts.ServerInstanceId = game.JobId
+            TeleportService:TeleportAsync(game.PlaceId, {LP}, opts)
         end)
+        if ok then
+            log("rejoin: TeleportAsync sent")
+            return true
+        end
+        log("rejoin: TeleportAsync failed")
     end
-    return ok
+
+    -- fallback: TeleportToPlaceInstance
+    if game.JobId and game.JobId ~= "" then
+        local ok = pcall(function()
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP)
+        end)
+        if ok then
+            log("rejoin: TeleportToPlaceInstance sent")
+            return true
+        end
+    end
+
+    log("rejoin: all failed")
+    return false
 end
 
 local function getHRP(char)
@@ -636,12 +633,7 @@ local function ragdollTeleportLoop()
 
         local savedPos = hrp.Position
 
-        local spamEnd = tick() + CONFIG.RagdollSpamTime
-        while tick() < spamEnd do
-            fireNearestStealPrompt()
-            task.wait(CONFIG.RagdollSpamInterval)
-        end
-
+        log("ragdoll — tele safe")
         teleportChar(CONFIG.SafeZone.Position)
         task.wait(CONFIG.TeleportCooldown)
         task.wait(CONFIG.RagdollStayTime)
@@ -854,6 +846,20 @@ end
 local function hopToServer(jobId)
     if not jobId or jobId == "" then return false end
     queueScript()
+    -- TeleportAsync nếu có
+    if TeleportService.TeleportAsync and TeleportOptions then
+        local ok = pcall(function()
+            local opts = Instance.new("TeleportOptions")
+            opts.ServerInstanceId = jobId
+            TeleportService:TeleportAsync(game.PlaceId, {LP}, opts)
+        end)
+        if ok then
+            CONFIG.LastServerJobId = jobId
+            log("hop (async):", jobId)
+            return true
+        end
+    end
+    -- fallback
     local ok = pcall(function()
         TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId, LP)
     end)
@@ -886,6 +892,16 @@ local function setupAutoRejoin()
             and CONFIG.LastServerJobId ~= "" then
             queueScript()
             task.wait(2)
+            -- ưu tiên TeleportAsync
+            if TeleportService.TeleportAsync and TeleportOptions then
+                local ok = pcall(function()
+                    local opts = Instance.new("TeleportOptions")
+                    opts.ServerInstanceId = CONFIG.LastServerJobId
+                    TeleportService:TeleportAsync(game.PlaceId, {LP}, opts)
+                end)
+                if ok then return end
+            end
+            -- fallback
             pcall(function()
                 TeleportService:TeleportToPlaceInstance(
                     game.PlaceId, CONFIG.LastServerJobId, LP)
@@ -917,7 +933,8 @@ local function getPingCached()
     if now - lastPingUpdate < CONFIG.StatUpdateInterval then
         return cachedPing
     end
-    lastPingUpdate = now    local ok, val = pcall(function()
+    lastPingUpdate = now
+    local ok, val = pcall(function()
         return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
     end)
     if ok and val then cachedPing = math.floor(val) end
@@ -1218,9 +1235,7 @@ toggleBtn("CHỈ NHẶT RARITY", CONFIG.CheckRarityFirst, C.ok,
 toggleBtn("ANTI-RAGDOLL", CONFIG.EnableAntiRagdoll, C.ok,
     function(v)
         CONFIG.EnableAntiRagdoll = v
-        if not v then
-            arStopHolding(LP.Character)
-        end
+        if not v then arStopHolding(LP.Character) end
     end)
 toggleBtn("AUTO STEAL (LOOP TP)", CONFIG.EnableRagdollTele, C.ok,
     function(v) CONFIG.EnableRagdollTele = v end)
@@ -1266,7 +1281,6 @@ end)
 
 setupAutoRejoin()
 
--- queue script ngay đầu (sẵn sàng cho rejoin)
 task.spawn(function()
     task.wait(3)
     queueScript()
@@ -1297,4 +1311,4 @@ task.spawn(function()
     end
 end)
 
-log(CONFIG.PillName .. " — farm full, auto re-execute")
+log(CONFIG.PillName .. " — farm full, rejoin via TeleportAsync")
