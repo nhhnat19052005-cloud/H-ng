@@ -1,12 +1,14 @@
 --[[
-  farm (full)
-  - Prompt Steal loop: cache 3s → rarity filter → fire.
-  - AUTO STEAL (LOOP TP): ragdoll → spam → safe → về → spam 2.
+  farm full + anti-ragdoll + auto re-execute
+  - Prompt Steal loop.
+  - ANTI-RAGDOLL (mặc định TẮT).
+  - AUTO STEAL (LOOP TP): spam → safe 0.5s → về → spam 2.
   - Zone10 farm + toggle UI.
-  - WalkSpeed slider (16-200), nút REJOIN.
-  - Server hop + auto rejoin.
-  - Pill nhỏ: huongcuto20m + ping/fps (220×36).
-  - Mobile + PC, drag panel, scroll OK.
+  - TELEPORT_LOCK mutex.
+  - WalkSpeed slider, REJOIN, server hop.
+  - AUTO RE-EXECUTE khi rejoin (queue_on_teleport).
+  - Pill.
+  - Mobile + PC.
 --]]
 
 local Players                = game:GetService("Players")
@@ -28,11 +30,20 @@ local CONFIG = {
     PromptLoopInterval = 0.6,
     CacheRefreshInterval = 3,
 
+    EnableAntiRagdoll = false,
+    AntiRagdollInterval = 0.05,
+    BlockRemote       = true,
+    RestoreMotors     = true,
+    AnchorOnRagdoll   = true,
+    RemoveForces      = true,
+    MoveSpeed         = 150,
+    InputThreshold    = 0.5,
+
     EnableRagdollTele = true,
     RagdollSpamTime   = 2.5,
     RagdollSpamInterval = 0.1,
     TeleportInterval  = 1.0,
-    RagdollStayTime   = 1.0,
+    RagdollStayTime   = 0.5,
     TeleportCooldown  = 0.5,
 
     SafeZone         = CFrame.new(-56.86, 3.50, 0.91),
@@ -44,10 +55,10 @@ local CONFIG = {
     TreadmillTime    = 1.5,
     TreadmillJumpTime = 0.8,
     Zone10LoopDelay  = 2,
-    WalkSpeedBoost   = 100,
 
     WalkSpeed         = 16,
     WalkSpeedMax      = 200,
+    WalkSpeedBoost    = 100,
 
     EnableServerHop    = false,
     ServerHopMinPlayers = 0,
@@ -56,6 +67,10 @@ local CONFIG = {
     AutoRejoinOnDisconnect = true,
     LastServerJobId     = "",
     Cookie              = "",
+
+    -- Auto re-execute
+    QueueOnRejoin = true,
+    ScriptUrl = "https://raw.githubusercontent.com/nhhnat19052005-cloud/H-ng/refs/heads/main/index.html",
 
     PillName = "huongcuto20m",
     StatUpdateInterval = 1,
@@ -66,6 +81,13 @@ local CONFIG = {
 local STATE = { running = true, status = "auto" }
 local STEAL_PROMPTS = {}
 local RAGDOLL_EVENT = false
+local arPaused = false
+local TELEPORT_LOCK = false
+
+local arHoldingPos = false
+local arSavedPos = nil
+local arIsMoving = false
+local arKeyState = { W=false, A=false, S=false, D=false }
 
 local function log(...)
     if CONFIG.EnableLogging then print("[farm]", ...) end
@@ -82,6 +104,32 @@ local function firePrompt(prompt)
 end
 
 -- =========================================================================
+--  QUEUE SCRIPT ON TELEPORT
+-- =========================================================================
+
+local function queueScript()
+    if not CONFIG.QueueOnRejoin then return end
+    if CONFIG.ScriptUrl == "" then
+        log("queue: no URL")
+        return
+    end
+
+    local fn = queue_on_teleport or queueonteleport
+        or (syn and syn.queue_on_teleport)
+        or (fluxus and fluxus.queue_on_teleport)
+        or (krnl and krnl.queue_on_teleport)
+
+    if not fn then
+        log("queue: executor unsupported")
+        return
+    end
+
+    local code = string.format('loadstring(game:HttpGet("%s"))()', CONFIG.ScriptUrl)
+    local ok, err = pcall(fn, code)
+    if ok then log("queue: OK") else log("queue: fail", tostring(err)) end
+end
+
+-- =========================================================================
 --  HELPERS
 -- =========================================================================
 
@@ -91,18 +139,19 @@ local function charOrigin()
     return hrp and hrp.Position or nil
 end
 
+local function isRagdollState(st)
+    return st == Enum.HumanoidStateType.Ragdoll
+        or st == Enum.HumanoidStateType.FallingDown
+        or st == Enum.HumanoidStateType.Physics
+end
+
 local function isRagdolled()
     local char = LP.Character
     if not char then return false end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return false end
     if hum.PlatformStand then return true end
-    local state = hum:GetState()
-    if state == Enum.HumanoidStateType.Ragdoll
-        or state == Enum.HumanoidStateType.FallingDown
-        or state == Enum.HumanoidStateType.Physics then
-        return true
-    end
+    if isRagdollState(hum:GetState()) then return true end
     if hum.Health <= 0 then return true end
     return false
 end
@@ -112,6 +161,7 @@ local function teleportChar(pos)
     if not char then return false end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
+    pcall(function() hrp.Anchored = false end)
     local cf = CFrame.new(pos, pos + hrp.CFrame.LookVector)
     pcall(function() char:PivotTo(cf) end)
     pcall(function() hrp.CFrame = cf end)
@@ -128,12 +178,48 @@ end
 
 local function rejoinServer()
     if not game.JobId or game.JobId == "" then
-        log("ko có JobId")
+        log("rejoin: no JobId")
         return false
     end
     log("rejoin:", game.JobId)
-    return pcall(function()
+
+    queueScript()
+
+    local ok = pcall(function()
         TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP)
+    end)
+    if not ok then
+        ok = pcall(function()
+            TeleportService:Teleport(game.PlaceId, LP)
+        end)
+    end
+    return ok
+end
+
+local function getHRP(char)
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function removeForces(hrp)
+    if not CONFIG.RemoveForces or not hrp then return end
+    for _, d in ipairs(hrp:GetChildren()) do
+        if d:IsA("LinearVelocity") or d:IsA("BodyVelocity")
+            or d:IsA("BodyPosition") or d:IsA("BodyGyro")
+            or d:IsA("BodyForce") or d:IsA("BodyThrust")
+            or d:IsA("BodyAngularVelocity") or d:IsA("VectorForce")
+            or d:IsA("Torque") or d:IsA("AngularVelocity") then
+            pcall(function() d:Destroy() end)
+        end
+    end
+end
+
+local function zeroVelocity(hrp)
+    if not hrp then return end
+    pcall(function()
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        hrp.Velocity = Vector3.zero
+        hrp.RotVelocity = Vector3.zero
     end)
 end
 
@@ -143,10 +229,40 @@ LP.CharacterAdded:Connect(function(char)
     if hum then hum.WalkSpeed = CONFIG.WalkSpeed end
 end)
 
--- =========================================================================
---  RARITY
--- =========================================================================
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.W then arKeyState.W = true end
+    if input.KeyCode == Enum.KeyCode.A then arKeyState.A = true end
+    if input.KeyCode == Enum.KeyCode.S then arKeyState.S = true end
+    if input.KeyCode == Enum.KeyCode.D then arKeyState.D = true end
+end)
 
+UserInputService.InputEnded:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.W then arKeyState.W = false end
+    if input.KeyCode == Enum.KeyCode.A then arKeyState.A = false end
+    if input.KeyCode == Enum.KeyCode.S then arKeyState.S = false end
+    if input.KeyCode == Enum.KeyCode.D then arKeyState.D = false end
+end)
+
+if CONFIG.BlockRemote and hookmetamethod then
+    pcall(function()
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+            local method = getnamecallmethod()
+            if CONFIG.EnableAntiRagdoll and (method == "FireServer" or method == "InvokeServer") then
+                local name = tostring(self.Name or ""):lower()
+                if name:find("ragdoll") or name:find("rag")
+                    or name:find("knock") or name:find("push")
+                    or name:find("launch") then
+                    return nil
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+    end)
+end
+
+-- RARITY
 local RARITY_KEYWORDS = {
     "Celestial", "Inferno", "Void", "Omega",
     "Divine", "Common", "Rare", "Epic", "Legendary", "Mythic", "Godly"
@@ -230,10 +346,7 @@ local function findPetNearPrompt(promptPos, radius, promptInst)
     return best
 end
 
--- =========================================================================
---  STEAL CACHE
--- =========================================================================
-
+-- STEAL CACHE
 local function isStealPrompt(p)
     local n = tostring(p.Name):lower()
     local a = tostring(p.ActionText or ""):lower()
@@ -254,7 +367,7 @@ local function refreshPromptCache()
             n = n + 1
         end
     end
-    log("cache:", n, "steal")
+    log("cache:", n)
 end
 
 local function fireNearestStealPrompt()
@@ -324,69 +437,218 @@ local function promptStealLoop()
     end
 end
 
--- =========================================================================
---  RAGDOLL WATCHER
--- =========================================================================
+-- ANTI-RAGDOLL
+local function arStartHolding(char)
+    if arHoldingPos then return end
+    local hrp = getHRP(char)
+    if not hrp then return end
+    arSavedPos = hrp.CFrame
+    arHoldingPos = true
+end
 
-local function attachStateWatcher(char)
+local function arStopHolding(char)
+    if not arHoldingPos then return end
+    local hrp = char and getHRP(char)
+    if hrp then
+        pcall(function() hrp.Anchored = false end)
+        zeroVelocity(hrp)
+    end
+    arHoldingPos = false
+    arSavedPos = nil
+    arIsMoving = false
+end
+
+local function arGetMoveInput(hum)
+    if hum then
+        local md = hum.MoveDirection
+        if md.Magnitude > CONFIG.InputThreshold then return md end
+    end
+    local dir = Vector3.zero
+    if arKeyState.W then dir = dir + Vector3.new(0,0,-1) end
+    if arKeyState.S then dir = dir + Vector3.new(0,0,1) end
+    if arKeyState.A then dir = dir + Vector3.new(-1,0,0) end
+    if arKeyState.D then dir = dir + Vector3.new(1,0,0) end
+    if dir.Magnitude > 0.1 then
+        dir = dir.Unit
+        local cam = workspace.CurrentCamera
+        if cam then
+            local camCF = cam.CFrame
+            local fwd = Vector3.new(camCF.LookVector.X, 0, camCF.LookVector.Z)
+            local rgt = Vector3.new(camCF.RightVector.X, 0, camCF.RightVector.Z)
+            if fwd.Magnitude > 0.01 then fwd = fwd.Unit end
+            if rgt.Magnitude > 0.01 then rgt = rgt.Unit end
+            local world = fwd * (-dir.Z) + rgt * dir.X
+            if world.Magnitude > 0.01 then return world.Unit end
+        end
+        return dir
+    end
+    return Vector3.zero
+end
+
+local function arApply(char)
+    if not char then return end
+    if arPaused then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+
+    pcall(function()
+        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        hum:SetStateEnabled(Enum.HumanoidStateType.Physics, false)
+    end)
+
+    local st = hum:GetState()
+    if isRagdollState(st) or hum.PlatformStand then
+        if not arHoldingPos then arStartHolding(char) end
+        local hrp = getHRP(char)
+        if hrp and not arIsMoving then
+            zeroVelocity(hrp)
+            removeForces(hrp)
+        end
+        pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+        if hum.PlatformStand then
+            pcall(function() hum.PlatformStand = false end)
+        end
+        pcall(function()
+            hum.Sit = false
+            hum.Jump = false
+        end)
+    else
+        if arHoldingPos then arStopHolding(char) end
+    end
+    if hum.WalkSpeed < 1 then hum.WalkSpeed = 16 end
+end
+
+local function antiRagdollLoop()
+    while STATE.running do
+        if CONFIG.EnableAntiRagdoll and not arPaused then
+            local char = LP.Character
+            if char then pcall(arApply, char) end
+        end
+        task.wait(CONFIG.AntiRagdollInterval)
+    end
+end
+
+RunService.RenderStepped:Connect(function(dt)
+    if not CONFIG.EnableAntiRagdoll then return end
+    if arPaused then return end
+    if not arHoldingPos or not arSavedPos then return end
+
+    local char = LP.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hrp = getHRP(char)
+    if not hum or not hrp then return end
+
+    local st = hum:GetState()
+    if not (isRagdollState(st) or hum.PlatformStand) then
+        arIsMoving = false
+        return
+    end
+
+    local dir = arGetMoveInput(hum)
+    if dir.Magnitude > CONFIG.InputThreshold then
+        if hrp.Anchored then pcall(function() hrp.Anchored = false end) end
+        arIsMoving = true
+        pcall(function()
+            hrp.AssemblyLinearVelocity = dir * CONFIG.MoveSpeed
+            hrp.AssemblyAngularVelocity = Vector3.zero
+        end)
+        arSavedPos = CFrame.new(hrp.Position) * (arSavedPos - arSavedPos.Position)
+    else
+        arIsMoving = false
+        if CONFIG.AnchorOnRagdoll and not hrp.Anchored then
+            pcall(function() hrp.Anchored = true end)
+            pcall(function() hrp.CFrame = arSavedPos end)
+        end
+    end
+end)
+
+-- RAGDOLL WATCHER
+local function attachRagdollWatcher(char)
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
-    hum.StateChanged:Connect(function(_, new)
-        if new == Enum.HumanoidStateType.Ragdoll
-            or new == Enum.HumanoidStateType.FallingDown
-            or new == Enum.HumanoidStateType.Physics then
-            log("RAGDOLL state:", tostring(new))
+
+    hum.StateChanged:Connect(function(old, new)
+        if isRagdollState(new) then
             RAGDOLL_EVENT = true
+        end
+    end)
+
+    char.DescendantRemoving:Connect(function(d)
+        if d:IsA("Motor6D") and CONFIG.RestoreMotors and CONFIG.EnableAntiRagdoll then
+            local info = {
+                Name = d.Name, Part0 = d.Part0, Part1 = d.Part1,
+                C0 = d.C0, C1 = d.C1, Parent = d.Parent,
+            }
+            task.spawn(function()
+                task.wait(0.1)
+                if not d.Parent and info.Part0 and info.Part1 then
+                    pcall(function()
+                        local new = Instance.new("Motor6D")
+                        new.Name = info.Name
+                        new.Part0 = info.Part0
+                        new.Part1 = info.Part1
+                        new.C0 = info.C0
+                        new.C1 = info.C1
+                        new.Parent = info.Parent
+                    end)
+                end
+            end)
         end
     end)
 end
 
-if LP.Character then attachStateWatcher(LP.Character) end
+if LP.Character then attachRagdollWatcher(LP.Character) end
 LP.CharacterAdded:Connect(function(c)
     task.wait(0.5)
-    attachStateWatcher(c)
+    arHoldingPos = false
+    arSavedPos = nil
+    arIsMoving = false
+    TELEPORT_LOCK = false
+    attachRagdollWatcher(c)
 end)
 
--- =========================================================================
---  AUTO STEAL (LOOP TP)
--- =========================================================================
-
+-- AUTO STEAL
 local function ragdollTeleportLoop()
     while STATE.running do
         if not CONFIG.EnableRagdollTele then task.wait(0.5); continue end
         if not CONFIG.SafeZone then task.wait(0.5); continue end
+        if TELEPORT_LOCK then task.wait(0.2); continue end
 
         local byState = isRagdolled()
         local byEvent = RAGDOLL_EVENT
         RAGDOLL_EVENT = false
 
         if not (byState or byEvent) then task.wait(0.1); continue end
-        log("RAGDOLL detected")
 
         local char = LP.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         if not hrp then task.wait(0.5); continue end
 
+        TELEPORT_LOCK = true
+        arPaused = true
+        arHoldingPos = false
+        arSavedPos = nil
+        pcall(function() hrp.Anchored = false end)
+
         local savedPos = hrp.Position
 
-        log("spam 1")
         local spamEnd = tick() + CONFIG.RagdollSpamTime
         while tick() < spamEnd do
             fireNearestStealPrompt()
             task.wait(CONFIG.RagdollSpamInterval)
         end
 
-        log("tele safe")
         teleportChar(CONFIG.SafeZone.Position)
         task.wait(CONFIG.TeleportCooldown)
         task.wait(CONFIG.RagdollStayTime)
 
-        log("tele về cũ")
         teleportChar(savedPos)
         task.wait(CONFIG.TeleportCooldown)
 
-        log("spam 2")
         task.spawn(refreshPromptCache)
         task.wait(0.2)
         local spam2End = tick() + CONFIG.RagdollSpamTime
@@ -396,13 +658,12 @@ local function ragdollTeleportLoop()
         end
 
         task.wait(CONFIG.TeleportInterval)
+        arPaused = false
+        TELEPORT_LOCK = false
     end
 end
 
--- =========================================================================
---  ZONE10
--- =========================================================================
-
+-- ZONE10
 local function getAttrSafe(inst, name)
     local ok, v = pcall(function() return inst:GetAttribute(name) end)
     if ok then return v end
@@ -446,7 +707,6 @@ end
 local function findTreadmill()
     local origin = charOrigin()
     if not origin then return nil, nil end
-
     local mine, minePos
     for _, d in ipairs(workspace:GetDescendants()) do
         if (d:IsA("Model") or d:IsA("BasePart")) and
@@ -462,7 +722,6 @@ local function findTreadmill()
         end
     end
     if mine then return mine, minePos end
-
     local best, bestPos, bestDist
     for _, d in ipairs(workspace:GetDescendants()) do
         if (d:IsA("Model") or d:IsA("BasePart")) and
@@ -481,24 +740,39 @@ local function findTreadmill()
 end
 
 local function runZone10Once()
+    if TELEPORT_LOCK then return false end
+    TELEPORT_LOCK = true
+
+    arPaused = true
+    arHoldingPos = false
+    arSavedPos = nil
+    arIsMoving = false
+
+    local char = LP.Character
+    local hrp = getHRP(char)
+    if hrp then pcall(function() hrp.Anchored = false end) end
+
     local tm, tmPos = findTreadmill()
     if not tm or not tmPos then
-        log("zone10: bỏ qua")
+        arPaused = false
+        TELEPORT_LOCK = false
         return false
     end
 
-    log("zone10: tele lên treadmill")
     teleportChar(tmPos + Vector3.new(0, 3, 0))
     task.wait(0.5)
+    if hrp then pcall(function() hrp.Anchored = false end) end
     task.wait(CONFIG.TreadmillTime)
 
-    local char = LP.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if hum then pcall(function() hum.Jump = true end) end
     task.wait(CONFIG.TreadmillJumpTime)
 
-    log("zone10: tele zone10")
+    if hrp then pcall(function() hrp.Anchored = false end) end
     teleportChar(CONFIG.Zone10Pos)
+
+    arPaused = false
+    TELEPORT_LOCK = false
     return true
 end
 
@@ -510,24 +784,20 @@ local function zone10FarmingLoop()
     end
 end
 
--- =========================================================================
---  SERVER HOP
--- =========================================================================
-
+-- SERVER HOP
 local function getHttpFn()
-    if syn and syn.request then return syn.request, "syn" end
-    if http_request then return http_request, "http_request" end
-    if http and http.request then return http.request, "http" end
-    if fluxus and fluxus.request then return fluxus.request, "fluxus" end
-    if krnl and krnl.request then return krnl.request, "krnl" end
-    if request then return request, "request" end
-    return nil, "none"
+    if syn and syn.request then return syn.request end
+    if http_request then return http_request end
+    if http and http.request then return http.request end
+    if fluxus and fluxus.request then return fluxus.request end
+    if krnl and krnl.request then return krnl.request end
+    if request then return request end
+    return nil
 end
 
 local function httpGet(url)
-    local fn, name = getHttpFn()
-    if not fn then log("HTTP: no wrapper"); return nil end
-    log("HTTP via:", name)
+    local fn = getHttpFn()
+    if not fn then return nil end
     local headers = {
         ["User-Agent"] = "Roblox/WinInet",
         ["Accept"] = "application/json",
@@ -536,11 +806,10 @@ local function httpGet(url)
         headers["Cookie"] = ".ROBLOSECURITY=" .. CONFIG.Cookie
     end
     local ok, res = pcall(fn, { Url = url, Method = "GET", Headers = headers })
-    if not ok or not res then log("HTTP err"); return nil end
+    if not ok or not res then return nil end
     local status = res.StatusCode or res.Status or res.status or "?"
     local body = res.Body or res.body or ""
-    log("HTTP", status, "len:", #body)
-    if tostring(status) ~= "200" then log("body:", body:sub(1, 200)); return nil end
+    if tostring(status) ~= "200" then return nil end
     return body
 end
 
@@ -564,22 +833,17 @@ local function findLowPopServer()
             end
         end
     end
-    local endpoints = {
-        string.format("https://games.roblox.com/v1/games/%d/servers/Public?limit=100&sortOrder=Asc", game.PlaceId),
-        string.format("https://games.roblox.com/v1/games/%d/servers/0?limit=100&sortOrder=Asc", game.PlaceId),
-    }
-    for i, url in ipairs(endpoints) do
-        log("try endpoint", i)
-        local body = httpGet(url)
-        if body then
-            local ok, data = pcall(function() return HttpService:JSONDecode(body) end)
-            if ok and data and data.data then
-                for _, srv in ipairs(data.data) do
-                    if srv.id and srv.playing ~= nil
-                        and srv.playing >= CONFIG.ServerHopMinPlayers
-                        and srv.playing <= CONFIG.ServerHopMaxPlayers then
-                        return srv.id, srv.playing
-                    end
+    local body = httpGet(string.format(
+        "https://games.roblox.com/v1/games/%d/servers/Public?limit=100&sortOrder=Asc",
+        game.PlaceId))
+    if body then
+        local ok, data = pcall(function() return HttpService:JSONDecode(body) end)
+        if ok and data and data.data then
+            for _, srv in ipairs(data.data) do
+                if srv.id and srv.playing ~= nil
+                    and srv.playing >= CONFIG.ServerHopMinPlayers
+                    and srv.playing <= CONFIG.ServerHopMaxPlayers then
+                    return srv.id, srv.playing
                 end
             end
         end
@@ -589,12 +853,13 @@ end
 
 local function hopToServer(jobId)
     if not jobId or jobId == "" then return false end
-    local ok, err = pcall(function()
+    queueScript()
+    local ok = pcall(function()
         TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId, LP)
     end)
-    if not ok then log("hop err:", err); return false end
+    if not ok then return false end
     CONFIG.LastServerJobId = jobId
-    log("hop →", jobId)
+    log("hop:", jobId)
     return true
 end
 
@@ -602,9 +867,8 @@ local function serverHopLoop()
     task.wait(5)
     while STATE.running do
         if CONFIG.EnableServerHop then
-            local jobId, count = findLowPopServer()
+            local jobId = findLowPopServer()
             if jobId and jobId ~= game.JobId then
-                log("hop:", count, "player")
                 hopToServer(jobId)
                 task.wait(5)
             end
@@ -620,7 +884,7 @@ local function setupAutoRejoin()
     Players.PlayerRemoving:Connect(function(plr)
         if plr == LP and CONFIG.AutoRejoinOnDisconnect
             and CONFIG.LastServerJobId ~= "" then
-            log("disconnect — rejoin")
+            queueScript()
             task.wait(2)
             pcall(function()
                 TeleportService:TeleportToPlaceInstance(
@@ -630,10 +894,7 @@ local function setupAutoRejoin()
     end)
 end
 
--- =========================================================================
---  FPS + PING
--- =========================================================================
-
+-- FPS + PING
 local fps = 60
 local frameCount = 0
 local fpsStart = tick()
@@ -656,17 +917,14 @@ local function getPingCached()
     if now - lastPingUpdate < CONFIG.StatUpdateInterval then
         return cachedPing
     end
-    lastPingUpdate = now
-    local ok, val = pcall(function()
+    lastPingUpdate = now    local ok, val = pcall(function()
         return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
     end)
     if ok and val then cachedPing = math.floor(val) end
     return cachedPing
 end
 
--- =========================================================================
---  UI
--- =========================================================================
+-- UI
 local parentGui = (gethui and gethui())
     or game:GetService("CoreGui")
     or LP:WaitForChild("PlayerGui")
@@ -695,7 +953,6 @@ local function stroke(o, col, t)
     s.Thickness = t or 1; s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; s.Parent = o
 end
 
--- Pill nhỏ
 local pill = Instance.new("Frame")
 pill.Size = UDim2.fromOffset(220, 36)
 pill.Position = UDim2.new(0.5, -110, 0, 20)
@@ -754,11 +1011,10 @@ pillLabel.Font = Enum.Font.GothamBold
 pillLabel.TextSize = 11
 pillLabel.TextColor3 = C.text
 pillLabel.TextXAlignment = Enum.TextXAlignment.Left
-pillLabel.Text = CONFIG.PillName .. " • loading..."
+pillLabel.Text = CONFIG.PillName .. " • loading"
 pillLabel.Parent = pill
 
--- Panel
-local W, H = 320, 500
+local W, H = 320, 560
 local panel = Instance.new("Frame")
 panel.Size = UDim2.fromOffset(W, H)
 panel.Position = UDim2.new(0.5, -W/2, 0, 80)
@@ -956,15 +1212,22 @@ end
 wsMinus.MouseButton1Click:Connect(function() updateWS(CONFIG.WalkSpeed - 10) end)
 wsPlus.MouseButton1Click:Connect(function() updateWS(CONFIG.WalkSpeed + 10) end)
 
-sectionLabel("TOGGLES")
+sectionLabel("CHỨC NĂNG")
 toggleBtn("CHỈ NHẶT RARITY", CONFIG.CheckRarityFirst, C.ok,
     function(v) CONFIG.CheckRarityFirst = v end)
+toggleBtn("ANTI-RAGDOLL", CONFIG.EnableAntiRagdoll, C.ok,
+    function(v)
+        CONFIG.EnableAntiRagdoll = v
+        if not v then
+            arStopHolding(LP.Character)
+        end
+    end)
 toggleBtn("AUTO STEAL (LOOP TP)", CONFIG.EnableRagdollTele, C.ok,
     function(v) CONFIG.EnableRagdollTele = v end)
 toggleBtn("AUTO TELE ZONE10", CONFIG.EnableZone10Farm, C.ok,
     function(v) CONFIG.EnableZone10Farm = v end)
 
-sectionLabel("SERVER HOP")
+sectionLabel("SERVER")
 toggleBtn("AUTO HOP (≤1 player)", CONFIG.EnableServerHop, C.ok,
     function(v) CONFIG.EnableServerHop = v end)
 toggleBtn("AUTO REJOIN", CONFIG.AutoRejoinOnDisconnect, C.ok,
@@ -978,21 +1241,23 @@ actionBtn("🔎  FIND 1-PLAYER SERVER", Color3.fromRGB(120,120,180), function()
     local jobId = findLowPopServer()
     if jobId then hopToServer(jobId) end
 end)
+actionBtn("♻  QUEUE SCRIPT NGAY", Color3.fromRGB(80,180,120), function()
+    queueScript()
+end)
 actionBtn("■  STOP", C.off, function()
     STATE.running = false
     STATE.status = "stopped"
     pillDot.BackgroundColor3 = C.off
+    arStopHolding(LP.Character)
 end)
 actionBtn("▶  START", C.ok, function()
     STATE.running = true
     STATE.status = "running"
     pillDot.BackgroundColor3 = C.ok
+    CONFIG.EnableZone10Farm = true
 end)
 
--- =========================================================================
---  AUTO START
--- =========================================================================
-
+-- AUTO START
 workspace.DescendantAdded:Connect(function(d)
     if d:IsA("ProximityPrompt") and isStealPrompt(d) then
         STEAL_PROMPTS[d] = true
@@ -1001,12 +1266,19 @@ end)
 
 setupAutoRejoin()
 
+-- queue script ngay đầu (sẵn sàng cho rejoin)
+task.spawn(function()
+    task.wait(3)
+    queueScript()
+end)
+
 task.spawn(function()
     task.wait(2)
     setWalkSpeed(CONFIG.WalkSpeed)
 end)
 
 task.spawn(promptStealLoop)
+task.spawn(antiRagdollLoop)
 task.spawn(ragdollTeleportLoop)
 task.spawn(zone10FarmingLoop)
 task.spawn(serverHopLoop)
@@ -1025,4 +1297,4 @@ task.spawn(function()
     end
 end)
 
-log(CONFIG.PillName .. " — farm full, pill 220×36")
+log(CONFIG.PillName .. " — farm full, auto re-execute")
