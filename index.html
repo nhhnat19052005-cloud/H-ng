@@ -3,7 +3,7 @@
   - Auto nhặt pet rarity (Celestial, Inferno, Void, Omega). Loại Egg.
   - Prompt "Steal" parent = PromptAnchor(Part) → leo 6 cấp tìm pet model.
   - Rarity đọc từ BillboardGui TextLabel, split "|", so exact.
-  - Zone10: reset char → respawn → tele zone10, retry nếu fail.
+  - Zone10: reset char → respawn → tele zone10, tự tele lại khi rời zone10.
   - Cache descendants — giảm tụt fps.
   - Anti-ragdoll (mặc định tắt).
   - Auto rejoin (không queue script).
@@ -52,8 +52,8 @@ local CONFIG = {
 
     EnableZone10Farm = true,
     Zone10Pos        = Vector3.new(-2873.74, 3.50, 1.24),
-    Zone10RetryMax   = 20,
     Zone10VerifyDist = 30,
+    Zone10IdleWait   = 3,
     RespawnTimeout   = 12,
 
     Zone10ScanRadius = 300,
@@ -262,7 +262,6 @@ local RARITY_KEYWORDS = {
     "Epic", "Legendary", "Mythic", "Godly",
 }
 
--- đọc rarity chính xác từ text billboard, so exact với filter
 local function readRarityFrom(inst)
     if not inst then return nil end
 
@@ -299,7 +298,6 @@ local function readRarityFrom(inst)
         end
     end
 
-    -- KHÔNG fallback vào name
     return nil
 end
 
@@ -316,7 +314,6 @@ local function getPetRarity(pet)
     return rarity
 end
 
--- chỉ match exact, guard false khi filter tắt
 local function petMatchesRarity(rarity)
     if not CONFIG.CheckRarityFirst then return false end
     if not rarity or rarity == "" then return false end
@@ -484,11 +481,7 @@ local function promptStealLoop()
                 if prompt and prompt.Parent and prompt.Enabled then
                     local pos = promptPos(prompt)
                     if pos and (pos - origin).Magnitude <= CONFIG.WatcherRange then
-                        if not CONFIG.CheckRarityFirst then
-                            -- filter off → không nhặt gì luôn, tránh nhặt bừa
-                            -- (bật lại toggle nếu muốn nhặt tất)
-                            task.wait(0)
-                        else
+                        if CONFIG.CheckRarityFirst then
                             local pet = getPromptPetRoot(prompt)
                             local rarity = pet and readRarityFrom(pet) or nil
                             if not rarity then
@@ -815,57 +808,50 @@ local function runZone10Once()
     return true
 end
 
+-- loop zone10 vô hạn: ở zone10 thì nghỉ, rời thì tele lại
 local function zone10FarmingLoop()
     if not CONFIG.EnableZone10Farm then return end
-    if ZONE10_DONE then return end
 
     while not LP.Character or not LP.Character:FindFirstChild("HumanoidRootPart") do
         task.wait(0.5)
     end
     task.wait(1)
 
-    while TELEPORT_LOCK do task.wait(0.5) end
+    while STATE.running do
+        if not CONFIG.EnableZone10Farm then
+            task.wait(1); continue
+        end
+        if TELEPORT_LOCK then
+            task.wait(0.5); continue
+        end
 
-    if isAtZone10() then
-        ZONE10_DONE = true
-        return
-    end
-
-    local attempt = 0
-    while attempt < CONFIG.Zone10RetryMax do
-        attempt = attempt + 1
-        if not CONFIG.EnableZone10Farm then return end
         if isAtZone10() then
             ZONE10_DONE = true
-            log("zone10: đã ở zone10")
-            return
+            task.wait(CONFIG.Zone10IdleWait)
+            continue
         end
+
+        ZONE10_DONE = false
+        log("zone10: rời zone10, tele lại")
 
         local ok = pcall(runZone10Once)
 
         task.wait(1)
         if ok and isAtZone10() then
             ZONE10_DONE = true
-            log("zone10: OK sau", attempt, "lần")
-            return
+            log("zone10: OK")
+        else
+            log("zone10: fail, retry sau 2s")
+            task.wait(2)
         end
 
-        log("zone10: fail lần", attempt, "— reset lại")
-        task.wait(1.5)
+        task.wait(1)
     end
-
-    log("zone10: hết", CONFIG.Zone10RetryMax, "lần, bỏ")
 end
 
 local function zone10WatchLoop()
     if not CONFIG.EnableZone10Farm then return end
     task.wait(CONFIG.StartupDelay + 5)
-
-    local waitDeadline = tick() + 90
-    while not ZONE10_DONE and tick() < waitDeadline do
-        task.wait(1)
-    end
-    if not ZONE10_DONE then return end
 
     while STATE.running do
         if not CONFIG.EnableZone10Farm then task.wait(1); continue end
