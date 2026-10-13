@@ -1,12 +1,13 @@
 --[[
   farm full (lag-tuned)
   - Auto nhặt pet rarity (Celestial, Inferno, Void, Omega). Loại Egg.
-  - Bám ProximityPrompt "Steal" trực tiếp — pet rơi ra nhặt ngay.
-  - Lọc rarity chặt: không đọc được pet/rarity → KHÔNG nhặt.
+  - Prompt "Steal" parent = PromptAnchor(Part) → leo 6 cấp tìm pet model.
+  - Rarity đọc từ BillboardGui TextLabel, split "|", so exact.
   - Zone10: reset char → respawn → tele zone10, retry nếu fail.
   - Cache descendants — giảm tụt fps.
   - Anti-ragdoll (mặc định tắt).
   - Auto rejoin (không queue script).
+  - Đã bỏ walkspeed.
 --]]
 
 local Players                = game:GetService("Players")
@@ -24,10 +25,11 @@ local CONFIG = {
     PetSearchRadius  = 40,
 
     PromptActionText = "Steal",
-    WatcherRange     = 20,
+    WatcherRange     = 30,
     PromptLoopInterval = 1.2,
     CacheRefreshInterval = 6,
     PromptRefreshFast  = 2,
+    EnableTouchPickup  = false,
 
     EnableAntiRagdoll = false,
     AntiRagdollInterval = 0.25,
@@ -56,9 +58,6 @@ local CONFIG = {
 
     Zone10ScanRadius = 300,
     Zone10ScanInterval = 6,
-
-    WalkSpeed         = 16,
-    WalkSpeedMax      = 200,
 
     AutoRejoinOnDisconnect = true,
     LastServerJobId     = "",
@@ -103,7 +102,13 @@ pcall(function()
 end)
 
 local function log(...)
-    if CONFIG.EnableLogging then print("[farm]", ...) end
+    if CONFIG.EnableLogging then
+        local parts = {}
+        for _, v in ipairs({...}) do
+            table.insert(parts, tostring(v))
+        end
+        warn("[OLLIE-FARM] " .. table.concat(parts, " "))
+    end
 end
 
 local function firePrompt(prompt)
@@ -159,14 +164,6 @@ local function teleportChar(pos)
     return true
 end
 
-local function setWalkSpeed(v)
-    v = math.clamp(v or 16, 16, CONFIG.WalkSpeedMax)
-    CONFIG.WalkSpeed = v
-    local char = LP.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if hum then hum.WalkSpeed = v end
-end
-
 local function getHRP(char)
     return char and char:FindFirstChild("HumanoidRootPart")
 end
@@ -219,17 +216,11 @@ end
 
 local function hasBillboard(pet)
     if not pet then return false end
-    for _, c in ipairs(pet:GetChildren()) do
+    for _, c in ipairs(pet:GetDescendants()) do
         if c:IsA("BillboardGui") then return true end
     end
     return false
 end
-
-LP.CharacterAdded:Connect(function(char)
-    task.wait(1)
-    local hum = char:WaitForChild("Humanoid", 5)
-    if hum then hum.WalkSpeed = CONFIG.WalkSpeed end
-end)
 
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
@@ -271,6 +262,47 @@ local RARITY_KEYWORDS = {
     "Epic", "Legendary", "Mythic", "Godly",
 }
 
+-- đọc rarity chính xác từ text billboard, so exact với filter
+local function readRarityFrom(inst)
+    if not inst then return nil end
+
+    for _, attr in ipairs({ "Rarity", "rarity", "Tier", "tier", "RarityName" }) do
+        local v = inst:GetAttribute(attr)
+        if type(v) == "string" and v ~= "" then
+            for _, f in ipairs(CONFIG.PetRarityFilter) do
+                if v:lower() == f:lower() then return f end
+            end
+        end
+    end
+
+    local allTexts = {}
+    for _, d in ipairs(inst:GetDescendants()) do
+        if d:IsA("TextLabel") and d.Text ~= "" then
+            table.insert(allTexts, d.Text)
+        end
+    end
+    for _, d in ipairs(inst:GetDescendants()) do
+        if d:IsA("StringValue") then
+            table.insert(allTexts, d.Value)
+        end
+    end
+
+    for _, t in ipairs(allTexts) do
+        for piece in tostring(t):gmatch("[^|]+") do
+            local clean = piece:gsub("^%s+", ""):gsub("%s+$", "")
+            local low = clean:lower()
+            for _, f in ipairs(CONFIG.PetRarityFilter) do
+                if low == f:lower() then
+                    return f
+                end
+            end
+        end
+    end
+
+    -- KHÔNG fallback vào name
+    return nil
+end
+
 local function getPetRarity(pet)
     if not pet then return nil end
     local cached = RARITY_CACHE[pet]
@@ -278,47 +310,30 @@ local function getPetRarity(pet)
         and tick() - (RARITY_CACHE_TIME[pet] or 0) < CONFIG.RarityCacheTTL then
         return cached
     end
-    local rarity
-    for _, attr in ipairs({ "Rarity", "rarity", "Tier", "tier", "RarityName" }) do
-        local v = pet:GetAttribute(attr)
-        if type(v) == "string" and v ~= "" then rarity = v; break end
-    end
-    if not rarity then
-        for _, d in ipairs(pet:GetDescendants()) do
-            if d:IsA("StringValue") then
-                local n = d.Name:lower()
-                if n:find("rarit") or n:find("tier") then
-                    rarity = d.Value; break
-                end
-            end
-        end
-    end
-    if not rarity then
-        for _, d in ipairs(pet:GetDescendants()) do
-            if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text ~= "" then
-                local txt = d.Text:lower()
-                for _, kw in ipairs(RARITY_KEYWORDS) do
-                    if txt:find(kw:lower(), 1, true) then
-                        rarity = d.Text; break
-                    end
-                end
-                if rarity then break end
-            end
-        end
-    end
+    local rarity = readRarityFrom(pet)
     RARITY_CACHE[pet] = rarity or ""
     RARITY_CACHE_TIME[pet] = tick()
     return rarity
 end
 
+-- chỉ match exact, guard false khi filter tắt
 local function petMatchesRarity(rarity)
-    if not CONFIG.CheckRarityFirst then return true end
+    if not CONFIG.CheckRarityFirst then return false end
     if not rarity or rarity == "" then return false end
     local r = rarity:lower():gsub("^%s+", ""):gsub("%s+$", "")
     for _, f in ipairs(CONFIG.PetRarityFilter) do
-        local fl = f:lower()
-        if r == fl then return true end
-        if r:find("%f[%a]" .. fl .. "%f[%A]") then return true end
+        if r == f:lower() then return true end
+    end
+    return false
+end
+
+local function isPetModel(d)
+    if not d or not d:IsA("Model") then return false end
+    if d:IsA("Accessory") then return false end
+    if isExcluded(d) then return false end
+    if hasBillboard(d) then return true end
+    for _, c in ipairs(d:GetDescendants()) do
+        if c:IsA("ProximityPrompt") then return true end
     end
     return false
 end
@@ -326,17 +341,18 @@ end
 local function refreshPetSet()
     PET_MODELS = {}
     local char = LP.Character
+    local n = 0
     for _, d in ipairs(workspace:GetDescendants()) do
-        if d:IsA("Model") and not d:IsA("Accessory") then
-            if not (char and d:IsDescendantOf(char)) and not isExcluded(d) then
-                if hasBillboard(d) then
-                    PET_MODELS[d] = true
-                end
+        if isPetModel(d) then
+            if not (char and d:IsDescendantOf(char)) then
+                PET_MODELS[d] = true
+                n = n + 1
             end
         end
     end
     PET_LIST_DIRTY = false
     lastPetRefresh = tick()
+    log("pet models found:", n)
 end
 
 local function findRarityPetInZone10()
@@ -375,11 +391,14 @@ end
 
 local function refreshPromptCache()
     STEAL_PROMPTS = {}
+    local n = 0
     for _, d in ipairs(workspace:GetDescendants()) do
         if d:IsA("ProximityPrompt") and isStealPrompt(d) then
             STEAL_PROMPTS[d] = true
+            n = n + 1
         end
     end
+    log("prompts found:", n)
 end
 
 workspace.DescendantAdded:Connect(function(d)
@@ -391,15 +410,22 @@ workspace.DescendantAdded:Connect(function(d)
     end
 end)
 
-local function getPromptPet(prompt)
+local function getPromptPetRoot(prompt)
     local p = prompt and prompt.Parent
     if not p then return nil end
-    if p:IsA("Model") then return p end
-    if p:IsA("BasePart") or p:IsA("Attachment") then
-        local anc = p:FindFirstAncestorOfClass("Model")
-        if anc then return anc end
+    local cur = p
+    for _ = 1, 6 do
+        if not cur then break end
+        if cur:IsA("Model") and not cur:IsA("Accessory") then
+            local hasBL = false
+            for _, c in ipairs(cur:GetDescendants()) do
+                if c:IsA("BillboardGui") then hasBL = true; break end
+            end
+            if hasBL then return cur end
+        end
+        cur = cur.Parent
     end
-    return nil
+    return p:FindFirstAncestorOfClass("Model")
 end
 
 local function promptPos(prompt)
@@ -431,10 +457,13 @@ local function fireNearestStealPrompt()
     return false
 end
 
+-- ========== LOOP NHẶT ==========
 local function promptStealLoop()
     task.wait(1)
     refreshPromptCache()
+    refreshPetSet()
     local lastCache = tick()
+
     while STATE.running do
         if not CONFIG.EnableRagdollTele then
             task.wait(0.5); continue
@@ -445,6 +474,10 @@ local function promptStealLoop()
             lastCache = tick()
         end
 
+        if PET_LIST_DIRTY or tick() - lastPetRefresh > CONFIG.DescendantRefresh then
+            refreshPetSet()
+        end
+
         local origin = charOrigin()
         if origin then
             for prompt in pairs(STEAL_PROMPTS) do
@@ -452,16 +485,25 @@ local function promptStealLoop()
                     local pos = promptPos(prompt)
                     if pos and (pos - origin).Magnitude <= CONFIG.WatcherRange then
                         if not CONFIG.CheckRarityFirst then
-                            log("fire prompt (no filter)")
-                            firePrompt(prompt)
+                            -- filter off → không nhặt gì luôn, tránh nhặt bừa
+                            -- (bật lại toggle nếu muốn nhặt tất)
+                            task.wait(0)
                         else
-                            local pet = getPromptPet(prompt)
-                            if pet then
-                                local rarity = getPetRarity(pet)
-                                if petMatchesRarity(rarity) then
-                                    log("fire prompt —", pet.Name, rarity)
-                                    firePrompt(prompt)
-                                end
+                            local pet = getPromptPetRoot(prompt)
+                            local rarity = pet and readRarityFrom(pet) or nil
+                            if not rarity then
+                                rarity = readRarityFrom(prompt.Parent)
+                            end
+
+                            if rarity and petMatchesRarity(rarity) then
+                                log("fire prompt —",
+                                    pet and pet.Name or "?",
+                                    "|", rarity)
+                                firePrompt(prompt)
+                            else
+                                log("skip | pet=",
+                                    pet and pet.Name or "nil",
+                                    "| rarity=", rarity or "nil")
                             end
                         end
                     end
@@ -557,7 +599,6 @@ local function arApply(char)
     else
         if arHoldingPos then arStopHolding(char) end
     end
-    if hum.WalkSpeed < 1 then hum.WalkSpeed = 16 end
 end
 
 local function antiRagdollLoop()
@@ -704,7 +745,7 @@ local function ragdollTeleportLoop()
     end
 end
 
--- ========== ZONE10: reset → respawn → tele ==========
+-- ========== ZONE10 ==========
 local function isAtZone10()
     local hrp = getHRP(LP.Character)
     if not hrp then return false end
@@ -980,7 +1021,7 @@ pillLabel.TextXAlignment = Enum.TextXAlignment.Left
 pillLabel.Text = CONFIG.PillName .. " • loading"
 pillLabel.Parent = pill
 
-local W, H = 320, 480
+local W, H = 320, 420
 local panel = Instance.new("Frame")
 panel.Size = UDim2.fromOffset(W, H)
 panel.Position = UDim2.new(0.5, -W/2, 0, 80)
@@ -1107,57 +1148,6 @@ local function toggleBtn(label, initial, colorOn, onChange)
     return b
 end
 
-sectionLabel("WALKSPEED  (max " .. CONFIG.WalkSpeedMax .. ")")
-local wsRow = Instance.new("Frame")
-wsRow.Size = UDim2.new(1, 0, 0, 52)
-wsRow.BackgroundColor3 = C.card
-wsRow.BorderSizePixel = 0
-wsRow.Parent = body
-corner(wsRow, 10); stroke(wsRow, C.line, 1)
-
-local wsMinus = Instance.new("TextButton")
-wsMinus.Size = UDim2.new(0.28, -3, 1, -6)
-wsMinus.Position = UDim2.new(0, 3, 0, 3)
-wsMinus.BackgroundColor3 = C.off
-wsMinus.Text = "−"
-wsMinus.TextColor3 = Color3.new(1,1,1)
-wsMinus.Font = Enum.Font.GothamBold
-wsMinus.TextSize = 22
-wsMinus.AutoButtonColor = false
-wsMinus.Parent = wsRow
-corner(wsMinus, 8)
-
-local wsLbl = Instance.new("TextLabel")
-wsLbl.Size = UDim2.new(0.44, -6, 1, 0)
-wsLbl.Position = UDim2.new(0.28, 3, 0, 0)
-wsLbl.BackgroundTransparency = 1
-wsLbl.Font = Enum.Font.GothamBold
-wsLbl.TextSize = 18
-wsLbl.TextColor3 = C.text
-wsLbl.Text = tostring(CONFIG.WalkSpeed)
-wsLbl.Parent = wsRow
-
-local wsPlus = Instance.new("TextButton")
-wsPlus.Size = UDim2.new(0.28, -3, 1, -6)
-wsPlus.Position = UDim2.new(0.72, 0, 0, 3)
-wsPlus.BackgroundColor3 = C.ok
-wsPlus.Text = "+"
-wsPlus.TextColor3 = Color3.new(1,1,1)
-wsPlus.Font = Enum.Font.GothamBold
-wsPlus.TextSize = 22
-wsPlus.AutoButtonColor = false
-wsPlus.Parent = wsRow
-corner(wsPlus, 8)
-
-local function updateWS(v)
-    v = math.clamp(v, 16, CONFIG.WalkSpeedMax)
-    wsLbl.Text = tostring(v)
-    setWalkSpeed(v)
-end
-
-wsMinus.MouseButton1Click:Connect(function() updateWS(CONFIG.WalkSpeed - 10) end)
-wsPlus.MouseButton1Click:Connect(function() updateWS(CONFIG.WalkSpeed + 10) end)
-
 sectionLabel("CHỨC NĂNG")
 toggleBtn("CHỈ NHẶT RARITY", CONFIG.CheckRarityFirst, C.ok,
     function(v) CONFIG.CheckRarityFirst = v end)
@@ -1177,11 +1167,6 @@ toggleBtn("AUTO REJOIN", CONFIG.AutoRejoinOnDisconnect, C.ok,
     function(v) CONFIG.AutoRejoinOnDisconnect = v end)
 
 setupAutoRejoin()
-
-task.spawn(function()
-    task.wait(2)
-    setWalkSpeed(CONFIG.WalkSpeed)
-end)
 
 task.spawn(function()
     task.wait(CONFIG.StartupDelay)
