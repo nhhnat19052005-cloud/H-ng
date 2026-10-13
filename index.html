@@ -2,12 +2,12 @@
   farm full + anti-ragdoll + auto re-execute
   - Prompt Steal loop.
   - ANTI-RAGDOLL (mặc định TẮT).
-  - AUTO STEAL: ragdoll → tele safe NGAY → về → spam 2.
+  - AUTO STEAL: ragdoll → spam 1s → tele safe → về → spam 2.5s.
   - Zone10 farm.
   - TELEPORT_LOCK mutex.
   - WalkSpeed slider.
-  - REJOIN: kick + queue_on_teleport (Roblox tự prompt rejoin).
-  - AUTO REJOIN khi disconnect tự nhiên.
+  - REJOIN: kick + queue_on_teleport.
+  - AUTO REJOIN khi disconnect.
   - Server hop có cooldown.
   - Pill.
   - Mobile + PC.
@@ -42,6 +42,7 @@ local CONFIG = {
     InputThreshold    = 0.5,
 
     EnableRagdollTele = true,
+    RagdollSpamTime1  = 1.0,
     RagdollSpamTime   = 2.5,
     RagdollSpamInterval = 0.1,
     TeleportInterval  = 1.0,
@@ -93,7 +94,6 @@ local arSavedPos = nil
 local arIsMoving = false
 local arKeyState = { W=false, A=false, S=false, D=false }
 
--- cache API
 local HAS_ASYNC = false
 local HAS_OPTS = false
 pcall(function()
@@ -115,7 +115,6 @@ local function firePrompt(prompt)
     end)
 end
 
--- QUEUE SCRIPT
 local function queueScript()
     if not CONFIG.QueueOnRejoin then return end
     if CONFIG.ScriptUrl == "" then return end
@@ -129,7 +128,6 @@ local function queueScript()
     if ok then log("queue: OK") else log("queue: fail", tostring(err)) end
 end
 
--- HELPERS
 local function charOrigin()
     local char = LP.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -173,7 +171,6 @@ local function setWalkSpeed(v)
     if hum then hum.WalkSpeed = v end
 end
 
--- REJOIN: kick + queue
 local function rejoinServer()
     log("rejoin: kick + queue")
     queueScript()
@@ -599,7 +596,7 @@ LP.CharacterAdded:Connect(function(c)
     attachRagdollWatcher(c)
 end)
 
--- AUTO STEAL
+-- AUTO STEAL — spam 1s → tele safe → về → spam 2.5s
 local function ragdollTeleportLoop()
     while STATE.running do
         if not CONFIG.EnableRagdollTele then task.wait(0.5); continue end
@@ -624,14 +621,27 @@ local function ragdollTeleportLoop()
 
         local savedPos = hrp.Position
 
-        log("ragdoll — tele safe")
+        -- PHASE 1: SPAM 1s
+        log("phase 1: spam 1s")
+        local spam1End = tick() + CONFIG.RagdollSpamTime1
+        while tick() < spam1End do
+            fireNearestStealPrompt()
+            task.wait(CONFIG.RagdollSpamInterval)
+        end
+
+        -- PHASE 2: TELE SAFE
+        log("phase 2: tele safe")
         teleportChar(CONFIG.SafeZone.Position)
         task.wait(CONFIG.TeleportCooldown)
         task.wait(CONFIG.RagdollStayTime)
 
+        -- PHASE 3: TELE VỀ VỊ TRÍ CŨ
+        log("phase 3: tele về cũ")
         teleportChar(savedPos)
         task.wait(CONFIG.TeleportCooldown)
 
+        -- PHASE 4: SPAM 2.5s
+        log("phase 4: spam 2.5s")
         task.spawn(refreshPromptCache)
         task.wait(0.2)
         local spam2End = tick() + CONFIG.RagdollSpamTime
@@ -881,8 +891,7 @@ end
 local function setupAutoRejoin()
     if game.JobId and game.JobId ~= "" then
         CONFIG.LastServerJobId = game.JobId
-    end
-    Players.PlayerRemoving:Connect(function(plr)
+    end    Players.PlayerRemoving:Connect(function(plr)
         if plr == LP and CONFIG.AutoRejoinOnDisconnect
             and CONFIG.LastServerJobId ~= "" and not REJOINING then
             REJOINING = true
@@ -1303,4 +1312,4 @@ task.spawn(function()
     end
 end)
 
-log(CONFIG.PillName .. " — farm full, rejoin kick + queue")
+log(CONFIG.PillName .. " — farm full, spam1 1s → tele safe")
