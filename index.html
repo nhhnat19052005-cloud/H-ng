@@ -1,15 +1,12 @@
 --[[
-  farm full + anti-ragdoll + auto re-execute
+  farm full + anti-ragdoll + auto re-execute (lag-tuned)
   - AUTO STEAL: ragdoll → spam 1s → tele safe → về → spam 2.5s.
-  - ZONE10 farm độc lập.
-  - Prompt loop + Anti-ragdoll chỉ chạy khi EnableRagdollTele ON.
-  - ZONE10 loop chỉ chạy khi EnableZone10Farm ON.
+  - ZONE10 farm.
+  - Prompt loop + Anti-ragdoll chỉ khi EnableRagdollTele ON.
   - TELEPORT_LOCK mutex.
-  - WalkSpeed slider.
-  - REJOIN: kick + queue_on_teleport.
-  - AUTO REJOIN khi disconnect.
-  - Server hop có cooldown.
-  - Pill.
+  - WalkSpeed slider, rejoin (kick + queue).
+  - Server hop.
+  - Tuning: interval cao, cache rarity, GetPartBoundsInRadius.
 --]]
 
 local Players                = game:GetService("Players")
@@ -24,15 +21,15 @@ local LP = Players.LocalPlayer
 local CONFIG = {
     PetRarityFilter  = { "Celestial", "Inferno", "Void", "Omega" },
     CheckRarityFirst = true,
-    RaritySearchNear = 12,
+    RaritySearchNear = 8,
 
     PromptActionText = "Steal",
-    WatcherRange     = 25,
-    PromptLoopInterval = 0.6,
-    CacheRefreshInterval = 3,
+    WatcherRange     = 18,
+    PromptLoopInterval = 1.2,
+    CacheRefreshInterval = 6,
 
     EnableAntiRagdoll = false,
-    AntiRagdollInterval = 0.05,
+    AntiRagdollInterval = 0.15,
     BlockRemote       = true,
     RestoreMotors     = true,
     AnchorOnRagdoll   = true,
@@ -53,10 +50,10 @@ local CONFIG = {
     EnableZone10Farm = true,
     Zone10Pos        = Vector3.new(-2873.74, 3.50, 1.24),
     TreadmillSearchName = "Treadmill",
-    TreadmillMaxDistance = 100,
+    TreadmillMaxDistance = 50,
     TreadmillTime    = 1.5,
     TreadmillJumpTime = 0.8,
-    Zone10LoopDelay  = 2,
+    Zone10LoopDelay  = 3,
 
     WalkSpeed         = 16,
     WalkSpeedMax      = 200,
@@ -75,9 +72,9 @@ local CONFIG = {
     ScriptUrl = "https://raw.githubusercontent.com/nhhnat19052005-cloud/H-ng/refs/heads/main/index.html",
 
     PillName = "huongcuto20m",
-    StatUpdateInterval = 1,
+    StatUpdateInterval = 2,
 
-    EnableLogging    = true,
+    EnableLogging    = false,
 }
 
 local STATE = { running = true, status = "auto" }
@@ -92,6 +89,9 @@ local arHoldingPos = false
 local arSavedPos = nil
 local arIsMoving = false
 local arKeyState = { W=false, A=false, S=false, D=false }
+
+local RARITY_CACHE = {}
+local RARITY_CACHE_TIME = {}
 
 local HAS_ASYNC = false
 local HAS_OPTS = false
@@ -121,10 +121,9 @@ local function queueScript()
         or (syn and syn.queue_on_teleport)
         or (fluxus and fluxus.queue_on_teleport)
         or (krnl and krnl.queue_on_teleport)
-    if not fn then log("queue: unsupported"); return end
+    if not fn then return end
     local code = string.format('loadstring(game:HttpGet("%s"))()', CONFIG.ScriptUrl)
-    local ok, err = pcall(fn, code)
-    if ok then log("queue: OK") else log("queue: fail", tostring(err)) end
+    pcall(fn, code)
 end
 
 local function charOrigin()
@@ -174,9 +173,7 @@ local function rejoinServer()
     log("rejoin: kick + queue")
     queueScript()
     task.wait(0.3)
-    pcall(function()
-        LP:Kick("Rejoining...")
-    end)
+    pcall(function() LP:Kick("Rejoining...") end)
 end
 
 local function getHRP(char)
@@ -246,7 +243,7 @@ if CONFIG.BlockRemote and hookmetamethod then
     end)
 end
 
--- RARITY
+-- RARITY with cache
 local RARITY_KEYWORDS = {
     "Celestial", "Inferno", "Void", "Omega",
     "Divine", "Common", "Rare", "Epic", "Legendary", "Mythic", "Godly"
@@ -254,25 +251,39 @@ local RARITY_KEYWORDS = {
 
 local function getPetRarity(pet)
     if not pet then return nil end
-    for _, attr in ipairs({ "Rarity", "rarity", "Tier", "tier", "RarityName" }) do
+    if RARITY_CACHE[pet] and tick() - (RARITY_CACHE_TIME[pet] or 0) < 30 then
+        return RARITY_CACHE[pet]
+    end
+    local rarity
+    for _, attr in ipairs({ "Rarity", "rarity", "Tier", "tier" }) do
         local v = pet:GetAttribute(attr)
-        if type(v) == "string" and v ~= "" then return v end
+        if type(v) == "string" and v ~= "" then rarity = v; break end
     end
-    for _, d in ipairs(pet:GetDescendants()) do
-        if d:IsA("StringValue") then
-            local n = d.Name:lower()
-            if n:find("rarit") or n:find("tier") then return d.Value end
-        end
-    end
-    for _, d in ipairs(pet:GetDescendants()) do
-        if d:IsA("TextLabel") and d.Text ~= "" then
-            local txt = d.Text:lower()
-            for _, kw in ipairs(RARITY_KEYWORDS) do
-                if txt:find(kw:lower(), 1, true) then return d.Text end
+    if not rarity then
+        for _, d in ipairs(pet:GetChildren()) do
+            if d:IsA("StringValue") then
+                local n = d.Name:lower()
+                if n:find("rarit") or n:find("tier") then
+                    rarity = d.Value; break
+                end
             end
         end
     end
-    return nil
+    if not rarity then
+        for _, d in ipairs(pet:GetChildren()) do
+            if d:IsA("BillboardGui") then
+                for _, c in ipairs(d:GetDescendants()) do
+                    if c:IsA("TextLabel") and c.Text ~= "" then
+                        rarity = c.Text; break
+                    end
+                end
+                if rarity then break end
+            end
+        end
+    end
+    RARITY_CACHE[pet] = rarity or ""
+    RARITY_CACHE_TIME[pet] = tick()
+    return rarity
 end
 
 local function petMatchesRarity(rarity)
@@ -301,27 +312,31 @@ local function findPetNearPrompt(promptPos, radius, promptInst)
         end
     end
     if not promptPos then return nil end
+    -- dùng GetPartBoundsInRadius thay vì GetDescendants
+    local ok, parts = pcall(function()
+        local params = OverlapParams.new()
+        params.FilterType = Enum.RaycastFilterType.Include
+        params.FilterDescendantsInstances = {workspace}
+        return workspace:GetPartBoundsInRadius(promptPos, radius, params)
+    end)
+    if not ok or not parts then return nil end
     local best, bestDist
     local char = LP.Character
-    for _, d in ipairs(workspace:GetDescendants()) do
-        if d:IsA("Model") and not d:IsA("Accessory") then
-            if not (char and d:IsDescendantOf(char)) then
+    local seen = {}
+    for _, part in ipairs(parts) do
+        local model = part:FindFirstAncestorOfClass("Model")
+        if model and not model:IsA("Accessory") and not seen[model] then
+            seen[model] = true
+            if not (char and model:IsDescendantOf(char)) then
                 local hasBB = false
-                for _, c in ipairs(d:GetDescendants()) do
+                for _, c in ipairs(model:GetChildren()) do
                     if c:IsA("BillboardGui") then hasBB = true; break end
                 end
                 if hasBB then
-                    local pos
-                    if d.PrimaryPart then pos = d.PrimaryPart.Position
-                    else
-                        local ok, piv = pcall(function() return d:GetPivot().Position end)
-                        if ok then pos = piv end
-                    end
-                    if pos then
-                        local dist = (pos - promptPos).Magnitude
-                        if dist <= radius and (not bestDist or dist < bestDist) then
-                            best, bestDist = d, dist
-                        end
+                    local pos = part.Position
+                    local dist = (pos - promptPos).Magnitude
+                    if not bestDist or dist < bestDist then
+                        best, bestDist = model, dist
                     end
                 end
             end
@@ -330,6 +345,7 @@ local function findPetNearPrompt(promptPos, radius, promptInst)
     return best
 end
 
+-- STEAL CACHE
 local function isStealPrompt(p)
     local n = tostring(p.Name):lower()
     local a = tostring(p.ActionText or ""):lower()
@@ -375,15 +391,13 @@ local function fireNearestStealPrompt()
     return false
 end
 
--- PROMPT LOOP — chỉ chạy khi EnableRagdollTele ON
 local function promptStealLoop()
     task.wait(1)
     refreshPromptCache()
     local lastCache = tick()
     while STATE.running do
         if not CONFIG.EnableRagdollTele then
-            task.wait(0.5)
-            continue
+            task.wait(0.5); continue
         end
         if tick() - lastCache > CONFIG.CacheRefreshInterval then
             refreshPromptCache()
@@ -508,13 +522,11 @@ local function arApply(char)
     if hum.WalkSpeed < 1 then hum.WalkSpeed = 16 end
 end
 
--- ANTI-RAGDOLL LOOP — chỉ chạy khi EnableRagdollTele ON
 local function antiRagdollLoop()
     while STATE.running do
         if not CONFIG.EnableRagdollTele then
             if arHoldingPos then arStopHolding(LP.Character) end
-            task.wait(0.5)
-            continue
+            task.wait(0.5); continue
         end
         if CONFIG.EnableAntiRagdoll and not arPaused then
             local char = LP.Character
@@ -560,7 +572,6 @@ RunService.RenderStepped:Connect(function(dt)
     end
 end)
 
--- RAGDOLL WATCHER
 local function attachRagdollWatcher(char)
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
@@ -632,23 +643,19 @@ local function ragdollTeleportLoop()
 
         local savedPos = hrp.Position
 
-        log("phase 1: spam 1s")
         local spam1End = tick() + CONFIG.RagdollSpamTime1
         while tick() < spam1End do
             fireNearestStealPrompt()
             task.wait(CONFIG.RagdollSpamInterval)
         end
 
-        log("phase 2: tele safe")
         teleportChar(CONFIG.SafeZone.Position)
         task.wait(CONFIG.TeleportCooldown)
         task.wait(CONFIG.RagdollStayTime)
 
-        log("phase 3: tele về cũ")
         teleportChar(savedPos)
         task.wait(CONFIG.TeleportCooldown)
 
-        log("phase 4: spam 2.5s")
         task.spawn(refreshPromptCache)
         task.wait(0.2)
         local spam2End = tick() + CONFIG.RagdollSpamTime
@@ -853,10 +860,7 @@ end
 
 local function hopToServer(jobId)
     if not jobId or jobId == "" then return false end
-    if tick() - LAST_HOP_TIME < CONFIG.HopCooldown then
-        log("hop: cooldown")
-        return false
-    end
+    if tick() - LAST_HOP_TIME < CONFIG.HopCooldown then return false end
     LAST_HOP_TIME = tick()
     queueScript()
 
@@ -868,7 +872,6 @@ local function hopToServer(jobId)
         end)
         if ok then
             CONFIG.LastServerJobId = jobId
-            log("hop (async):", jobId)
             return true
         end
     end
@@ -878,7 +881,6 @@ local function hopToServer(jobId)
     end)
     if not ok then return false end
     CONFIG.LastServerJobId = jobId
-    log("hop:", jobId)
     return true
 end
 
@@ -887,7 +889,8 @@ local function serverHopLoop()
     while STATE.running do
         if CONFIG.EnableServerHop then
             local ok, jobId = pcall(findLowPopServer)
-            if ok and jobId and jobId ~= game.JobId then                hopToServer(jobId)
+            if ok and jobId and jobId ~= game.JobId then
+                hopToServer(jobId)
             end
         end
         task.wait(CONFIG.ServerHopScanTime)
@@ -1318,4 +1321,4 @@ task.spawn(function()
     end
 end)
 
-log(CONFIG.PillName .. " — farm full, prompt/anti chỉ khi AUTO STEAL ON")
+log("farm loaded (lag-tuned)")
