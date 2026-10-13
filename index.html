@@ -1,16 +1,15 @@
 --[[
   farm full + anti-ragdoll + auto re-execute
-  - Prompt Steal loop.
-  - ANTI-RAGDOLL (mặc định TẮT).
   - AUTO STEAL: ragdoll → spam 1s → tele safe → về → spam 2.5s.
-  - Zone10 farm.
+  - ZONE10 farm độc lập.
+  - Prompt loop + Anti-ragdoll chỉ chạy khi EnableRagdollTele ON.
+  - ZONE10 loop chỉ chạy khi EnableZone10Farm ON.
   - TELEPORT_LOCK mutex.
   - WalkSpeed slider.
   - REJOIN: kick + queue_on_teleport.
   - AUTO REJOIN khi disconnect.
   - Server hop có cooldown.
   - Pill.
-  - Mobile + PC.
 --]]
 
 local Players                = game:GetService("Players")
@@ -233,7 +232,8 @@ if CONFIG.BlockRemote and hookmetamethod then
         local oldNamecall
         oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
             local method = getnamecallmethod()
-            if CONFIG.EnableAntiRagdoll and (method == "FireServer" or method == "InvokeServer") then
+            if CONFIG.EnableAntiRagdoll and CONFIG.EnableRagdollTele
+                and (method == "FireServer" or method == "InvokeServer") then
                 local name = tostring(self.Name or ""):lower()
                 if name:find("ragdoll") or name:find("rag")
                     or name:find("knock") or name:find("push")
@@ -330,7 +330,6 @@ local function findPetNearPrompt(promptPos, radius, promptInst)
     return best
 end
 
--- STEAL CACHE
 local function isStealPrompt(p)
     local n = tostring(p.Name):lower()
     local a = tostring(p.ActionText or ""):lower()
@@ -376,11 +375,16 @@ local function fireNearestStealPrompt()
     return false
 end
 
+-- PROMPT LOOP — chỉ chạy khi EnableRagdollTele ON
 local function promptStealLoop()
     task.wait(1)
     refreshPromptCache()
     local lastCache = tick()
     while STATE.running do
+        if not CONFIG.EnableRagdollTele then
+            task.wait(0.5)
+            continue
+        end
         if tick() - lastCache > CONFIG.CacheRefreshInterval then
             refreshPromptCache()
             lastCache = tick()
@@ -504,8 +508,14 @@ local function arApply(char)
     if hum.WalkSpeed < 1 then hum.WalkSpeed = 16 end
 end
 
+-- ANTI-RAGDOLL LOOP — chỉ chạy khi EnableRagdollTele ON
 local function antiRagdollLoop()
     while STATE.running do
+        if not CONFIG.EnableRagdollTele then
+            if arHoldingPos then arStopHolding(LP.Character) end
+            task.wait(0.5)
+            continue
+        end
         if CONFIG.EnableAntiRagdoll and not arPaused then
             local char = LP.Character
             if char then pcall(arApply, char) end
@@ -516,6 +526,7 @@ end
 
 RunService.RenderStepped:Connect(function(dt)
     if not CONFIG.EnableAntiRagdoll then return end
+    if not CONFIG.EnableRagdollTele then return end
     if arPaused then return end
     if not arHoldingPos or not arSavedPos then return end
 
@@ -596,7 +607,7 @@ LP.CharacterAdded:Connect(function(c)
     attachRagdollWatcher(c)
 end)
 
--- AUTO STEAL — spam 1s → tele safe → về → spam 2.5s
+-- AUTO STEAL
 local function ragdollTeleportLoop()
     while STATE.running do
         if not CONFIG.EnableRagdollTele then task.wait(0.5); continue end
@@ -621,7 +632,6 @@ local function ragdollTeleportLoop()
 
         local savedPos = hrp.Position
 
-        -- PHASE 1: SPAM 1s
         log("phase 1: spam 1s")
         local spam1End = tick() + CONFIG.RagdollSpamTime1
         while tick() < spam1End do
@@ -629,18 +639,15 @@ local function ragdollTeleportLoop()
             task.wait(CONFIG.RagdollSpamInterval)
         end
 
-        -- PHASE 2: TELE SAFE
         log("phase 2: tele safe")
         teleportChar(CONFIG.SafeZone.Position)
         task.wait(CONFIG.TeleportCooldown)
         task.wait(CONFIG.RagdollStayTime)
 
-        -- PHASE 3: TELE VỀ VỊ TRÍ CŨ
         log("phase 3: tele về cũ")
         teleportChar(savedPos)
         task.wait(CONFIG.TeleportCooldown)
 
-        -- PHASE 4: SPAM 2.5s
         log("phase 4: spam 2.5s")
         task.spawn(refreshPromptCache)
         task.wait(0.2)
@@ -880,8 +887,7 @@ local function serverHopLoop()
     while STATE.running do
         if CONFIG.EnableServerHop then
             local ok, jobId = pcall(findLowPopServer)
-            if ok and jobId and jobId ~= game.JobId then
-                hopToServer(jobId)
+            if ok and jobId and jobId ~= game.JobId then                hopToServer(jobId)
             end
         end
         task.wait(CONFIG.ServerHopScanTime)
@@ -891,7 +897,8 @@ end
 local function setupAutoRejoin()
     if game.JobId and game.JobId ~= "" then
         CONFIG.LastServerJobId = game.JobId
-    end    Players.PlayerRemoving:Connect(function(plr)
+    end
+    Players.PlayerRemoving:Connect(function(plr)
         if plr == LP and CONFIG.AutoRejoinOnDisconnect
             and CONFIG.LastServerJobId ~= "" and not REJOINING then
             REJOINING = true
@@ -1270,7 +1277,6 @@ actionBtn("▶  START", C.ok, function()
     STATE.running = true
     STATE.status = "running"
     pillDot.BackgroundColor3 = C.ok
-    CONFIG.EnableZone10Farm = true
 end)
 
 -- AUTO START
@@ -1312,4 +1318,4 @@ task.spawn(function()
     end
 end)
 
-log(CONFIG.PillName .. " — farm full, spam1 1s → tele safe")
+log(CONFIG.PillName .. " — farm full, prompt/anti chỉ khi AUTO STEAL ON")
