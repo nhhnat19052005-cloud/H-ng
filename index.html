@@ -1,9 +1,10 @@
 --[[
-  farm full + anti-ragdoll + auto rejoin (lag-tuned)
+  farm full + anti-ragdoll + auto rejoin
   - AUTO STEAL: ragdoll → spam 1s → tele safe → về → spam 2.5s.
-  - ZONE10 farm.
+  - ZONE10 farm — chỉ chạy 1 lần khi vào game.
   - Auto rejoin khi disconnect.
-  - Fix: delay 5s khi load + ground check (ko anchor khi bay).
+  - TELEPORT_LOCK mutex.
+  - Fix: delay 5s khi load + ground check.
   - UI: WalkSpeed + Toggles + FIND 1-PLAYER.
 --]]
 
@@ -51,7 +52,6 @@ local CONFIG = {
     TreadmillMaxDistance = 50,
     TreadmillTime    = 1.5,
     TreadmillJumpTime = 0.8,
-    Zone10LoopDelay  = 3,
 
     WalkSpeed         = 16,
     WalkSpeedMax      = 200,
@@ -65,9 +65,6 @@ local CONFIG = {
     AutoRejoinOnDisconnect = true,
     LastServerJobId     = "",
     Cookie              = "",
-
-    QueueOnRejoin = true,
-    ScriptUrl = "https://raw.githubusercontent.com/nhhnat19052005-cloud/H-ng/refs/heads/main/index.html",
 
     PillName = "huongcuto20m",
     StatUpdateInterval = 2,
@@ -84,6 +81,7 @@ local TELEPORT_LOCK = false
 local REJOINING = false
 local LAST_HOP_TIME = 0
 local SCRIPTS_STARTED = false
+local ZONE10_DONE = false
 
 local arHoldingPos = false
 local arSavedPos = nil
@@ -112,18 +110,6 @@ local function firePrompt(prompt)
         if fireprompt then fireprompt(prompt); return end
         error("no prompt fire fn")
     end)
-end
-
-local function queueScript()
-    if not CONFIG.QueueOnRejoin then return end
-    if CONFIG.ScriptUrl == "" then return end
-    local fn = queue_on_teleport or queueonteleport
-        or (syn and syn.queue_on_teleport)
-        or (fluxus and fluxus.queue_on_teleport)
-        or (krnl and krnl.queue_on_teleport)
-    if not fn then return end
-    local code = string.format('loadstring(game:HttpGet("%s"))()', CONFIG.ScriptUrl)
-    pcall(fn, code)
 end
 
 local function charOrigin()
@@ -441,7 +427,6 @@ local function arStartHolding(char)
     if arHoldingPos then return end
     local hrp = getHRP(char)
     if not hrp then return end
-    -- chỉ hold nếu có ground gần
     if not hasGroundNear(char, hrp, 20) then return end
     arSavedPos = hrp.CFrame
     arHoldingPos = true
@@ -501,7 +486,6 @@ local function arApply(char)
 
     local st = hum:GetState()
     if isRagdollState(st) or hum.PlatformStand then
-        -- chỉ hold nếu có ground
         if hrp and not hasGroundNear(char, hrp, 20) then
             return
         end
@@ -637,7 +621,6 @@ local function ragdollTeleportLoop()
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         if not hrp then task.wait(0.5); continue end
 
-        -- check ground — ko tele nếu char đang bay
         if not hasGroundNear(char, hrp, 30) then
             task.wait(0.5); continue
         end
@@ -753,19 +736,18 @@ local function findTreadmill()
 end
 
 local function runZone10Once()
+    if ZONE10_DONE then return false end
     if TELEPORT_LOCK then return false end
 
     local char = LP.Character
     local hrp = getHRP(char)
     if not hrp then return false end
 
-    -- check char ổn định (ko đang bay)
     if hrp.AssemblyLinearVelocity.Magnitude > 100 then
         return false
     end
 
     TELEPORT_LOCK = true
-
     arPaused = true
     arHoldingPos = false
     arSavedPos = nil
@@ -794,15 +776,22 @@ local function runZone10Once()
 
     arPaused = false
     TELEPORT_LOCK = false
+    ZONE10_DONE = true
+    log("zone10 done")
     return true
 end
 
 local function zone10FarmingLoop()
-    while STATE.running do
-        if not CONFIG.EnableZone10Farm then task.wait(1); continue end
-        pcall(runZone10Once)
-        task.wait(CONFIG.Zone10LoopDelay)
+    if not CONFIG.EnableZone10Farm then return end
+    if ZONE10_DONE then return end
+
+    -- chờ char spawn
+    while not LP.Character or not LP.Character:FindFirstChild("HumanoidRootPart") do
+        task.wait(0.5)
     end
+    task.wait(2)
+
+    pcall(runZone10Once)
 end
 
 local function getHttpFn()
@@ -875,7 +864,6 @@ local function hopToServer(jobId)
     if not jobId or jobId == "" then return false end
     if tick() - LAST_HOP_TIME < CONFIG.HopCooldown then return false end
     LAST_HOP_TIME = tick()
-    queueScript()
 
     if HAS_ASYNC and HAS_OPTS then
         local ok = pcall(function()
@@ -918,7 +906,6 @@ local function setupAutoRejoin()
         if plr == LP and CONFIG.AutoRejoinOnDisconnect
             and CONFIG.LastServerJobId ~= "" and not REJOINING then
             REJOINING = true
-            queueScript()
             task.wait(2)
             pcall(function()
                 if HAS_ASYNC and HAS_OPTS then
@@ -1262,7 +1249,10 @@ toggleBtn("ANTI-RAGDOLL", CONFIG.EnableAntiRagdoll, C.ok,
 toggleBtn("AUTO STEAL (LOOP TP)", CONFIG.EnableRagdollTele, C.ok,
     function(v) CONFIG.EnableRagdollTele = v end)
 toggleBtn("AUTO TELE ZONE10", CONFIG.EnableZone10Farm, C.ok,
-    function(v) CONFIG.EnableZone10Farm = v end)
+    function(v)
+        CONFIG.EnableZone10Farm = v
+        if v then ZONE10_DONE = false end
+    end)
 
 sectionLabel("SERVER")
 toggleBtn("AUTO HOP (≤1 player)", CONFIG.EnableServerHop, C.ok,
@@ -1285,12 +1275,6 @@ end)
 
 setupAutoRejoin()
 
--- queue script sau 3s
-task.spawn(function()
-    task.wait(3)
-    queueScript()
-end)
-
 -- WalkSpeed apply sau 2s
 task.spawn(function()
     task.wait(2)
@@ -1305,7 +1289,7 @@ task.spawn(function()
     task.spawn(promptStealLoop)
     task.spawn(antiRagdollLoop)
     task.spawn(ragdollTeleportLoop)
-    task.spawn(zone10FarmingLoop)
+    task.spawn(zone10FarmingLoop)   -- chạy 1 lần
     task.spawn(serverHopLoop)
 end)
 
@@ -1323,4 +1307,4 @@ task.spawn(function()
     end
 end)
 
-log("farm loaded — startup delay " .. CONFIG.StartupDelay .. "s")
+log("farm loaded — ko auto execute, zone10 1 lần")
