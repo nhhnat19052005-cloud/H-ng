@@ -1,12 +1,12 @@
 --[[
   farm full (lag-tuned)
   - Auto nhặt pet rarity (Celestial, Inferno, Void, Omega). Loại Egg.
-  - Zone10: tự tele khi vào game → treadmill → zone10.
+  - Zone10: tự tele khi vào game → treadmill → zone10, retry nếu fail.
   - Zone10 watch: chỉ log pet rarity.
-  - Auto execute: queue_on_teleport khi load + rejoin.
   - Anti-ragdoll (mặc định tắt).
   - Auto rejoin.
   - Tuning giảm lag.
+  - (đã bỏ queue_on_teleport / auto execute)
 --]]
 
 local Players                = game:GetService("Players")
@@ -54,6 +54,8 @@ local CONFIG = {
     TreadmillTime    = 1.5,
     TreadmillJumpTime = 0.8,
     TreadmillFindTimeout = 90,
+    Zone10RetryMax   = 20,
+    Zone10VerifyDist = 30,
 
     Zone10ScanRadius = 300,
     Zone10ScanInterval = 5,
@@ -63,9 +65,6 @@ local CONFIG = {
 
     AutoRejoinOnDisconnect = true,
     LastServerJobId     = "",
-
-    QueueOnRejoin = true,
-    ScriptUrl = "https://raw.githubusercontent.com/nhhnat19052005-cloud/H-ng/refs/heads/main/index.html",
 
     PillName = "huongcuto20m",
     StatUpdateInterval = 3,
@@ -100,22 +99,6 @@ end)
 
 local function log(...)
     if CONFIG.EnableLogging then print("[farm]", ...) end
-end
-
-local function queueScript()
-    if not CONFIG.QueueOnRejoin then return end
-    if CONFIG.ScriptUrl == "" then return end
-    local fn = queue_on_teleport or queueonteleport
-        or (syn and syn.queue_on_teleport)
-        or (fluxus and fluxus.queue_on_teleport)
-        or (krnl and krnl.queue_on_teleport)
-    if not fn then
-        log("queue: unsupported")
-        return
-    end
-    local code = string.format('loadstring(game:HttpGet("%s"))()', CONFIG.ScriptUrl)
-    local ok = pcall(fn, code)
-    if ok then log("queue: OK") end
 end
 
 local function firePrompt(prompt)
@@ -288,7 +271,7 @@ local RARITY_KEYWORDS = {
 
 local function getPetRarity(pet)
     if not pet then return nil end
-    if RARITY_CACHE[pet] and pet.Parent 
+    if RARITY_CACHE[pet] and pet.Parent
         and tick() - (RARITY_CACHE_TIME[pet] or 0) < 10 then
         return RARITY_CACHE[pet]
     end
@@ -774,6 +757,13 @@ local function findTreadmill()
     return best, bestPos
 end
 
+local function isAtZone10()
+    local hrp = getHRP(LP.Character)
+    if not hrp then return false end
+    local d = (hrp.Position - CONFIG.Zone10Pos).Magnitude
+    return d <= CONFIG.Zone10VerifyDist
+end
+
 local function runZone10Once()
     local char = LP.Character
     local hrp = getHRP(char)
@@ -806,7 +796,6 @@ local function runZone10Once()
 
     arPaused = false
     TELEPORT_LOCK = false
-    ZONE10_DONE = true
     return true
 end
 
@@ -823,17 +812,53 @@ local function zone10FarmingLoop()
         task.wait(0.5)
     end
 
-    local deadline = tick() + CONFIG.TreadmillFindTimeout
-    local tm, tmPos
-    while tick() < deadline do
-        tm, tmPos = findTreadmill()
-        if tm and tmPos then break end
-        task.wait(1)
+    if isAtZone10() then
+        ZONE10_DONE = true
+        return
     end
 
-    if not tm or not tmPos then return end
+    local attempt = 0
+    while attempt < CONFIG.Zone10RetryMax do
+        attempt = attempt + 1
+        if not CONFIG.EnableZone10Farm then return end
+        if isAtZone10() then
+            ZONE10_DONE = true
+            log("zone10: đã ở zone10")
+            return
+        end
 
-    pcall(runZone10Once)
+        local deadline = tick() + CONFIG.TreadmillFindTimeout
+        local tm, tmPos
+        while tick() < deadline do
+            if TELEPORT_LOCK then
+                task.wait(0.5)
+            else
+                tm, tmPos = findTreadmill()
+                if tm and tmPos then break end
+                task.wait(1)
+            end
+        end
+
+        if not tm or not tmPos then
+            log("zone10: no treadmill, retry", attempt)
+            task.wait(2)
+            continue
+        end
+
+        local ok = pcall(runZone10Once)
+
+        task.wait(1)
+        if ok and isAtZone10() then
+            ZONE10_DONE = true
+            log("zone10: OK sau", attempt, "lần")
+            return
+        end
+
+        log("zone10: fail lần", attempt, "— thử lại treadmill → zone10")
+        task.wait(1.5)
+    end
+
+    log("zone10: hết", CONFIG.Zone10RetryMax, "lần, bỏ")
 end
 
 -- CHỈ SCAN
@@ -869,7 +894,6 @@ local function setupAutoRejoin()
         if plr == LP and CONFIG.AutoRejoinOnDisconnect
             and CONFIG.LastServerJobId ~= "" and not REJOINING then
             REJOINING = true
-            queueScript()
             task.wait(2)
             pcall(function()
                 if HAS_ASYNC and HAS_OPTS then
@@ -887,7 +911,6 @@ end
 
 local fps = 60
 local frameCount = 0
-local fpsStart = tick()
 
 RunService.Heartbeat:Connect(function()
     frameCount = frameCount + 1
@@ -1205,11 +1228,6 @@ workspace.DescendantAdded:Connect(function(d)
 end)
 
 setupAutoRejoin()
-
-task.spawn(function()
-    task.wait(3)
-    queueScript()
-end)
 
 task.spawn(function()
     task.wait(2)
