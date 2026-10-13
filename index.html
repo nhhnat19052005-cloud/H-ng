@@ -1,12 +1,12 @@
 --[[
   farm full (lag-tuned)
   - Auto nhặt pet rarity (Celestial, Inferno, Void, Omega). Loại Egg.
-  - Zone10: tự tele khi vào game → treadmill → zone10, retry nếu fail.
-  - Zone10 watch: chỉ log pet rarity.
+  - Bám ProximityPrompt "Steal" trực tiếp — pet rơi ra nhặt ngay.
+  - Zone10: tele vào giữa băng tải → zone10, retry nếu fail.
+  - Bỏ biển "Upgrade Treadmill".
+  - Cache descendants — giảm tụt fps.
   - Anti-ragdoll (mặc định tắt).
-  - Auto rejoin.
-  - Tuning giảm lag.
-  - (đã bỏ queue_on_teleport / auto execute)
+  - Auto rejoin (không queue script).
 --]]
 
 local Players                = game:GetService("Players")
@@ -21,15 +21,16 @@ local CONFIG = {
     PetRarityFilter  = { "Celestial", "Inferno", "Void", "Omega" },
     ExcludeNames     = { "egg" },
     CheckRarityFirst = true,
-    PetSearchRadius  = 30,
+    PetSearchRadius  = 40,
 
     PromptActionText = "Steal",
     WatcherRange     = 20,
     PromptLoopInterval = 1.2,
-    CacheRefreshInterval = 5,
+    CacheRefreshInterval = 6,
+    PromptRefreshFast  = 2,
 
     EnableAntiRagdoll = false,
-    AntiRagdollInterval = 0.2,
+    AntiRagdollInterval = 0.25,
     BlockRemote       = true,
     RestoreMotors     = true,
     AnchorOnRagdoll   = true,
@@ -58,7 +59,7 @@ local CONFIG = {
     Zone10VerifyDist = 30,
 
     Zone10ScanRadius = 300,
-    Zone10ScanInterval = 5,
+    Zone10ScanInterval = 6,
 
     WalkSpeed         = 16,
     WalkSpeedMax      = 200,
@@ -69,6 +70,10 @@ local CONFIG = {
     PillName = "huongcuto20m",
     StatUpdateInterval = 3,
     StartupDelay = 5,
+
+    PetScanInterval     = 0.4,
+    RarityCacheTTL      = 30,
+    DescendantRefresh   = 6,
 
     EnableLogging    = false,
 }
@@ -89,6 +94,12 @@ local arKeyState = { W=false, A=false, S=false, D=false }
 
 local RARITY_CACHE = {}
 local RARITY_CACHE_TIME = {}
+
+local PET_MODELS = {}
+local PET_LIST_DIRTY = true
+local lastPetRefresh = 0
+local TREADMILL_CACHE = {}
+local TREADMILL_CACHE_TIME = 0
 
 local HAS_ASYNC = false
 local HAS_OPTS = false
@@ -217,9 +228,6 @@ local function hasBillboard(pet)
     for _, c in ipairs(pet:GetChildren()) do
         if c:IsA("BillboardGui") then return true end
     end
-    for _, c in ipairs(pet:GetDescendants()) do
-        if c:IsA("BillboardGui") then return true end
-    end
     return false
 end
 
@@ -271,9 +279,10 @@ local RARITY_KEYWORDS = {
 
 local function getPetRarity(pet)
     if not pet then return nil end
-    if RARITY_CACHE[pet] and pet.Parent
-        and tick() - (RARITY_CACHE_TIME[pet] or 0) < 10 then
-        return RARITY_CACHE[pet]
+    local cached = RARITY_CACHE[pet]
+    if cached and pet.Parent
+        and tick() - (RARITY_CACHE_TIME[pet] or 0) < CONFIG.RarityCacheTTL then
+        return cached
     end
     local rarity
     for _, attr in ipairs({ "Rarity", "rarity", "Tier", "tier", "RarityName" }) do
@@ -281,7 +290,7 @@ local function getPetRarity(pet)
         if type(v) == "string" and v ~= "" then rarity = v; break end
     end
     if not rarity then
-        for _, d in ipairs(pet:GetDescendants()) do
+        for _, d in ipairs(pet:GetChildren()) do
             if d:IsA("StringValue") then
                 local n = d.Name:lower()
                 if n:find("rarit") or n:find("tier") then
@@ -291,7 +300,7 @@ local function getPetRarity(pet)
         end
     end
     if not rarity then
-        for _, d in ipairs(pet:GetDescendants()) do
+        for _, d in ipairs(pet:GetChildren()) do
             if d:IsA("TextLabel") and d.Text ~= "" then
                 local txt = d.Text:lower()
                 for _, kw in ipairs(RARITY_KEYWORDS) do
@@ -320,26 +329,40 @@ local function petMatchesRarity(rarity)
     return false
 end
 
-local function findPetNearChar(radius)
+local function refreshPetSet()
+    PET_MODELS = {}
+    local char = LP.Character
+    for _, d in ipairs(workspace:GetDescendants()) do
+        if d:IsA("Model") and not d:IsA("Accessory") then
+            if not (char and d:IsDescendantOf(char)) and not isExcluded(d) then
+                if hasBillboard(d) then
+                    PET_MODELS[d] = true
+                end
+            end
+        end
+    end
+    PET_LIST_DIRTY = false
+    lastPetRefresh = tick()
+end
+
+local function findPetNearCharFast(radius)
     local char = LP.Character
     if not char then return nil end
     local hrp = getHRP(char)
     if not hrp then return nil end
     local origin = hrp.Position
     local best, bestDist
-    for _, d in ipairs(workspace:GetDescendants()) do
-        if d:IsA("Model") and not d:IsA("Accessory") then
-            if not d:IsDescendantOf(char) and not isExcluded(d) then
-                if hasBillboard(d) then
-                    local pos = getPetPosition(d)
-                    if pos then
-                        local dist = (pos - origin).Magnitude
-                        if dist <= radius and (not bestDist or dist < bestDist) then
-                            best, bestDist = d, dist
-                        end
-                    end
+    for pet in pairs(PET_MODELS) do
+        if pet.Parent then
+            local pos = getPetPosition(pet)
+            if pos then
+                local dist = (pos - origin).Magnitude
+                if dist <= radius and (not bestDist or dist < bestDist) then
+                    best, bestDist = pet, dist
                 end
             end
+        else
+            PET_MODELS[pet] = nil
         end
     end
     return best
@@ -348,21 +371,16 @@ end
 local function findRarityPetInZone10()
     local origin = CONFIG.Zone10Pos
     local best, bestDist, bestRarity
-    local char = LP.Character
-    for _, d in ipairs(workspace:GetDescendants()) do
-        if d:IsA("Model") and not d:IsA("Accessory") then
-            if not (char and d:IsDescendantOf(char)) and not isExcluded(d) then
-                if hasBillboard(d) then
-                    local pos = getPetPosition(d)
-                    if pos then
-                        local dist = (pos - origin).Magnitude
-                        if dist <= CONFIG.Zone10ScanRadius then
-                            local rarity = getPetRarity(d)
-                            if petMatchesRarity(rarity) then
-                                if not bestDist or dist < bestDist then
-                                    best, bestDist, bestRarity = d, dist, rarity
-                                end
-                            end
+    for pet in pairs(PET_MODELS) do
+        if pet.Parent then
+            local pos = getPetPosition(pet)
+            if pos then
+                local dist = (pos - origin).Magnitude
+                if dist <= CONFIG.Zone10ScanRadius then
+                    local rarity = getPetRarity(pet)
+                    if petMatchesRarity(rarity) then
+                        if not bestDist or dist < bestDist then
+                            best, bestDist, bestRarity = pet, dist, rarity
                         end
                     end
                 end
@@ -372,6 +390,7 @@ local function findRarityPetInZone10()
     return best, bestDist, bestRarity
 end
 
+-- ========== PROMPT ==========
 local function isStealPrompt(p)
     local n = tostring(p.Name):lower()
     local a = tostring(p.ActionText or ""):lower()
@@ -392,28 +411,56 @@ local function refreshPromptCache()
     end
 end
 
+workspace.DescendantAdded:Connect(function(d)
+    if d:IsA("ProximityPrompt") and isStealPrompt(d) then
+        STEAL_PROMPTS[d] = true
+    end
+    if d:IsA("Model") and not d:IsA("Accessory") and hasBillboard(d) then
+        PET_LIST_DIRTY = true
+    end
+end)
+
+local function getPromptPet(prompt)
+    local p = prompt and prompt.Parent
+    if not p then return nil end
+    if p:IsA("Model") then return p end
+    if p:IsA("BasePart") or p:IsA("Attachment") then
+        local anc = p:FindFirstAncestorOfClass("Model")
+        if anc then return anc end
+    end
+    return nil
+end
+
+local function promptPos(prompt)
+    local p = prompt and prompt.Parent
+    if not p then return nil end
+    if p:IsA("BasePart") then return p.Position end
+    if p:IsA("Attachment") then return p.WorldPosition end
+    return nil
+end
+
 local function fireNearestStealPrompt()
     local origin = charOrigin()
     if not origin then return false end
     local best, bestDist
     for prompt in pairs(STEAL_PROMPTS) do
         if prompt and prompt.Parent and prompt.Enabled then
-            local p = prompt.Parent
-            local pos
-            if p:IsA("BasePart") then pos = p.Position
-            elseif p:IsA("Attachment") then pos = p.WorldPosition end
+            local pos = promptPos(prompt)
             if pos then
                 local dist = (pos - origin).Magnitude
                 if dist <= CONFIG.WatcherRange and (not bestDist or dist < bestDist) then
                     best, bestDist = prompt, dist
                 end
             end
+        else
+            STEAL_PROMPTS[prompt] = nil
         end
     end
     if best then firePrompt(best); return true end
     return false
 end
 
+-- loop chính: bám PROMPT, không đợi pet cache
 local function promptStealLoop()
     task.wait(1)
     refreshPromptCache()
@@ -422,33 +469,42 @@ local function promptStealLoop()
         if not CONFIG.EnableRagdollTele then
             task.wait(0.5); continue
         end
-        if tick() - lastCache > CONFIG.CacheRefreshInterval then
+
+        if tick() - lastCache > CONFIG.PromptRefreshFast then
             refreshPromptCache()
             lastCache = tick()
         end
-        local pet = findPetNearChar(CONFIG.PetSearchRadius)
-        local rarity = getPetRarity(pet)
-        local match = petMatchesRarity(rarity)
 
-        if match and pet then
-            local fireOrigin = charOrigin()
-            if fireOrigin then
-                for prompt in pairs(STEAL_PROMPTS) do
-                    if prompt and prompt.Parent and prompt.Enabled then
-                        local p = prompt.Parent
-                        local pos
-                        if p:IsA("BasePart") then pos = p.Position
-                        elseif p:IsA("Attachment") then pos = p.WorldPosition end
-                        if pos and (pos - fireOrigin).Magnitude <= CONFIG.WatcherRange then
-                            log("fire prompt —", pet.Name, rarity)
+        local origin = charOrigin()
+        if origin then
+            for prompt in pairs(STEAL_PROMPTS) do
+                if prompt and prompt.Parent and prompt.Enabled then
+                    local pos = promptPos(prompt)
+                    if pos and (pos - origin).Magnitude <= CONFIG.WatcherRange then
+                        if not CONFIG.CheckRarityFirst then
+                            log("fire prompt (no filter)")
                             firePrompt(prompt)
-                            break
+                        else
+                            local pet = getPromptPet(prompt)
+                            if pet then
+                                local rarity = getPetRarity(pet)
+                                if petMatchesRarity(rarity) then
+                                    log("fire prompt —", pet.Name, rarity)
+                                    firePrompt(prompt)
+                                end
+                            else
+                                -- không đọc được pet cha → vẫn fire (pet rơi ra)
+                                firePrompt(prompt)
+                            end
                         end
                     end
+                else
+                    STEAL_PROMPTS[prompt] = nil
                 end
             end
         end
-        task.wait(CONFIG.PromptLoopInterval)
+
+        task.wait(CONFIG.PetScanInterval)
     end
 end
 
@@ -688,6 +744,77 @@ local function getAttrSafe(inst, name)
     return nil
 end
 
+local TREADMILL_BAD_NAMES = {
+    "upgrade", "sign", "lv", "level", "label", "text", "billboard", "gui"
+}
+
+local function isBadTreadmillName(n)
+    n = n:lower()
+    for _, bad in ipairs(TREADMILL_BAD_NAMES) do
+        if n:find(bad, 1, true) then return true end
+    end
+    return false
+end
+
+local function isSignLike(inst)
+    if inst:IsA("TextLabel") or inst:IsA("TextButton")
+        or inst:IsA("SurfaceGui") or inst:IsA("BillboardGui") then
+        return true
+    end
+    if inst:IsA("BasePart") then
+        for _, d in ipairs(inst:GetDescendants()) do
+            if d:IsA("SurfaceGui") or d:IsA("BillboardGui") then return true end
+        end
+    end
+    return false
+end
+
+local function isTreadmillCandidate(inst)
+    if not inst then return false end
+    if not (inst:IsA("Model") or inst:IsA("BasePart")) then return false end
+    local n = inst.Name
+    if not n:find(CONFIG.TreadmillSearchName, 1, true) then return false end
+    if isBadTreadmillName(n) then return false end
+    if isSignLike(inst) then return false end
+    if inst:IsA("BasePart") then
+        if inst:IsA("SpawnLocation") then return false end
+        return true
+    end
+    if inst:IsA("Model") then
+        for _, d in ipairs(inst:GetChildren()) do
+            if d:IsA("BasePart") then return true end
+        end
+    end
+    return false
+end
+
+local function getTreadmillPart(tm)
+    if not tm then return nil end
+    if tm:IsA("BasePart") then return tm end
+    local best, bestSize = nil, 0
+    for _, d in ipairs(tm:GetDescendants()) do
+        if d:IsA("BasePart") and not d:IsA("SpawnLocation")
+            and not isSignLike(d) then
+            local vol = d.Size.X * d.Size.Y * d.Size.Z
+            if vol > bestSize then best, bestSize = d, vol end
+        end
+    end
+    return best
+end
+
+local function getTreadmillPos(tm)
+    local part = getTreadmillPart(tm)
+    if not part then
+        if tm and tm:IsA("Model") then
+            local ok, piv = pcall(function() return tm:GetPivot().Position end)
+            if ok then return piv end
+        end
+        return nil
+    end
+    local halfY = part.Size.Y * 0.5
+    return part.Position + Vector3.new(0, halfY + 3, 0)
+end
+
 local function isMyTreadmill(tm)
     local userId = LP.UserId
     local userName = LP.Name:lower()
@@ -708,49 +835,43 @@ local function isMyTreadmill(tm)
     return nil
 end
 
-local function getTreadmillPos(tm)
-    if not tm then return nil end
-    if tm:IsA("Model") and tm.PrimaryPart then return tm.PrimaryPart.Position end
-    if tm:IsA("Model") then
-        local ok, piv = pcall(function() return tm:GetPivot().Position end)
-        if ok then return piv end
-        for _, d in ipairs(tm:GetDescendants()) do
-            if d:IsA("BasePart") then return d.Position end
+local function refreshTreadmillCache()
+    TREADMILL_CACHE = {}
+    for _, d in ipairs(workspace:GetDescendants()) do
+        if isTreadmillCandidate(d) then
+            local pos = getTreadmillPos(d)
+            if pos then
+                table.insert(TREADMILL_CACHE, { inst = d, pos = pos })
+            end
         end
     end
-    if tm:IsA("BasePart") then return tm.Position end
-    return nil
+    TREADMILL_CACHE_TIME = tick()
 end
 
 local function findTreadmill()
     local origin = charOrigin()
     if not origin then return nil, nil end
-    local mine, minePos
-    for _, d in ipairs(workspace:GetDescendants()) do
-        if (d:IsA("Model") or d:IsA("BasePart")) and
-            d.Name:find(CONFIG.TreadmillSearchName, 1, true) then
-            if isMyTreadmill(d) == true then
-                local pos = getTreadmillPos(d)
-                if pos then
-                    if not minePos or (minePos - origin).Magnitude > (pos - origin).Magnitude then
-                        mine, minePos = d, pos
-                    end
-                end
-            end
-        end
+
+    if tick() - TREADMILL_CACHE_TIME > 10 or #TREADMILL_CACHE == 0 then
+        refreshTreadmillCache()
     end
-    if mine then return mine, minePos end
-    local best, bestPos, bestDist
-    for _, d in ipairs(workspace:GetDescendants()) do
-        if (d:IsA("Model") or d:IsA("BasePart")) and
-            d.Name:find(CONFIG.TreadmillSearchName, 1, true) then
-            local pos = getTreadmillPos(d)
-            if pos then
-                local dist = (pos - origin).Magnitude
-                if dist <= CONFIG.TreadmillMaxDistance
-                    and (not bestDist or dist < bestDist) then
-                    best, bestPos, bestDist = d, pos, dist
-                end
+
+    local best, bestPos, bestScore
+    for _, c in ipairs(TREADMILL_CACHE) do
+        if c.inst and c.inst.Parent then
+            local dZone = (c.pos - CONFIG.Zone10Pos).Magnitude
+            local dMe   = (c.pos - origin).Magnitude
+            local mine  = isMyTreadmill(c.inst) == true
+            local score
+            if mine and dZone <= 200 then
+                score = dZone
+            elseif dZone <= 60 then
+                score = dZone + 1000
+            elseif dMe <= CONFIG.TreadmillMaxDistance then
+                score = dMe + 2000
+            end
+            if score and (not bestScore or score < bestScore) then
+                best, bestPos, bestScore = c.inst, c.pos, score
             end
         end
     end
@@ -782,9 +903,12 @@ local function runZone10Once()
     arIsMoving = false
     pcall(function() hrp.Anchored = false end)
 
-    teleportChar(tmPos + Vector3.new(0, 3, 0))
-    task.wait(0.5)
-    if hrp then pcall(function() hrp.Anchored = false end) end
+    teleportChar(tmPos)
+    task.wait(0.4)
+    if hrp then
+        pcall(function() hrp.Anchored = false end)
+        teleportChar(tmPos)
+    end
     task.wait(CONFIG.TreadmillTime)
 
     local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -808,9 +932,7 @@ local function zone10FarmingLoop()
     end
     task.wait(1)
 
-    while TELEPORT_LOCK do
-        task.wait(0.5)
-    end
+    while TELEPORT_LOCK do task.wait(0.5) end
 
     if isAtZone10() then
         ZONE10_DONE = true
@@ -854,14 +976,13 @@ local function zone10FarmingLoop()
             return
         end
 
-        log("zone10: fail lần", attempt, "— thử lại treadmill → zone10")
+        log("zone10: fail lần", attempt, "— thử lại")
         task.wait(1.5)
     end
 
     log("zone10: hết", CONFIG.Zone10RetryMax, "lần, bỏ")
 end
 
--- CHỈ SCAN
 local function zone10WatchLoop()
     if not CONFIG.EnableZone10Farm then return end
     task.wait(CONFIG.StartupDelay + 5)
@@ -870,18 +991,20 @@ local function zone10WatchLoop()
     while not ZONE10_DONE and tick() < waitDeadline do
         task.wait(1)
     end
-
     if not ZONE10_DONE then return end
 
     while STATE.running do
         if not CONFIG.EnableZone10Farm then task.wait(1); continue end
         if TELEPORT_LOCK then task.wait(1); continue end
 
+        if PET_LIST_DIRTY or tick() - lastPetRefresh > CONFIG.DescendantRefresh then
+            refreshPetSet()
+        end
+
         local pet, dist, rarity = findRarityPetInZone10()
         if pet then
             log("zone10 pet", pet.Name, rarity, math.floor(dist))
         end
-
         task.wait(CONFIG.Zone10ScanInterval)
     end
 end
@@ -1219,13 +1342,6 @@ toggleBtn("AUTO TELE ZONE10", CONFIG.EnableZone10Farm, C.ok,
     end)
 toggleBtn("AUTO REJOIN", CONFIG.AutoRejoinOnDisconnect, C.ok,
     function(v) CONFIG.AutoRejoinOnDisconnect = v end)
-
--- AUTO START
-workspace.DescendantAdded:Connect(function(d)
-    if d:IsA("ProximityPrompt") and isStealPrompt(d) then
-        STEAL_PROMPTS[d] = true
-    end
-end)
 
 setupAutoRejoin()
 
