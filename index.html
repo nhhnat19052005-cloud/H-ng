@@ -2,8 +2,8 @@
   farm full (lag-tuned)
   - Auto nhặt pet rarity (Celestial, Inferno, Void, Omega). Loại Egg.
   - Bám ProximityPrompt "Steal" trực tiếp — pet rơi ra nhặt ngay.
-  - Zone10: tele vào giữa băng tải → zone10, retry nếu fail.
-  - Bỏ biển "Upgrade Treadmill".
+  - Lọc rarity chặt: không đọc được pet/rarity → KHÔNG nhặt.
+  - Zone10: reset char → respawn → tele zone10, retry nếu fail.
   - Cache descendants — giảm tụt fps.
   - Anti-ragdoll (mặc định tắt).
   - Auto rejoin (không queue script).
@@ -50,13 +50,9 @@ local CONFIG = {
 
     EnableZone10Farm = true,
     Zone10Pos        = Vector3.new(-2873.74, 3.50, 1.24),
-    TreadmillSearchName = "Treadmill",
-    TreadmillMaxDistance = 100,
-    TreadmillTime    = 1.5,
-    TreadmillJumpTime = 0.8,
-    TreadmillFindTimeout = 90,
     Zone10RetryMax   = 20,
     Zone10VerifyDist = 30,
+    RespawnTimeout   = 12,
 
     Zone10ScanRadius = 300,
     Zone10ScanInterval = 6,
@@ -98,8 +94,6 @@ local RARITY_CACHE_TIME = {}
 local PET_MODELS = {}
 local PET_LIST_DIRTY = true
 local lastPetRefresh = 0
-local TREADMILL_CACHE = {}
-local TREADMILL_CACHE_TIME = 0
 
 local HAS_ASYNC = false
 local HAS_OPTS = false
@@ -290,7 +284,7 @@ local function getPetRarity(pet)
         if type(v) == "string" and v ~= "" then rarity = v; break end
     end
     if not rarity then
-        for _, d in ipairs(pet:GetChildren()) do
+        for _, d in ipairs(pet:GetDescendants()) do
             if d:IsA("StringValue") then
                 local n = d.Name:lower()
                 if n:find("rarit") or n:find("tier") then
@@ -300,8 +294,8 @@ local function getPetRarity(pet)
         end
     end
     if not rarity then
-        for _, d in ipairs(pet:GetChildren()) do
-            if d:IsA("TextLabel") and d.Text ~= "" then
+        for _, d in ipairs(pet:GetDescendants()) do
+            if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text ~= "" then
                 local txt = d.Text:lower()
                 for _, kw in ipairs(RARITY_KEYWORDS) do
                     if txt:find(kw:lower(), 1, true) then
@@ -343,29 +337,6 @@ local function refreshPetSet()
     end
     PET_LIST_DIRTY = false
     lastPetRefresh = tick()
-end
-
-local function findPetNearCharFast(radius)
-    local char = LP.Character
-    if not char then return nil end
-    local hrp = getHRP(char)
-    if not hrp then return nil end
-    local origin = hrp.Position
-    local best, bestDist
-    for pet in pairs(PET_MODELS) do
-        if pet.Parent then
-            local pos = getPetPosition(pet)
-            if pos then
-                local dist = (pos - origin).Magnitude
-                if dist <= radius and (not bestDist or dist < bestDist) then
-                    best, bestDist = pet, dist
-                end
-            end
-        else
-            PET_MODELS[pet] = nil
-        end
-    end
-    return best
 end
 
 local function findRarityPetInZone10()
@@ -460,7 +431,6 @@ local function fireNearestStealPrompt()
     return false
 end
 
--- loop chính: bám PROMPT, không đợi pet cache
 local function promptStealLoop()
     task.wait(1)
     refreshPromptCache()
@@ -492,9 +462,6 @@ local function promptStealLoop()
                                     log("fire prompt —", pet.Name, rarity)
                                     firePrompt(prompt)
                                 end
-                            else
-                                -- không đọc được pet cha → vẫn fire (pet rơi ra)
-                                firePrompt(prompt)
                             end
                         end
                     end
@@ -737,147 +704,7 @@ local function ragdollTeleportLoop()
     end
 end
 
--- ZONE10
-local function getAttrSafe(inst, name)
-    local ok, v = pcall(function() return inst:GetAttribute(name) end)
-    if ok then return v end
-    return nil
-end
-
-local TREADMILL_BAD_NAMES = {
-    "upgrade", "sign", "lv", "level", "label", "text", "billboard", "gui"
-}
-
-local function isBadTreadmillName(n)
-    n = n:lower()
-    for _, bad in ipairs(TREADMILL_BAD_NAMES) do
-        if n:find(bad, 1, true) then return true end
-    end
-    return false
-end
-
-local function isSignLike(inst)
-    if inst:IsA("TextLabel") or inst:IsA("TextButton")
-        or inst:IsA("SurfaceGui") or inst:IsA("BillboardGui") then
-        return true
-    end
-    if inst:IsA("BasePart") then
-        for _, d in ipairs(inst:GetDescendants()) do
-            if d:IsA("SurfaceGui") or d:IsA("BillboardGui") then return true end
-        end
-    end
-    return false
-end
-
-local function isTreadmillCandidate(inst)
-    if not inst then return false end
-    if not (inst:IsA("Model") or inst:IsA("BasePart")) then return false end
-    local n = inst.Name
-    if not n:find(CONFIG.TreadmillSearchName, 1, true) then return false end
-    if isBadTreadmillName(n) then return false end
-    if isSignLike(inst) then return false end
-    if inst:IsA("BasePart") then
-        if inst:IsA("SpawnLocation") then return false end
-        return true
-    end
-    if inst:IsA("Model") then
-        for _, d in ipairs(inst:GetChildren()) do
-            if d:IsA("BasePart") then return true end
-        end
-    end
-    return false
-end
-
-local function getTreadmillPart(tm)
-    if not tm then return nil end
-    if tm:IsA("BasePart") then return tm end
-    local best, bestSize = nil, 0
-    for _, d in ipairs(tm:GetDescendants()) do
-        if d:IsA("BasePart") and not d:IsA("SpawnLocation")
-            and not isSignLike(d) then
-            local vol = d.Size.X * d.Size.Y * d.Size.Z
-            if vol > bestSize then best, bestSize = d, vol end
-        end
-    end
-    return best
-end
-
-local function getTreadmillPos(tm)
-    local part = getTreadmillPart(tm)
-    if not part then
-        if tm and tm:IsA("Model") then
-            local ok, piv = pcall(function() return tm:GetPivot().Position end)
-            if ok then return piv end
-        end
-        return nil
-    end
-    local halfY = part.Size.Y * 0.5
-    return part.Position + Vector3.new(0, halfY + 3, 0)
-end
-
-local function isMyTreadmill(tm)
-    local userId = LP.UserId
-    local userName = LP.Name:lower()
-    for _, attr in ipairs({ "Owner", "OwnerId", "UserId", "Player", "PlayerId" }) do
-        local v = getAttrSafe(tm, attr)
-        if v ~= nil then
-            if type(v) == "number" and v == userId then return true end
-            if type(v) == "string" then
-                if v == tostring(userId) then return true end
-                if v:lower() == userName then return true end
-            end
-            return false
-        end
-    end
-    local n = tm.Name:lower()
-    if n:find(userName, 1, true) then return true end
-    if n:find(tostring(userId), 1, true) then return true end
-    return nil
-end
-
-local function refreshTreadmillCache()
-    TREADMILL_CACHE = {}
-    for _, d in ipairs(workspace:GetDescendants()) do
-        if isTreadmillCandidate(d) then
-            local pos = getTreadmillPos(d)
-            if pos then
-                table.insert(TREADMILL_CACHE, { inst = d, pos = pos })
-            end
-        end
-    end
-    TREADMILL_CACHE_TIME = tick()
-end
-
-local function findTreadmill()
-    local origin = charOrigin()
-    if not origin then return nil, nil end
-
-    if tick() - TREADMILL_CACHE_TIME > 10 or #TREADMILL_CACHE == 0 then
-        refreshTreadmillCache()
-    end
-
-    local best, bestPos, bestScore
-    for _, c in ipairs(TREADMILL_CACHE) do
-        if c.inst and c.inst.Parent then
-            local dZone = (c.pos - CONFIG.Zone10Pos).Magnitude
-            local dMe   = (c.pos - origin).Magnitude
-            local mine  = isMyTreadmill(c.inst) == true
-            local score
-            if mine and dZone <= 200 then
-                score = dZone
-            elseif dZone <= 60 then
-                score = dZone + 1000
-            elseif dMe <= CONFIG.TreadmillMaxDistance then
-                score = dMe + 2000
-            end
-            if score and (not bestScore or score < bestScore) then
-                best, bestPos, bestScore = c.inst, c.pos, score
-            end
-        end
-    end
-    return best, bestPos
-end
-
+-- ========== ZONE10: reset → respawn → tele ==========
 local function isAtZone10()
     local hrp = getHRP(LP.Character)
     if not hrp then return false end
@@ -885,37 +712,61 @@ local function isAtZone10()
     return d <= CONFIG.Zone10VerifyDist
 end
 
-local function runZone10Once()
+local function resetCharacter()
     local char = LP.Character
-    local hrp = getHRP(char)
-    if not hrp then return false end
-
-    local tm, tmPos = findTreadmill()
-    if not tm or not tmPos then
-        log("zone10: no treadmill")
-        return false
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        pcall(function() hum.Health = 0 end)
+        return true
     end
+    pcall(function() LP:LoadCharacter() end)
+    return false
+end
 
+local function waitForRespawn(timeout)
+    timeout = timeout or CONFIG.RespawnTimeout
+    local deadline = tick() + timeout
+    while tick() < deadline do
+        local char = LP.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hrp and hum and hum.Health > 0 then
+            return true
+        end
+        task.wait(0.2)
+    end
+    return false
+end
+
+local function runZone10Once()
     TELEPORT_LOCK = true
     arPaused = true
     arHoldingPos = false
     arSavedPos = nil
     arIsMoving = false
-    pcall(function() hrp.Anchored = false end)
 
-    teleportChar(tmPos)
-    task.wait(0.4)
-    if hrp then
-        pcall(function() hrp.Anchored = false end)
-        teleportChar(tmPos)
+    resetCharacter()
+
+    local ok = waitForRespawn(CONFIG.RespawnTimeout)
+    if not ok then
+        log("zone10: respawn timeout")
+        arPaused = false
+        TELEPORT_LOCK = false
+        return false
     end
-    task.wait(CONFIG.TreadmillTime)
 
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if hum then pcall(function() hum.Jump = true end) end
-    task.wait(CONFIG.TreadmillJumpTime)
+    task.wait(0.8)
 
-    if hrp then pcall(function() hrp.Anchored = false end) end
+    local char = LP.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        arPaused = false
+        TELEPORT_LOCK = false
+        return false
+    end
+    pcall(function() hrp.Anchored = false end)
+    teleportChar(CONFIG.Zone10Pos)
+    task.wait(0.4)
     teleportChar(CONFIG.Zone10Pos)
 
     arPaused = false
@@ -949,24 +800,6 @@ local function zone10FarmingLoop()
             return
         end
 
-        local deadline = tick() + CONFIG.TreadmillFindTimeout
-        local tm, tmPos
-        while tick() < deadline do
-            if TELEPORT_LOCK then
-                task.wait(0.5)
-            else
-                tm, tmPos = findTreadmill()
-                if tm and tmPos then break end
-                task.wait(1)
-            end
-        end
-
-        if not tm or not tmPos then
-            log("zone10: no treadmill, retry", attempt)
-            task.wait(2)
-            continue
-        end
-
         local ok = pcall(runZone10Once)
 
         task.wait(1)
@@ -976,7 +809,7 @@ local function zone10FarmingLoop()
             return
         end
 
-        log("zone10: fail lần", attempt, "— thử lại")
+        log("zone10: fail lần", attempt, "— reset lại")
         task.wait(1.5)
     end
 
