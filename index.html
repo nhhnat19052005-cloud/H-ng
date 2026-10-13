@@ -1,13 +1,14 @@
 --[[
   farm full (lag-tuned)
-  - Auto nhặt pet rarity (Celestial, Inferno, Void, Omega). Loại Egg.
-  - Prompt "Steal" parent = PromptAnchor(Part) → leo 6 cấp tìm pet model.
-  - Rarity đọc từ BillboardGui TextLabel, split "|", so exact.
-  - Zone10: reset char → respawn → tele zone10, tự tele lại khi rời zone10.
-  - Cache descendants — giảm tụt fps.
+  - Auto steal: spam ProximityPrompt "Steal" gần đó khi bị ragdoll.
+    + tele safe zone → tele về vị trí cũ.
+  - Zone10: reset char → respawn → tele zone10, chạy 1 lần khi vào game.
+    + Toggle AUTO TELE ZONE10: bật lại → chạy lại.
   - Anti-ragdoll (mặc định tắt).
   - Auto rejoin (không queue script).
-  - Đã bỏ walkspeed.
+  - Hop server ≤ 1 người (nút bấm).
+  - Bỏ auto nhặt pet rarity theo filter.
+  - Bỏ walkspeed.
 --]]
 
 local Players                = game:GetService("Players")
@@ -15,22 +16,11 @@ local RunService             = game:GetService("RunService")
 local TeleportService        = game:GetService("TeleportService")
 local Stats                  = game:GetService("Stats")
 local UserInputService       = game:GetService("UserInputService")
+local HttpService            = game:GetService("HttpService")
 
 local LP = Players.LocalPlayer
 
 local CONFIG = {
-    PetRarityFilter  = { "Celestial", "Inferno", "Void", "Omega" },
-    ExcludeNames     = { "egg" },
-    CheckRarityFirst = true,
-    PetSearchRadius  = 40,
-
-    PromptActionText = "Steal",
-    WatcherRange     = 30,
-    PromptLoopInterval = 1.2,
-    CacheRefreshInterval = 6,
-    PromptRefreshFast  = 2,
-    EnableTouchPickup  = false,
-
     EnableAntiRagdoll = false,
     AntiRagdollInterval = 0.25,
     BlockRemote       = true,
@@ -48,33 +38,30 @@ local CONFIG = {
     RagdollStayTime   = 0.5,
     TeleportCooldown  = 0.5,
 
+    PromptRange       = 30,
+
     SafeZone         = CFrame.new(-56.86, 3.50, 0.91),
 
     EnableZone10Farm = true,
     Zone10Pos        = Vector3.new(-2873.74, 3.50, 1.24),
     Zone10VerifyDist = 30,
-    Zone10IdleWait   = 3,
     RespawnTimeout   = 12,
-
-    Zone10ScanRadius = 300,
-    Zone10ScanInterval = 6,
 
     AutoRejoinOnDisconnect = true,
     LastServerJobId     = "",
+
+    HopMaxPlayers    = 1,
+    HopMinPlayers    = 0,
+    HopTryMax        = 15,
 
     PillName = "huongcuto20m",
     StatUpdateInterval = 3,
     StartupDelay = 5,
 
-    PetScanInterval     = 0.4,
-    RarityCacheTTL      = 30,
-    DescendantRefresh   = 6,
-
     EnableLogging    = false,
 }
 
 local STATE = { running = true }
-local STEAL_PROMPTS = {}
 local RAGDOLL_EVENT = false
 local arPaused = false
 local TELEPORT_LOCK = false
@@ -87,12 +74,7 @@ local arSavedPos = nil
 local arIsMoving = false
 local arKeyState = { W=false, A=false, S=false, D=false }
 
-local RARITY_CACHE = {}
-local RARITY_CACHE_TIME = {}
-
-local PET_MODELS = {}
-local PET_LIST_DIRTY = true
-local lastPetRefresh = 0
+local STEAL_PROMPTS = {}
 
 local HAS_ASYNC = false
 local HAS_OPTS = false
@@ -109,16 +91,6 @@ local function log(...)
         end
         warn("[OLLIE-FARM] " .. table.concat(parts, " "))
     end
-end
-
-local function firePrompt(prompt)
-    if not prompt then return false end
-    return pcall(function()
-        if fireproximityprompt then fireproximityprompt(prompt); return end
-        if promptfire then promptfire(prompt); return end
-        if fireprompt then fireprompt(prompt); return end
-        error("no prompt fire fn")
-    end)
 end
 
 local function charOrigin()
@@ -191,37 +163,6 @@ local function zeroVelocity(hrp)
     end)
 end
 
-local function isExcluded(model)
-    if not model then return false end
-    local n = model.Name:lower()
-    for _, ex in ipairs(CONFIG.ExcludeNames or {}) do
-        if n:find(ex:lower(), 1, true) then return true end
-    end
-    return false
-end
-
-local function getPetPosition(pet)
-    if not pet or not pet.Parent then return nil end
-    if pet.PrimaryPart then return pet.PrimaryPart.Position end
-    local ok, piv = pcall(function() return pet:GetPivot().Position end)
-    if ok and piv then return piv end
-    for _, c in ipairs(pet:GetChildren()) do
-        if c:IsA("BasePart") then return c.Position end
-    end
-    for _, c in ipairs(pet:GetDescendants()) do
-        if c:IsA("BasePart") then return c.Position end
-    end
-    return nil
-end
-
-local function hasBillboard(pet)
-    if not pet then return false end
-    for _, c in ipairs(pet:GetDescendants()) do
-        if c:IsA("BillboardGui") then return true end
-    end
-    return false
-end
-
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
     if input.KeyCode == Enum.KeyCode.W then arKeyState.W = true end
@@ -256,173 +197,36 @@ if CONFIG.BlockRemote and hookmetamethod then
     end)
 end
 
-local RARITY_KEYWORDS = {
-    "Celestial", "Inferno", "Void", "Omega",
-    "Divine", "Common", "Uncommon", "Rare",
-    "Epic", "Legendary", "Mythic", "Godly",
-}
-
-local function readRarityFrom(inst)
-    if not inst then return nil end
-
-    for _, attr in ipairs({ "Rarity", "rarity", "Tier", "tier", "RarityName" }) do
-        local v = inst:GetAttribute(attr)
-        if type(v) == "string" and v ~= "" then
-            for _, f in ipairs(CONFIG.PetRarityFilter) do
-                if v:lower() == f:lower() then return f end
-            end
-        end
-    end
-
-    local allTexts = {}
-    for _, d in ipairs(inst:GetDescendants()) do
-        if d:IsA("TextLabel") and d.Text ~= "" then
-            table.insert(allTexts, d.Text)
-        end
-    end
-    for _, d in ipairs(inst:GetDescendants()) do
-        if d:IsA("StringValue") then
-            table.insert(allTexts, d.Value)
-        end
-    end
-
-    for _, t in ipairs(allTexts) do
-        for piece in tostring(t):gmatch("[^|]+") do
-            local clean = piece:gsub("^%s+", ""):gsub("%s+$", "")
-            local low = clean:lower()
-            for _, f in ipairs(CONFIG.PetRarityFilter) do
-                if low == f:lower() then
-                    return f
-                end
-            end
-        end
-    end
-
-    return nil
-end
-
-local function getPetRarity(pet)
-    if not pet then return nil end
-    local cached = RARITY_CACHE[pet]
-    if cached and pet.Parent
-        and tick() - (RARITY_CACHE_TIME[pet] or 0) < CONFIG.RarityCacheTTL then
-        return cached
-    end
-    local rarity = readRarityFrom(pet)
-    RARITY_CACHE[pet] = rarity or ""
-    RARITY_CACHE_TIME[pet] = tick()
-    return rarity
-end
-
-local function petMatchesRarity(rarity)
-    if not CONFIG.CheckRarityFirst then return false end
-    if not rarity or rarity == "" then return false end
-    local r = rarity:lower():gsub("^%s+", ""):gsub("%s+$", "")
-    for _, f in ipairs(CONFIG.PetRarityFilter) do
-        if r == f:lower() then return true end
-    end
-    return false
-end
-
-local function isPetModel(d)
-    if not d or not d:IsA("Model") then return false end
-    if d:IsA("Accessory") then return false end
-    if isExcluded(d) then return false end
-    if hasBillboard(d) then return true end
-    for _, c in ipairs(d:GetDescendants()) do
-        if c:IsA("ProximityPrompt") then return true end
-    end
-    return false
-end
-
-local function refreshPetSet()
-    PET_MODELS = {}
-    local char = LP.Character
-    local n = 0
-    for _, d in ipairs(workspace:GetDescendants()) do
-        if isPetModel(d) then
-            if not (char and d:IsDescendantOf(char)) then
-                PET_MODELS[d] = true
-                n = n + 1
-            end
-        end
-    end
-    PET_LIST_DIRTY = false
-    lastPetRefresh = tick()
-    log("pet models found:", n)
-end
-
-local function findRarityPetInZone10()
-    local origin = CONFIG.Zone10Pos
-    local best, bestDist, bestRarity
-    for pet in pairs(PET_MODELS) do
-        if pet.Parent then
-            local pos = getPetPosition(pet)
-            if pos then
-                local dist = (pos - origin).Magnitude
-                if dist <= CONFIG.Zone10ScanRadius then
-                    local rarity = getPetRarity(pet)
-                    if petMatchesRarity(rarity) then
-                        if not bestDist or dist < bestDist then
-                            best, bestDist, bestRarity = pet, dist, rarity
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return best, bestDist, bestRarity
-end
-
--- ========== PROMPT ==========
+-- PROMPT
 local function isStealPrompt(p)
     local n = tostring(p.Name):lower()
     local a = tostring(p.ActionText or ""):lower()
-    local target = tostring(CONFIG.PromptActionText or ""):lower()
-    if target ~= "" then
-        return (a == target) or a:find(target, 1, true)
-            or (n == target) or n:find(target, 1, true)
-    end
     return a:find("steal", 1, true) or n:find("steal", 1, true)
 end
 
 local function refreshPromptCache()
     STEAL_PROMPTS = {}
-    local n = 0
     for _, d in ipairs(workspace:GetDescendants()) do
         if d:IsA("ProximityPrompt") and isStealPrompt(d) then
             STEAL_PROMPTS[d] = true
-            n = n + 1
         end
     end
-    log("prompts found:", n)
 end
 
 workspace.DescendantAdded:Connect(function(d)
     if d:IsA("ProximityPrompt") and isStealPrompt(d) then
         STEAL_PROMPTS[d] = true
     end
-    if d:IsA("Model") and not d:IsA("Accessory") and hasBillboard(d) then
-        PET_LIST_DIRTY = true
-    end
 end)
 
-local function getPromptPetRoot(prompt)
-    local p = prompt and prompt.Parent
-    if not p then return nil end
-    local cur = p
-    for _ = 1, 6 do
-        if not cur then break end
-        if cur:IsA("Model") and not cur:IsA("Accessory") then
-            local hasBL = false
-            for _, c in ipairs(cur:GetDescendants()) do
-                if c:IsA("BillboardGui") then hasBL = true; break end
-            end
-            if hasBL then return cur end
-        end
-        cur = cur.Parent
-    end
-    return p:FindFirstAncestorOfClass("Model")
+local function firePrompt(prompt)
+    if not prompt then return false end
+    return pcall(function()
+        if fireproximityprompt then fireproximityprompt(prompt); return end
+        if promptfire then promptfire(prompt); return end
+        if fireprompt then fireprompt(prompt); return end
+        error("no prompt fire fn")
+    end)
 end
 
 local function promptPos(prompt)
@@ -442,7 +246,7 @@ local function fireNearestStealPrompt()
             local pos = promptPos(prompt)
             if pos then
                 local dist = (pos - origin).Magnitude
-                if dist <= CONFIG.WatcherRange and (not bestDist or dist < bestDist) then
+                if dist <= CONFIG.PromptRange and (not bestDist or dist < bestDist) then
                     best, bestDist = prompt, dist
                 end
             end
@@ -452,62 +256,6 @@ local function fireNearestStealPrompt()
     end
     if best then firePrompt(best); return true end
     return false
-end
-
--- ========== LOOP NHẶT ==========
-local function promptStealLoop()
-    task.wait(1)
-    refreshPromptCache()
-    refreshPetSet()
-    local lastCache = tick()
-
-    while STATE.running do
-        if not CONFIG.EnableRagdollTele then
-            task.wait(0.5); continue
-        end
-
-        if tick() - lastCache > CONFIG.PromptRefreshFast then
-            refreshPromptCache()
-            lastCache = tick()
-        end
-
-        if PET_LIST_DIRTY or tick() - lastPetRefresh > CONFIG.DescendantRefresh then
-            refreshPetSet()
-        end
-
-        local origin = charOrigin()
-        if origin then
-            for prompt in pairs(STEAL_PROMPTS) do
-                if prompt and prompt.Parent and prompt.Enabled then
-                    local pos = promptPos(prompt)
-                    if pos and (pos - origin).Magnitude <= CONFIG.WatcherRange then
-                        if CONFIG.CheckRarityFirst then
-                            local pet = getPromptPetRoot(prompt)
-                            local rarity = pet and readRarityFrom(pet) or nil
-                            if not rarity then
-                                rarity = readRarityFrom(prompt.Parent)
-                            end
-
-                            if rarity and petMatchesRarity(rarity) then
-                                log("fire prompt —",
-                                    pet and pet.Name or "?",
-                                    "|", rarity)
-                                firePrompt(prompt)
-                            else
-                                log("skip | pet=",
-                                    pet and pet.Name or "nil",
-                                    "| rarity=", rarity or "nil")
-                            end
-                        end
-                    end
-                else
-                    STEAL_PROMPTS[prompt] = nil
-                end
-            end
-        end
-
-        task.wait(CONFIG.PetScanInterval)
-    end
 end
 
 -- ANTI-RAGDOLL
@@ -726,6 +474,7 @@ local function ragdollTeleportLoop()
 
         task.spawn(refreshPromptCache)
         task.wait(0.2)
+
         local spam2End = tick() + CONFIG.RagdollSpamTime
         while tick() < spam2End do
             fireNearestStealPrompt()
@@ -738,7 +487,7 @@ local function ragdollTeleportLoop()
     end
 end
 
--- ========== ZONE10 ==========
+-- ZONE10
 local function isAtZone10()
     local hrp = getHRP(LP.Character)
     if not hrp then return false end
@@ -808,65 +557,92 @@ local function runZone10Once()
     return true
 end
 
--- loop zone10 vô hạn: ở zone10 thì nghỉ, rời thì tele lại
 local function zone10FarmingLoop()
     if not CONFIG.EnableZone10Farm then return end
+    if ZONE10_DONE then return end
 
     while not LP.Character or not LP.Character:FindFirstChild("HumanoidRootPart") do
         task.wait(0.5)
     end
     task.wait(1)
 
-    while STATE.running do
-        if not CONFIG.EnableZone10Farm then
-            task.wait(1); continue
-        end
-        if TELEPORT_LOCK then
-            task.wait(0.5); continue
-        end
+    while TELEPORT_LOCK do task.wait(0.5) end
 
-        if isAtZone10() then
-            ZONE10_DONE = true
-            task.wait(CONFIG.Zone10IdleWait)
-            continue
-        end
+    if isAtZone10() then
+        ZONE10_DONE = true
+        log("zone10: đã ở zone10")
+        return
+    end
 
+    local ok = pcall(runZone10Once)
+
+    task.wait(1)
+    if ok and isAtZone10() then
+        ZONE10_DONE = true
+        log("zone10: OK")
+    else
         ZONE10_DONE = false
-        log("zone10: rời zone10, tele lại")
-
-        local ok = pcall(runZone10Once)
-
-        task.wait(1)
-        if ok and isAtZone10() then
-            ZONE10_DONE = true
-            log("zone10: OK")
-        else
-            log("zone10: fail, retry sau 2s")
-            task.wait(2)
-        end
-
-        task.wait(1)
+        log("zone10: fail — bỏ")
     end
 end
 
-local function zone10WatchLoop()
-    if not CONFIG.EnableZone10Farm then return end
-    task.wait(CONFIG.StartupDelay + 5)
-
-    while STATE.running do
-        if not CONFIG.EnableZone10Farm then task.wait(1); continue end
-        if TELEPORT_LOCK then task.wait(1); continue end
-
-        if PET_LIST_DIRTY or tick() - lastPetRefresh > CONFIG.DescendantRefresh then
-            refreshPetSet()
+-- HOP SERVER
+local function hopServer()
+    log("hop: tìm server ≤ " .. CONFIG.HopMaxPlayers .. " người")
+    local tries = 0
+    while tries < CONFIG.HopTryMax do
+        tries = tries + 1
+        local okApi, result = pcall(function()
+            local endpoint = string.format(
+                "https://games.roblox.com/v1/games/%d/servers/Public?limit=100",
+                game.PlaceId)
+            local http
+            if request then http = request
+            elseif http_request then http = http_request
+            elseif syn and syn.request then http = syn.request
+            elseif fluxus and fluxus.request then http = fluxus.request
+            end
+            if not http then return nil end
+            local res = http({ Url = endpoint, Method = "GET" })
+            if res and res.Body then
+                return HttpService:JSONDecode(res.Body)
+            end
+            return nil
+        end)
+        if okApi and result and result.data then
+            local best, bestCount
+            for _, srv in ipairs(result.data) do
+                if srv.id and srv.id ~= game.JobId then
+                    local count = srv.playing or 0
+                    if count >= CONFIG.HopMinPlayers
+                        and count <= CONFIG.HopMaxPlayers then
+                        if not bestCount or count < bestCount then
+                            best, bestCount = srv, count
+                        end
+                    end
+                end
+            end
+            if best then
+                log("hop: sang", best.id,
+                    "| " .. tostring(best.playing) .. " người")
+                pcall(function()
+                    if TeleportService.TeleportToPlaceInstance then
+                        TeleportService:TeleportToPlaceInstance(
+                            game.PlaceId, best.id, LP)
+                    else
+                        TeleportService:Teleport(game.PlaceId, LP)
+                    end
+                end)
+                return true
+            end
         end
-
-        local pet, dist, rarity = findRarityPetInZone10()
-        if pet then
-            log("zone10 pet", pet.Name, rarity, math.floor(dist))
-        end
-        task.wait(CONFIG.Zone10ScanInterval)
+        task.wait(2)
     end
+    log("hop: không tìm được, tele random")
+    pcall(function()
+        TeleportService:Teleport(game.PlaceId, LP)
+    end)
+    return false
 end
 
 local function setupAutoRejoin()
@@ -1007,7 +783,7 @@ pillLabel.TextXAlignment = Enum.TextXAlignment.Left
 pillLabel.Text = CONFIG.PillName .. " • loading"
 pillLabel.Parent = pill
 
-local W, H = 320, 420
+local W, H = 320, 400
 local panel = Instance.new("Frame")
 panel.Size = UDim2.fromOffset(W, H)
 panel.Position = UDim2.new(0.5, -W/2, 0, 80)
@@ -1135,22 +911,43 @@ local function toggleBtn(label, initial, colorOn, onChange)
 end
 
 sectionLabel("CHỨC NĂNG")
-toggleBtn("CHỈ NHẶT RARITY", CONFIG.CheckRarityFirst, C.ok,
-    function(v) CONFIG.CheckRarityFirst = v end)
+toggleBtn("AUTO STEAL (LOOP TP)", CONFIG.EnableRagdollTele, C.ok,
+    function(v) CONFIG.EnableRagdollTele = v end)
 toggleBtn("ANTI-RAGDOLL", CONFIG.EnableAntiRagdoll, C.ok,
     function(v)
         CONFIG.EnableAntiRagdoll = v
         if not v then arStopHolding(LP.Character) end
     end)
-toggleBtn("AUTO STEAL (LOOP TP)", CONFIG.EnableRagdollTele, C.ok,
-    function(v) CONFIG.EnableRagdollTele = v end)
 toggleBtn("AUTO TELE ZONE10", CONFIG.EnableZone10Farm, C.ok,
     function(v)
         CONFIG.EnableZone10Farm = v
-        if v then ZONE10_DONE = false end
+        if v then
+            ZONE10_DONE = false
+            task.spawn(zone10FarmingLoop)
+        end
     end)
 toggleBtn("AUTO REJOIN", CONFIG.AutoRejoinOnDisconnect, C.ok,
     function(v) CONFIG.AutoRejoinOnDisconnect = v end)
+
+-- HOP SERVER button
+local hopBtn = Instance.new("TextButton")
+hopBtn.Size = UDim2.new(1, 0, 0, 52)
+hopBtn.BackgroundColor3 = C.accent
+hopBtn.Text = "HOP SERVER (≤ " .. CONFIG.HopMaxPlayers .. ")"
+hopBtn.TextColor3 = Color3.new(1,1,1)
+hopBtn.Font = Enum.Font.GothamBold
+hopBtn.TextSize = 14
+hopBtn.AutoButtonColor = false
+hopBtn.Parent = body
+corner(hopBtn, 10); stroke(hopBtn, C.line, 1)
+
+hopBtn.MouseButton1Click:Connect(function()
+    hopBtn.Text = "HOPPING..."
+    hopBtn.BackgroundColor3 = C.purple
+    task.spawn(function()
+        pcall(hopServer)
+    end)
+end)
 
 setupAutoRejoin()
 
@@ -1158,11 +955,18 @@ task.spawn(function()
     task.wait(CONFIG.StartupDelay)
     if SCRIPTS_STARTED then return end
     SCRIPTS_STARTED = true
-    task.spawn(promptStealLoop)
     task.spawn(antiRagdollLoop)
     task.spawn(ragdollTeleportLoop)
     task.spawn(zone10FarmingLoop)
-    task.spawn(zone10WatchLoop)
+end)
+
+task.spawn(function()
+    task.wait(2)
+    refreshPromptCache()
+    while true do
+        task.wait(6)
+        refreshPromptCache()
+    end
 end)
 
 task.spawn(function()
