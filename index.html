@@ -1,64 +1,49 @@
 --[[
-  farm full (lag-tuned)
-  - Auto steal: spam ProximityPrompt "Steal" gần đó khi bị ragdoll.
-    + tele safe zone → tele về vị trí cũ.
-  - Zone10: reset char → respawn → tele zone10, chạy 1 lần khi vào game.
-    + Toggle AUTO TELE ZONE10: bật lại → chạy lại.
-  - Anti-ragdoll (mặc định tắt).
-  - Auto rejoin (không queue script).
-  - Hop server ≤ 1 người (nút bấm).
-  - Bỏ auto nhặt pet rarity theo filter.
-  - Bỏ walkspeed.
+  farm full
+  - Tab MAIN: AUTO STEAL, AUTO PICKAXE, ANTI-RAGDOLL, AUTO TELE ZONE10.
+  - Tab SERVER: HOP, AUTO REJOIN IF DISCONNECT.
 --]]
 
-local Players                = game:GetService("Players")
-local RunService             = game:GetService("RunService")
-local TeleportService        = game:GetService("TeleportService")
-local Stats                  = game:GetService("Stats")
-local UserInputService       = game:GetService("UserInputService")
-local HttpService            = game:GetService("HttpService")
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local TeleportService  = game:GetService("TeleportService")
+local Stats            = game:GetService("Stats")
+local UserInputService = game:GetService("UserInputService")
+local HttpService      = game:GetService("HttpService")
 
 local LP = Players.LocalPlayer
 
 local CONFIG = {
-    EnableAntiRagdoll = false,
+    EnableAntiRagdoll   = false,
     AntiRagdollInterval = 0.25,
-    BlockRemote       = true,
-    RestoreMotors     = true,
-    AnchorOnRagdoll   = true,
-    RemoveForces      = true,
-    MoveSpeed         = 150,
-    InputThreshold    = 0.5,
-
-    EnableRagdollTele = true,
-    RagdollSpamTime1  = 1.0,
-    RagdollSpamTime   = 2.5,
+    BlockRemote         = true,
+    RestoreMotors       = true,
+    AnchorOnRagdoll     = true,
+    RemoveForces        = true,
+    MoveSpeed           = 150,
+    InputThreshold      = 0.5,
+    EnableRagdollTele   = true,
+    RagdollSpamTime1    = 1.0,
+    RagdollSpamTime     = 2.5,
     RagdollSpamInterval = 0.1,
-    TeleportInterval  = 1.0,
-    RagdollStayTime   = 0.5,
-    TeleportCooldown  = 0.5,
-
-    PromptRange       = 30,
-
-    SafeZone         = CFrame.new(-56.86, 3.50, 0.91),
-
-    EnableZone10Farm = true,
-    Zone10Pos        = Vector3.new(-2873.74, 3.50, 1.24),
-    Zone10VerifyDist = 30,
-    RespawnTimeout   = 12,
-
+    TeleportInterval    = 1.0,
+    RagdollStayTime     = 0.5,
+    TeleportCooldown    = 0.5,
+    PromptRange         = 30,
+    EnableAutoPickaxe   = false,
+    PickaxeInterval     = 0.3,
+    SafeZone            = CFrame.new(-56.86, 3.50, 0.91),
+    EnableZone10Farm    = true,
+    Zone10Pos           = Vector3.new(-2873.74, 3.50, 1.24),
+    Zone10VerifyDist    = 30,
+    RespawnTimeout      = 12,
     AutoRejoinOnDisconnect = true,
     LastServerJobId     = "",
-
-    HopMaxPlayers    = 1,
-    HopMinPlayers    = 0,
-    HopTryMax        = 15,
-
-    PillName = "huongcuto20m",
-    StatUpdateInterval = 3,
-    StartupDelay = 5,
-
-    EnableLogging    = false,
+    HopMaxPlayers       = 1,
+    HopTryMax           = 15,
+    PillName            = "huongcuto20m",
+    StatUpdateInterval  = 3,
+    StartupDelay        = 5,
 }
 
 local STATE = { running = true }
@@ -68,30 +53,14 @@ local TELEPORT_LOCK = false
 local REJOINING = false
 local SCRIPTS_STARTED = false
 local ZONE10_DONE = false
-
 local arHoldingPos = false
 local arSavedPos = nil
 local arIsMoving = false
 local arKeyState = { W=false, A=false, S=false, D=false }
-
 local STEAL_PROMPTS = {}
 
-local HAS_ASYNC = false
-local HAS_OPTS = false
-pcall(function()
-    HAS_ASYNC = TeleportService.TeleportAsync ~= nil
-    HAS_OPTS = TeleportOptions ~= nil
-end)
-
-local function log(...)
-    if CONFIG.EnableLogging then
-        local parts = {}
-        for _, v in ipairs({...}) do
-            table.insert(parts, tostring(v))
-        end
-        warn("[OLLIE-FARM] " .. table.concat(parts, " "))
-    end
-end
+local HAS_ASYNC = TeleportService.TeleportAsync ~= nil
+local HAS_OPTS  = TeleportOptions ~= nil
 
 local function charOrigin()
     local char = LP.Character
@@ -225,7 +194,6 @@ local function firePrompt(prompt)
         if fireproximityprompt then fireproximityprompt(prompt); return end
         if promptfire then promptfire(prompt); return end
         if fireprompt then fireprompt(prompt); return end
-        error("no prompt fire fn")
     end)
 end
 
@@ -313,13 +281,11 @@ local function arApply(char)
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
     local hrp = getHRP(char)
-
     pcall(function()
         hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
         hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
         hum:SetStateEnabled(Enum.HumanoidStateType.Physics, false)
     end)
-
     local st = hum:GetState()
     if isRagdollState(st) or hum.PlatformStand then
         if hrp and not hasGroundNear(char, hrp, 20) then return end
@@ -361,19 +327,16 @@ RunService.RenderStepped:Connect(function(dt)
     if not CONFIG.EnableRagdollTele then return end
     if arPaused then return end
     if not arHoldingPos or not arSavedPos then return end
-
     local char = LP.Character
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
     local hrp = getHRP(char)
     if not hum or not hrp then return end
-
     local st = hum:GetState()
     if not (isRagdollState(st) or hum.PlatformStand) then
         arIsMoving = false
         return
     end
-
     local dir = arGetMoveInput(hum)
     if dir.Magnitude > CONFIG.InputThreshold then
         if hrp.Anchored then pcall(function() hrp.Anchored = false end) end
@@ -439,51 +402,95 @@ local function ragdollTeleportLoop()
         if not CONFIG.EnableRagdollTele then task.wait(0.5); continue end
         if not CONFIG.SafeZone then task.wait(0.5); continue end
         if TELEPORT_LOCK then task.wait(0.2); continue end
-
         local byState = isRagdolled()
         local byEvent = RAGDOLL_EVENT
         RAGDOLL_EVENT = false
-
         if not (byState or byEvent) then task.wait(0.1); continue end
-
         local char = LP.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         if not hrp then task.wait(0.5); continue end
         if not hasGroundNear(char, hrp, 30) then task.wait(0.5); continue end
-
         TELEPORT_LOCK = true
         arPaused = true
         arHoldingPos = false
         arSavedPos = nil
         pcall(function() hrp.Anchored = false end)
-
         local savedPos = hrp.Position
-
         local spam1End = tick() + CONFIG.RagdollSpamTime1
         while tick() < spam1End do
             fireNearestStealPrompt()
             task.wait(CONFIG.RagdollSpamInterval)
         end
-
         teleportChar(CONFIG.SafeZone.Position)
         task.wait(CONFIG.TeleportCooldown)
         task.wait(CONFIG.RagdollStayTime)
-
         teleportChar(savedPos)
         task.wait(CONFIG.TeleportCooldown)
-
         task.spawn(refreshPromptCache)
         task.wait(0.2)
-
         local spam2End = tick() + CONFIG.RagdollSpamTime
         while tick() < spam2End do
             fireNearestStealPrompt()
             task.wait(CONFIG.RagdollSpamInterval)
         end
-
         task.wait(CONFIG.TeleportInterval)
         arPaused = false
         TELEPORT_LOCK = false
+    end
+end
+
+-- AUTO PICKAXE
+local function findPickaxe()
+    local char = LP.Character
+    if not char then return nil end
+    for _, tool in ipairs(char:GetChildren()) do
+        if tool:IsA("Tool") then
+            local n = tool.Name:lower()
+            if n:find("pickaxe") or n:find("pick") or n:find("axe")
+                or n:find("hammer") or n:find("shovel") then
+                return tool
+            end
+        end
+    end
+    return nil
+end
+
+local function findPickaxeInBackpack()
+    local bp = LP:FindFirstChildOfClass("Backpack")
+    if not bp then return nil end
+    for _, tool in ipairs(bp:GetChildren()) do
+        if tool:IsA("Tool") then
+            local n = tool.Name:lower()
+            if n:find("pickaxe") or n:find("pick") or n:find("axe")
+                or n:find("hammer") or n:find("shovel") then
+                return tool
+            end
+        end
+    end
+    return nil
+end
+
+local function autoPickaxeLoop()
+    while STATE.running do
+        if not CONFIG.EnableAutoPickaxe then
+            task.wait(0.5); continue
+        end
+        local char = LP.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local tool = findPickaxe()
+        if tool and hum then
+            pcall(function() tool:Activate() end)
+            pcall(function()
+                local remote = tool:FindFirstChildOfClass("RemoteEvent")
+                if remote then remote:FireServer() end
+            end)
+        else
+            local bpTool = findPickaxeInBackpack()
+            if bpTool and hum then
+                pcall(function() hum:EquipTool(bpTool) end)
+            end
+        end
+        task.wait(CONFIG.PickaxeInterval)
     end
 end
 
@@ -527,19 +534,14 @@ local function runZone10Once()
     arHoldingPos = false
     arSavedPos = nil
     arIsMoving = false
-
     resetCharacter()
-
     local ok = waitForRespawn(CONFIG.RespawnTimeout)
     if not ok then
-        log("zone10: respawn timeout")
         arPaused = false
         TELEPORT_LOCK = false
         return false
     end
-
     task.wait(0.8)
-
     local char = LP.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then
@@ -551,7 +553,6 @@ local function runZone10Once()
     teleportChar(CONFIG.Zone10Pos)
     task.wait(0.4)
     teleportChar(CONFIG.Zone10Pos)
-
     arPaused = false
     TELEPORT_LOCK = false
     return true
@@ -560,40 +561,31 @@ end
 local function zone10FarmingLoop()
     if not CONFIG.EnableZone10Farm then return end
     if ZONE10_DONE then return end
-
     while not LP.Character or not LP.Character:FindFirstChild("HumanoidRootPart") do
         task.wait(0.5)
     end
     task.wait(1)
-
     while TELEPORT_LOCK do task.wait(0.5) end
-
     if isAtZone10() then
         ZONE10_DONE = true
-        log("zone10: đã ở zone10")
         return
     end
-
     local ok = pcall(runZone10Once)
-
     task.wait(1)
     if ok and isAtZone10() then
         ZONE10_DONE = true
-        log("zone10: OK")
     else
         ZONE10_DONE = false
-        log("zone10: fail — bỏ")
     end
 end
 
--- HOP SERVER
+-- HOP
 local function hopServer()
-    log("hop: tìm server ≤ " .. CONFIG.HopMaxPlayers .. " người")
     local tries = 0
     while tries < CONFIG.HopTryMax do
         tries = tries + 1
         local okApi, result = pcall(function()
-            local endpoint = string.format(
+            local url = string.format(
                 "https://games.roblox.com/v1/games/%d/servers/Public?limit=100",
                 game.PlaceId)
             local http
@@ -603,7 +595,7 @@ local function hopServer()
             elseif fluxus and fluxus.request then http = fluxus.request
             end
             if not http then return nil end
-            local res = http({ Url = endpoint, Method = "GET" })
+            local res = http({ Url = url, Method = "GET" })
             if res and res.Body then
                 return HttpService:JSONDecode(res.Body)
             end
@@ -613,24 +605,23 @@ local function hopServer()
             local best, bestCount
             for _, srv in ipairs(result.data) do
                 if srv.id and srv.id ~= game.JobId then
-                    local count = srv.playing or 0
-                    if count >= CONFIG.HopMinPlayers
-                        and count <= CONFIG.HopMaxPlayers then
-                        if not bestCount or count < bestCount then
-                            best, bestCount = srv, count
+                    local c = srv.playing or 0
+                    if c <= CONFIG.HopMaxPlayers then
+                        if not bestCount or c < bestCount then
+                            best, bestCount = srv, c
                         end
                     end
                 end
             end
             if best then
-                log("hop: sang", best.id,
-                    "| " .. tostring(best.playing) .. " người")
                 pcall(function()
-                    if TeleportService.TeleportToPlaceInstance then
+                    if HAS_ASYNC and HAS_OPTS then
+                        local opts = Instance.new("TeleportOptions")
+                        opts.ServerInstanceId = best.id
+                        TeleportService:TeleportAsync(game.PlaceId, {LP}, opts)
+                    else
                         TeleportService:TeleportToPlaceInstance(
                             game.PlaceId, best.id, LP)
-                    else
-                        TeleportService:Teleport(game.PlaceId, LP)
                     end
                 end)
                 return true
@@ -638,13 +629,11 @@ local function hopServer()
         end
         task.wait(2)
     end
-    log("hop: không tìm được, tele random")
-    pcall(function()
-        TeleportService:Teleport(game.PlaceId, LP)
-    end)
+    pcall(function() TeleportService:Teleport(game.PlaceId, LP) end)
     return false
 end
 
+-- AUTO REJOIN
 local function setupAutoRejoin()
     if game.JobId and game.JobId ~= "" then
         CONFIG.LastServerJobId = game.JobId
@@ -670,11 +659,7 @@ end
 
 local fps = 60
 local frameCount = 0
-
-RunService.Heartbeat:Connect(function()
-    frameCount = frameCount + 1
-end)
-
+RunService.Heartbeat:Connect(function() frameCount = frameCount + 1 end)
 task.spawn(function()
     while true do
         task.wait(1)
@@ -685,7 +670,6 @@ end)
 
 local cachedPing = 0
 local lastPingUpdate = 0
-
 local function getPingCached()
     local now = tick()
     if now - lastPingUpdate < CONFIG.StatUpdateInterval then
@@ -700,31 +684,40 @@ local function getPingCached()
 end
 
 -- UI
-local parentGui = (gethui and gethui())
-    or game:GetService("CoreGui")
-    or LP:WaitForChild("PlayerGui")
+local parentGui = gethui and gethui() or game:GetService("CoreGui") or LP:WaitForChild("PlayerGui")
 
 local screen = Instance.new("ScreenGui")
 screen.Name = "FarmUI"
 screen.ResetOnSpawn = false
 screen.IgnoreGuiInset = true
-pcall(function() screen.Parent = parentGui end)
-if not screen.Parent then screen.Parent = LP:WaitForChild("PlayerGui") end
+screen.DisplayOrder = 999
+screen.Parent = parentGui
 
 local C = {
-    bg = Color3.fromRGB(22,24,30), card = Color3.fromRGB(32,35,44),
-    accent = Color3.fromRGB(255,105,150), purple = Color3.fromRGB(160,120,255),
-    ok = Color3.fromRGB(80,210,130), off = Color3.fromRGB(230,80,90),
-    text = Color3.fromRGB(240,242,248), dim = Color3.fromRGB(150,155,168),
-    line = Color3.fromRGB(48,52,64),
+    bg      = Color3.fromRGB(22, 24, 30),
+    card    = Color3.fromRGB(32, 35, 44),
+    accent  = Color3.fromRGB(255, 105, 150),
+    purple  = Color3.fromRGB(160, 120, 255),
+    ok      = Color3.fromRGB(80, 210, 130),
+    off     = Color3.fromRGB(230, 80, 90),
+    text    = Color3.fromRGB(240, 242, 248),
+    dim     = Color3.fromRGB(150, 155, 168),
+    line    = Color3.fromRGB(48, 52, 64),
+    tabOff  = Color3.fromRGB(40, 44, 54),
+    tabOn   = Color3.fromRGB(60, 50, 80),
 }
 
 local function corner(o, r)
-    local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r or 8); c.Parent = o
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, r or 8)
+    c.Parent = o
 end
 local function stroke(o, col, t)
-    local s = Instance.new("UIStroke"); s.Color = col or C.line
-    s.Thickness = t or 1; s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; s.Parent = o
+    local s = Instance.new("UIStroke")
+    s.Color = col or C.line
+    s.Thickness = t or 1
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    s.Parent = o
 end
 
 local pill = Instance.new("Frame")
@@ -783,47 +776,47 @@ pillLabel.TextXAlignment = Enum.TextXAlignment.Left
 pillLabel.Text = CONFIG.PillName .. " • loading"
 pillLabel.Parent = pill
 
-local W, H = 320, 400
+local W, H = 340, 500
 local panel = Instance.new("Frame")
 panel.Size = UDim2.fromOffset(W, H)
 panel.Position = UDim2.new(0.5, -W/2, 0, 80)
 panel.BackgroundColor3 = C.bg
 panel.BorderSizePixel = 0
 panel.Visible = false
-panel.Active = false
+panel.Active = true
 panel.Parent = screen
 corner(panel, 14); stroke(panel, C.line, 1)
 
 local header = Instance.new("Frame")
-header.Size = UDim2.new(1, 0, 0, 46)
+header.Size = UDim2.new(1, 0, 0, 42)
 header.BackgroundTransparency = 1
 header.Active = true
 header.Parent = panel
 
 local headerLbl = Instance.new("TextLabel")
-headerLbl.Size = UDim2.new(1, -60, 1, 0)
-headerLbl.Position = UDim2.new(0, 16, 0, 0)
+headerLbl.Size = UDim2.new(1, -50, 1, 0)
+headerLbl.Position = UDim2.new(0, 14, 0, 0)
 headerLbl.BackgroundTransparency = 1
 headerLbl.Font = Enum.Font.GothamBold
-headerLbl.TextSize = 16
+headerLbl.TextSize = 15
 headerLbl.TextColor3 = C.accent
 headerLbl.TextXAlignment = Enum.TextXAlignment.Left
 headerLbl.Text = CONFIG.PillName
 headerLbl.Parent = header
 
-local closePill = Instance.new("TextButton")
-closePill.Size = UDim2.fromOffset(36, 36)
-closePill.Position = UDim2.new(1, -46, 0, 5)
-closePill.BackgroundColor3 = C.off
-closePill.Text = "×"
-closePill.TextColor3 = Color3.new(1,1,1)
-closePill.Font = Enum.Font.GothamBold
-closePill.TextSize = 20
-closePill.AutoButtonColor = false
-closePill.Parent = header
-corner(closePill, 18)
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.fromOffset(32, 32)
+closeBtn.Position = UDim2.new(1, -40, 0, 5)
+closeBtn.BackgroundColor3 = C.off
+closeBtn.Text = "×"
+closeBtn.TextColor3 = Color3.new(1, 1, 1)
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 18
+closeBtn.AutoButtonColor = false
+closeBtn.Parent = header
+corner(closeBtn, 16)
 
-closePill.MouseButton1Click:Connect(function() panel.Visible = false end)
+closeBtn.MouseButton1Click:Connect(function() panel.Visible = false end)
 pillBtn.MouseButton1Click:Connect(function() panel.Visible = not panel.Visible end)
 
 do
@@ -849,56 +842,116 @@ do
     end)
 end
 
-local body = Instance.new("ScrollingFrame")
-body.Size = UDim2.new(1, -20, 1, -60)
-body.Position = UDim2.new(0, 10, 0, 52)
-body.BackgroundTransparency = 1
-body.BorderSizePixel = 0
-body.ScrollBarThickness = 6
-body.ScrollBarImageColor3 = C.accent
-body.ScrollingDirection = Enum.ScrollingDirection.Y
-body.ScrollingEnabled = true
-body.ElasticBehavior = Enum.ElasticBehavior.Always
-body.Active = true
-body.Selectable = true
-body.ClipsDescendants = true
-body.CanvasSize = UDim2.new(0, 0, 0, 0)
-body.AutomaticCanvasSize = Enum.AutomaticSize.Y
-body.Parent = panel
+local tabBar = Instance.new("Frame")
+tabBar.Size = UDim2.new(1, -20, 0, 36)
+tabBar.Position = UDim2.new(0, 10, 0, 46)
+tabBar.BackgroundColor3 = C.card
+tabBar.BorderSizePixel = 0
+tabBar.Parent = panel
+corner(tabBar, 8)
 
-local list = Instance.new("UIListLayout")
-list.SortOrder = Enum.SortOrder.LayoutOrder
-list.Padding = UDim.new(0, 8)
-list.Parent = body
+local tabLayout = Instance.new("UIListLayout")
+tabLayout.FillDirection = Enum.FillDirection.Horizontal
+tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
+tabLayout.Padding = UDim.new(0, 4)
+tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+tabLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+tabLayout.Parent = tabBar
 
-local pad = Instance.new("Frame")
-pad.Size = UDim2.new(1, 0, 0, 12)
-pad.BackgroundTransparency = 1
-pad.Parent = body
+local pages = {}
 
-local function sectionLabel(text)
+local function makeTab(name, order)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0.5, -6, 1, -8)
+    b.BackgroundColor3 = C.tabOff
+    b.Text = name
+    b.TextColor3 = C.dim
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 12
+    b.AutoButtonColor = false
+    b.LayoutOrder = order
+    b.Parent = tabBar
+    corner(b, 6)
+
+    local page = Instance.new("ScrollingFrame")
+    page.Size = UDim2.new(1, -20, 1, -110)
+    page.Position = UDim2.new(0, 10, 0, 90)
+    page.BackgroundTransparency = 1
+    page.BorderSizePixel = 0
+    page.ScrollBarThickness = 5
+    page.ScrollBarImageColor3 = C.accent
+    page.ScrollingDirection = Enum.ScrollingDirection.Y
+    page.ScrollingEnabled = true
+    page.ElasticBehavior = Enum.ElasticBehavior.Always
+    page.Active = true
+    page.Selectable = true
+    page.ClipsDescendants = true
+    page.CanvasSize = UDim2.new(0, 0, 0, 0)
+    page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    page.Visible = false
+    page.Parent = panel
+
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 8)
+    layout.Parent = page
+
+    local pad = Instance.new("Frame")
+    pad.Size = UDim2.new(1, 0, 0, 8)
+    pad.BackgroundTransparency = 1
+    pad.LayoutOrder = 0
+    pad.Parent = page
+
+    pages[name] = page
+
+    b.MouseButton1Click:Connect(function()
+        for _, p in pairs(pages) do
+            p.Visible = false
+        end
+        page.Visible = true
+        for _, child in ipairs(tabBar:GetChildren()) do
+            if child:IsA("TextButton") then
+                child.BackgroundColor3 = C.tabOff
+                child.TextColor3 = C.dim
+            end
+        end
+        b.BackgroundColor3 = C.tabOn
+        b.TextColor3 = C.text
+    end)
+
+    return b, page
+end
+
+local tabMainBtn, tabMainPage = makeTab("MAIN", 1)
+local tabServerBtn, tabServerPage = makeTab("SERVER", 2)
+
+tabMainPage.Visible = true
+tabMainBtn.BackgroundColor3 = C.tabOn
+tabMainBtn.TextColor3 = C.text
+
+local function sectionLabel(parent, text)
     local l = Instance.new("TextLabel")
-    l.Size = UDim2.new(1, 0, 0, 22)
+    l.Size = UDim2.new(1, 0, 0, 20)
     l.BackgroundTransparency = 1
     l.Font = Enum.Font.GothamBold
-    l.TextSize = 12
+    l.TextSize = 11
     l.TextColor3 = C.purple
     l.TextXAlignment = Enum.TextXAlignment.Left
     l.Text = text
-    l.Parent = body
+    l.Parent = parent
     return l
 end
 
-local function toggleBtn(label, initial, colorOn, onChange)
+local function toggleBtn(parent, label, initial, colorOn, onChange)
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(1, 0, 0, 52)
+    b.Size = UDim2.new(1, 0, 0, 46)
     b.BackgroundColor3 = initial and (colorOn or C.ok) or C.off
     b.Text = label .. ": " .. (initial and "ON" or "OFF")
-    b.TextColor3 = Color3.new(1,1,1)
+    b.TextColor3 = Color3.new(1, 1, 1)
     b.Font = Enum.Font.GothamBold
-    b.TextSize = 14
+    b.TextSize = 13
     b.AutoButtonColor = false
-    b.Parent = body
+    b.Parent = parent
     corner(b, 10); stroke(b, C.line, 1)
     local state = initial
     b.MouseButton1Click:Connect(function()
@@ -910,15 +963,36 @@ local function toggleBtn(label, initial, colorOn, onChange)
     return b
 end
 
-sectionLabel("CHỨC NĂNG")
-toggleBtn("AUTO STEAL (LOOP TP)", CONFIG.EnableRagdollTele, C.ok,
+local function actionBtn(parent, label, color, onClick)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, 0, 0, 46)
+    b.BackgroundColor3 = color
+    b.Text = label
+    b.TextColor3 = Color3.new(1, 1, 1)
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 13
+    b.AutoButtonColor = false
+    b.Parent = parent
+    corner(b, 10); stroke(b, C.line, 1)
+    b.MouseButton1Click:Connect(onClick)
+    return b
+end
+
+sectionLabel(tabMainPage, "CHỨC NĂNG")
+
+toggleBtn(tabMainPage, "AUTO STEAL (LOOP TP)", CONFIG.EnableRagdollTele, C.ok,
     function(v) CONFIG.EnableRagdollTele = v end)
-toggleBtn("ANTI-RAGDOLL", CONFIG.EnableAntiRagdoll, C.ok,
+
+toggleBtn(tabMainPage, "AUTO PICKAXE", CONFIG.EnableAutoPickaxe, C.ok,
+    function(v) CONFIG.EnableAutoPickaxe = v end)
+
+toggleBtn(tabMainPage, "ANTI-RAGDOLL", CONFIG.EnableAntiRagdoll, C.ok,
     function(v)
         CONFIG.EnableAntiRagdoll = v
         if not v then arStopHolding(LP.Character) end
     end)
-toggleBtn("AUTO TELE ZONE10", CONFIG.EnableZone10Farm, C.ok,
+
+toggleBtn(tabMainPage, "AUTO TELE ZONE10", CONFIG.EnableZone10Farm, C.ok,
     function(v)
         CONFIG.EnableZone10Farm = v
         if v then
@@ -926,46 +1000,48 @@ toggleBtn("AUTO TELE ZONE10", CONFIG.EnableZone10Farm, C.ok,
             task.spawn(zone10FarmingLoop)
         end
     end)
-toggleBtn("AUTO REJOIN", CONFIG.AutoRejoinOnDisconnect, C.ok,
-    function(v) CONFIG.AutoRejoinOnDisconnect = v end)
 
--- HOP SERVER button
-local hopBtn = Instance.new("TextButton")
-hopBtn.Size = UDim2.new(1, 0, 0, 52)
-hopBtn.BackgroundColor3 = C.accent
-hopBtn.Text = "HOP SERVER (≤ " .. CONFIG.HopMaxPlayers .. ")"
-hopBtn.TextColor3 = Color3.new(1,1,1)
-hopBtn.Font = Enum.Font.GothamBold
-hopBtn.TextSize = 14
-hopBtn.AutoButtonColor = false
-hopBtn.Parent = body
-corner(hopBtn, 10); stroke(hopBtn, C.line, 1)
+sectionLabel(tabServerPage, "SERVER")
 
-hopBtn.MouseButton1Click:Connect(function()
-    hopBtn.Text = "HOPPING..."
-    hopBtn.BackgroundColor3 = C.purple
+local infoLbl = Instance.new("TextLabel")
+infoLbl.Size = UDim2.new(1, 0, 0, 62)
+infoLbl.BackgroundColor3 = C.card
+infoLbl.BorderSizePixel = 0
+infoLbl.Font = Enum.Font.Code
+infoLbl.TextSize = 11
+infoLbl.TextColor3 = C.text
+infoLbl.TextWrapped = true
+infoLbl.TextXAlignment = Enum.TextXAlignment.Left
+infoLbl.Text = "jobId: -\nplayers: -\ntarget: -"
+infoLbl.Parent = tabServerPage
+corner(infoLbl, 8); stroke(infoLbl, C.line, 1)
+
+local function refreshServerInfo()
+    local job = tostring(game.JobId):sub(1, 22)
+    local count = #Players:GetPlayers()
+    local tgt = (CONFIG.LastServerJobId ~= "" and CONFIG.LastServerJobId:sub(1, 22)) or "nil"
+    infoLbl.Text = "jobId: " .. job .. "\n" ..
+                   "players: " .. tostring(count) .. "\n" ..
+                   "target: " .. tgt
+end
+
+actionBtn(tabServerPage, "HOP SERVER (≤ " .. CONFIG.HopMaxPlayers .. ")", C.accent, function(b)
+    b.Text = "HOPPING..."
     task.spawn(function()
-        pcall(hopServer)
+        hopServer()
     end)
 end)
 
-setupAutoRejoin()
+sectionLabel(tabServerPage, "AUTO")
+
+toggleBtn(tabServerPage, "AUTO REJOIN IF DISCONNECT",
+    CONFIG.AutoRejoinOnDisconnect, C.ok,
+    function(v) CONFIG.AutoRejoinOnDisconnect = v end)
 
 task.spawn(function()
-    task.wait(CONFIG.StartupDelay)
-    if SCRIPTS_STARTED then return end
-    SCRIPTS_STARTED = true
-    task.spawn(antiRagdollLoop)
-    task.spawn(ragdollTeleportLoop)
-    task.spawn(zone10FarmingLoop)
-end)
-
-task.spawn(function()
-    task.wait(2)
-    refreshPromptCache()
     while true do
-        task.wait(6)
-        refreshPromptCache()
+        pcall(refreshServerInfo)
+        task.wait(2)
     end
 end)
 
@@ -980,5 +1056,27 @@ task.spawn(function()
                 fps)
         end)
         task.wait(CONFIG.StatUpdateInterval)
+    end
+end)
+
+-- STARTUP
+setupAutoRejoin()
+
+task.spawn(function()
+    task.wait(CONFIG.StartupDelay)
+    if SCRIPTS_STARTED then return end
+    SCRIPTS_STARTED = true
+    task.spawn(antiRagdollLoop)
+    task.spawn(ragdollTeleportLoop)
+    task.spawn(autoPickaxeLoop)
+    task.spawn(zone10FarmingLoop)
+end)
+
+task.spawn(function()
+    task.wait(2)
+    refreshPromptCache()
+    while true do
+        task.wait(6)
+        refreshPromptCache()
     end
 end)
