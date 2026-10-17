@@ -5,6 +5,7 @@
   - Anti-ragdoll: Neo cứng (Anchored) chống văng xa.
   - Anti-ragdoll + AUTO STEAL chạy song song qua TELEPORT_LOCK.
   - Nút TELE SAFE ZONE độc lập: không set lock, không đụng auto khác.
+  - Page scroll mobile-friendly: vuốt dọc mượt.
 --]]
 
 local Players          = game:GetService("Players")
@@ -844,13 +845,13 @@ local function makeTab(name, order)
     page.Size = UDim2.new(1, -20, 1, -110)
     page.Position = UDim2.new(0, 10, 0, 90)
     page.BackgroundTransparency = 1
-    page.BorderSizePixel = 0    page.ScrollBarThickness = 5
+    page.BorderSizePixel = 0
+    page.ScrollBarThickness = 8
     page.ScrollBarImageColor3 = C.accent
     page.ScrollingDirection = Enum.ScrollingDirection.Y
     page.ScrollingEnabled = true
-    page.ElasticBehavior = Enum.ElasticBehavior.Always
-    page.Active = true
-    page.Selectable = true
+    page.ElasticBehavior = Enum.ElasticBehavior.WhenScrollable
+    page.Active = true    page.Selectable = true
     page.ClipsDescendants = true
     page.CanvasSize = UDim2.new(0, 0, 0, 0)
     page.AutomaticCanvasSize = Enum.AutomaticSize.Y
@@ -946,7 +947,7 @@ end
 
 -- Nút TELE SAFE ZONE — độc lập, không set TELEPORT_LOCK
 local function manualTeleSafe()
-    if TELEPORT_LOCK then return end -- đang tele khác thì bỏ qua, không chen
+    if TELEPORT_LOCK then return end
     local char = LP.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
