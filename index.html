@@ -1,10 +1,12 @@
 --[[
   farm full
-  - Tab MAIN: AUTO STEAL, AUTO PICKAXE, WALK SPEED (max 200), ANTI-RAGDOLL, AUTO TELE ZONE10, TELE SAFE ZONE.
-  - Tab SERVER: REJOIN PANEL (auto bật), AUTO REJOIN.
+  - Tab MAIN: AUTO STEAL, AUTO PICKAXE, WALK SPEED, ANTI-RAGDOLL, AUTO TELE ZONE10, TELE SAFE ZONE, PROMPT RANGE.
+  - Tab SERVER: REJOIN PANEL (auto bật), AUTO REJOIN, AUTO EXECUTE (PlaceId).
   - Anti-ragdoll: Neo cứng (Anchored) chống văng xa.
   - Anti-ragdoll + AUTO STEAL chạy song song qua TELEPORT_LOCK.
   - WalkSpeed: bật max 200, tắt trả speed gốc của game.
+  - Auto Execute: 1 lần khi vào game, chỉ ở PlaceId chỉ định, không spam.
+  - Prompt Range: tăng tầm bấm E (50 studs), xuyên tường, bấm là ăn. Tự bấm E, không auto.
   - Page scroll mobile-friendly: vuốt dọc mượt.
 --]]
 
@@ -37,6 +39,11 @@ local CONFIG = {
     PickaxeInterval     = 0.3,
     EnableWalkSpeed     = false,
     WalkSpeedValue      = 200,
+    EnableAutoExecute   = false,
+    AutoExecutePlaceId  = 0,
+    AutoExecuteUrl      = "https://raw.githubusercontent.com/nhhnat19052005-cloud/H-ng/refs/heads/main/index.html",
+    EnablePromptRange   = false,
+    PromptRangeDist     = 50,
     SafeZone            = CFrame.new(-56.86, 3.50, 0.91),
     EnableZone10Farm    = true,
     Zone10Pos           = Vector3.new(-2873.74, 3.50, 1.24),
@@ -61,6 +68,8 @@ local arIsMoving = false
 local arKeyState = { W=false, A=false, S=false, D=false }
 local STEAL_PROMPTS = {}
 local originalWalkSpeed = nil
+local AUTO_EXECUTED = false
+local originalPromptDistances = {}
 
 local HAS_ASYNC = TeleportService.TeleportAsync ~= nil
 local HAS_OPTS  = TeleportOptions ~= nil
@@ -227,6 +236,51 @@ local function fireNearestStealPrompt()
     end
     if best then firePrompt(best); return true end
     return false
+end
+
+-- PROMPT RANGE EXPANDER
+local function expandPrompt(prompt)
+    if not prompt or not prompt:IsA("ProximityPrompt") then return end
+    if not originalPromptDistances[prompt] then
+        originalPromptDistances[prompt] = prompt.MaxActivationDistance
+    end
+    prompt.MaxActivationDistance = CONFIG.PromptRangeDist
+    prompt.RequiresLineOfSight = false
+    prompt.HoldDuration = 0
+end
+
+local function restoreAllPrompts()
+    for prompt, dist in pairs(originalPromptDistances) do
+        if prompt and prompt.Parent then
+            pcall(function()
+                prompt.MaxActivationDistance = dist
+            end)
+        end
+    end
+    originalPromptDistances = {}
+end
+
+local function scanAllPrompts()
+    for _, d in ipairs(workspace:GetDescendants()) do
+        if d:IsA("ProximityPrompt") then
+            expandPrompt(d)
+        end
+    end
+end
+
+workspace.DescendantAdded:Connect(function(d)
+    if d:IsA("ProximityPrompt") and CONFIG.EnablePromptRange then
+        expandPrompt(d)
+    end
+end)
+
+local function promptScanLoop()
+    while true do
+        if CONFIG.EnablePromptRange then
+            pcall(scanAllPrompts)
+        end
+        task.wait(0.5)
+    end
 end
 
 -- ANTI-RAGDOLL
@@ -401,6 +455,25 @@ local function walkSpeedLoop()
         end
         task.wait(0.5)
     end
+end
+
+-- AUTO EXECUTE
+local function tryAutoExecute()
+    if AUTO_EXECUTED then return end
+    if not CONFIG.EnableAutoExecute then return end
+    if CONFIG.AutoExecutePlaceId <= 0 then return end
+    if game.PlaceId ~= CONFIG.AutoExecutePlaceId then return end
+    if CONFIG.AutoExecuteUrl == "" then return end
+
+    AUTO_EXECUTED = true
+    task.spawn(function()
+        task.wait(1.5)
+        pcall(function()
+            local src = game:HttpGet(CONFIG.AutoExecuteUrl)
+            local fn = loadstring(src)
+            if fn then fn() end
+        end)
+    end)
 end
 
 local function attachRagdollWatcher(char)
@@ -1007,6 +1080,16 @@ toggleBtn(tabMainPage, "WALK SPEED (MAX 200)", CONFIG.EnableWalkSpeed, C.ok,
         applyWalkSpeed()
     end)
 
+toggleBtn(tabMainPage, "PROMPT RANGE (E)", CONFIG.EnablePromptRange, C.ok,
+    function(v)
+        CONFIG.EnablePromptRange = v
+        if v then
+            pcall(scanAllPrompts)
+        else
+            pcall(restoreAllPrompts)
+        end
+    end)
+
 toggleBtn(tabMainPage, "ANTI-RAGDOLL", CONFIG.EnableAntiRagdoll, C.ok,
     function(v)
         CONFIG.EnableAntiRagdoll = v
@@ -1125,6 +1208,12 @@ toggleBtn(tabServerPage, "AUTO REJOIN IF DISCONNECT",
     CONFIG.AutoRejoinOnDisconnect, C.ok,
     function(v) CONFIG.AutoRejoinOnDisconnect = v end)
 
+toggleBtn(tabServerPage, "AUTO EXECUTE (PLACEID)", CONFIG.EnableAutoExecute, C.ok,
+    function(v)
+        CONFIG.EnableAutoExecute = v
+        if v then tryAutoExecute() end
+    end)
+
 task.spawn(function()
     while true do
         pcall(refreshServerInfo)
@@ -1148,6 +1237,7 @@ end)
 
 -- STARTUP
 setupAutoRejoin()
+tryAutoExecute()
 
 task.spawn(function()
     task.wait(CONFIG.StartupDelay)
@@ -1157,6 +1247,7 @@ task.spawn(function()
     task.spawn(ragdollTeleportLoop)
     task.spawn(autoPickaxeLoop)
     task.spawn(walkSpeedLoop)
+    task.spawn(promptScanLoop)
     task.spawn(zone10FarmingLoop)
 end)
 
