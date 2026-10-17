@@ -1,7 +1,7 @@
 --[[
   farm full
   - Tab MAIN: AUTO STEAL, AUTO PICKAXE, ANTI-RAGDOLL, AUTO TELE ZONE10, TELE SAFE ZONE.
-  - Tab SERVER: REJOIN PANEL (Bật/Tắt), AUTO REJOIN.
+  - Tab SERVER: REJOIN PANEL (auto bật), AUTO REJOIN.
   - Anti-ragdoll: Neo cứng (Anchored) chống văng xa.
   - Anti-ragdoll + AUTO STEAL chạy song song qua TELEPORT_LOCK.
   - Nút TELE SAFE ZONE độc lập: không set lock, không đụng auto khác.
@@ -277,7 +277,7 @@ end
 
 local function arApply(char)
     if not char then return end
-    if TELEPORT_LOCK then return end -- nhường tele loop
+    if TELEPORT_LOCK then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
     local hrp = getHRP(char)
@@ -337,7 +337,7 @@ end
 
 RunService.RenderStepped:Connect(function(dt)
     if not CONFIG.EnableAntiRagdoll then return end
-    if TELEPORT_LOCK then return end -- nhường tele loop
+    if TELEPORT_LOCK then return end
     if not arHoldingPos or not arSavedPos then return end
     local char = LP.Character
     if not char then return end
@@ -851,7 +851,8 @@ local function makeTab(name, order)
     page.ScrollingDirection = Enum.ScrollingDirection.Y
     page.ScrollingEnabled = true
     page.ElasticBehavior = Enum.ElasticBehavior.WhenScrollable
-    page.Active = true    page.Selectable = true
+    page.Active = true
+    page.Selectable = true
     page.ClipsDescendants = true
     page.CanvasSize = UDim2.new(0, 0, 0, 0)
     page.AutomaticCanvasSize = Enum.AutomaticSize.Y
@@ -945,7 +946,6 @@ local function actionBtn(parent, label, color, onClick)
     return b
 end
 
--- Nút TELE SAFE ZONE — độc lập, không set TELEPORT_LOCK
 local function manualTeleSafe()
     if TELEPORT_LOCK then return end
     local char = LP.Character
@@ -1010,14 +1010,14 @@ end
 
 sectionLabel(tabServerPage, "REJOIN PANEL")
 
--- PANEL REJOIN ĐỘC LẬP
+-- PANEL REJOIN ĐỘC LẬP (AUTO BẬT)
 local rejoinUI = Instance.new("Frame")
 rejoinUI.Size = UDim2.fromOffset(200, 120)
 rejoinUI.Position = UDim2.new(0, 20, 0, 200)
 rejoinUI.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 rejoinUI.BorderSizePixel = 0
 rejoinUI.Active = true
-rejoinUI.Visible = false
+rejoinUI.Visible = true
 rejoinUI.Parent = screen
 corner(rejoinUI, 12); stroke(rejoinUI, C.accent, 2)
 
@@ -1074,7 +1074,7 @@ rBtn1.MouseButton1Click:Connect(function()
 end)
 
 -- Nút bật tắt Panel
-toggleBtn(tabServerPage, "SHOW REJOIN PANEL", false, C.ok, function(v)
+toggleBtn(tabServerPage, "SHOW REJOIN PANEL", true, C.ok, function(v)
     rejoinUI.Visible = v
 end)
 
