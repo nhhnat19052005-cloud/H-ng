@@ -1,8 +1,10 @@
 --[[
   farm full
-  - Tab MAIN: AUTO STEAL, AUTO PICKAXE, ANTI-RAGDOLL, AUTO TELE ZONE10.
+  - Tab MAIN: AUTO STEAL, AUTO PICKAXE, ANTI-RAGDOLL, AUTO TELE ZONE10, TELE SAFE ZONE.
   - Tab SERVER: REJOIN PANEL (Bật/Tắt), AUTO REJOIN.
   - Anti-ragdoll: Neo cứng (Anchored) chống văng xa.
+  - Anti-ragdoll + AUTO STEAL chạy song song qua TELEPORT_LOCK.
+  - Nút TELE SAFE ZONE độc lập: không set lock, không đụng auto khác.
 --]]
 
 local Players          = game:GetService("Players")
@@ -18,7 +20,7 @@ local CONFIG = {
     AntiRagdollInterval = 0.1,
     BlockRemote         = true,
     RestoreMotors       = true,
-    AnchorOnRagdoll     = true, -- Bắt buộc phải true để neo cứng
+    AnchorOnRagdoll     = true,
     RemoveForces        = true,
     MoveSpeed           = 150,
     InputThreshold      = 0.5,
@@ -36,7 +38,7 @@ local CONFIG = {
     EnableZone10Farm    = true,
     Zone10Pos           = Vector3.new(-2873.74, 3.50, 1.24),
     Zone10VerifyDist    = 30,
-    RespawnTimeout      = 5, 
+    RespawnTimeout      = 5,
     AutoRejoinOnDisconnect = true,
     LastServerJobId     = "",
     PillName            = "huongcuto20m",
@@ -46,7 +48,6 @@ local CONFIG = {
 
 local STATE = { running = true }
 local RAGDOLL_EVENT = false
-local arPaused = false
 local TELEPORT_LOCK = false
 local REJOINING = false
 local SCRIPTS_STARTED = false
@@ -275,13 +276,12 @@ end
 
 local function arApply(char)
     if not char then return end
-    if arPaused then return end
+    if TELEPORT_LOCK then return end -- nhường tele loop
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
     local hrp = getHRP(char)
     if not hrp then return end
 
-    -- Tắt trạng thái ngã
     pcall(function()
         hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
         hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
@@ -292,40 +292,30 @@ local function arApply(char)
     local isDown = isRagdollState(st) or hum.PlatformStand
 
     if isDown then
-        -- Lưu vị trí gốc nếu chưa có
         if not arSavedPos then
             arSavedPos = hrp.CFrame
         end
-
-        -- Neo cứng (Anchored) để không bị văng
         if CONFIG.AnchorOnRagdoll then
             if not hrp.Anchored then
                 pcall(function() hrp.Anchored = true end)
             end
             hrp.CFrame = arSavedPos
         else
-            -- Nếu không anchor, kéo về nếu văng xa
             if (hrp.Position - arSavedPos.Position).Magnitude > 5 then
                 hrp.CFrame = arSavedPos
                 zeroVelocity(hrp)
             end
         end
-
-        -- Xoá lực văng
         zeroVelocity(hrp)
         removeForces(hrp)
-
-        -- Ép đứng dậy
         pcall(function()
             hum:ChangeState(Enum.HumanoidStateType.GettingUp)
             hum:ChangeState(Enum.HumanoidStateType.Running)
         end)
-        
         if hum.PlatformStand then
             pcall(function() hum.PlatformStand = false end)
         end
     else
-        -- Nếu đã đứng bình thường, mở neo
         if hrp.Anchored and CONFIG.AnchorOnRagdoll then
             pcall(function() hrp.Anchored = false end)
         end
@@ -346,7 +336,7 @@ end
 
 RunService.RenderStepped:Connect(function(dt)
     if not CONFIG.EnableAntiRagdoll then return end
-    if arPaused then return end
+    if TELEPORT_LOCK then return end -- nhường tele loop
     if not arHoldingPos or not arSavedPos then return end
     local char = LP.Character
     if not char then return end
@@ -432,7 +422,6 @@ local function ragdollTeleportLoop()
         if not hrp then task.wait(0.5); continue end
         if not hasGroundNear(char, hrp, 30) then task.wait(0.5); continue end
         TELEPORT_LOCK = true
-        arPaused = true
         arHoldingPos = false
         arSavedPos = nil
         pcall(function() hrp.Anchored = false end)
@@ -455,7 +444,6 @@ local function ragdollTeleportLoop()
             task.wait(CONFIG.RagdollSpamInterval)
         end
         task.wait(CONFIG.TeleportInterval)
-        arPaused = false
         TELEPORT_LOCK = false
     end
 end
@@ -551,14 +539,12 @@ end
 
 local function runZone10Once()
     TELEPORT_LOCK = true
-    arPaused = true
     arHoldingPos = false
     arSavedPos = nil
     arIsMoving = false
     resetCharacter()
     local ok = waitForRespawn(CONFIG.RespawnTimeout)
     if not ok then
-        arPaused = false
         TELEPORT_LOCK = false
         return false
     end
@@ -566,7 +552,6 @@ local function runZone10Once()
     local char = LP.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then
-        arPaused = false
         TELEPORT_LOCK = false
         return false
     end
@@ -574,7 +559,6 @@ local function runZone10Once()
     teleportChar(CONFIG.Zone10Pos)
     task.wait(0.1)
     teleportChar(CONFIG.Zone10Pos)
-    arPaused = false
     TELEPORT_LOCK = false
     return true
 end
@@ -860,8 +844,7 @@ local function makeTab(name, order)
     page.Size = UDim2.new(1, -20, 1, -110)
     page.Position = UDim2.new(0, 10, 0, 90)
     page.BackgroundTransparency = 1
-    page.BorderSizePixel = 0
-    page.ScrollBarThickness = 5
+    page.BorderSizePixel = 0    page.ScrollBarThickness = 5
     page.ScrollBarImageColor3 = C.accent
     page.ScrollingDirection = Enum.ScrollingDirection.Y
     page.ScrollingEnabled = true
@@ -875,7 +858,8 @@ local function makeTab(name, order)
     page.Parent = panel
 
     local layout = Instance.new("UIListLayout")
-    layout.SortOrder = Enum.SortOrder.LayoutOrder    layout.Padding = UDim.new(0, 8)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 8)
     layout.Parent = page
 
     local pad = Instance.new("Frame")
@@ -960,6 +944,16 @@ local function actionBtn(parent, label, color, onClick)
     return b
 end
 
+-- Nút TELE SAFE ZONE — độc lập, không set TELEPORT_LOCK
+local function manualTeleSafe()
+    if TELEPORT_LOCK then return end -- đang tele khác thì bỏ qua, không chen
+    local char = LP.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    pcall(function() hrp.Anchored = false end)
+    teleportChar(CONFIG.SafeZone.Position)
+end
+
 -- MAIN tab
 sectionLabel(tabMainPage, "CHỨC NĂNG")
 
@@ -983,6 +977,10 @@ toggleBtn(tabMainPage, "AUTO TELE ZONE10", CONFIG.EnableZone10Farm, C.ok,
             task.spawn(zone10FarmingLoop)
         end
     end)
+
+actionBtn(tabMainPage, "TELE SAFE ZONE", C.purple, function()
+    task.spawn(manualTeleSafe)
+end)
 
 -- SERVER tab
 sectionLabel(tabServerPage, "SERVER")
