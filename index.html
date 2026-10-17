@@ -1,7 +1,8 @@
 --[[
   farm full
   - Tab MAIN: AUTO STEAL, AUTO PICKAXE, ANTI-RAGDOLL, AUTO TELE ZONE10.
-  - Tab SERVER: HOP, AUTO REJOIN IF DISCONNECT.
+  - Tab SERVER: REJOIN PANEL (Bật/Tắt), AUTO REJOIN.
+  - Anti-ragdoll: Neo cứng (Anchored) chống văng xa.
 --]]
 
 local Players          = game:GetService("Players")
@@ -9,16 +10,15 @@ local RunService       = game:GetService("RunService")
 local TeleportService  = game:GetService("TeleportService")
 local Stats            = game:GetService("Stats")
 local UserInputService = game:GetService("UserInputService")
-local HttpService      = game:GetService("HttpService")
 
 local LP = Players.LocalPlayer
 
 local CONFIG = {
     EnableAntiRagdoll   = false,
-    AntiRagdollInterval = 0.25,
+    AntiRagdollInterval = 0.1,
     BlockRemote         = true,
     RestoreMotors       = true,
-    AnchorOnRagdoll     = true,
+    AnchorOnRagdoll     = true, -- Bắt buộc phải true để neo cứng
     RemoveForces        = true,
     MoveSpeed           = 150,
     InputThreshold      = 0.5,
@@ -30,17 +30,15 @@ local CONFIG = {
     RagdollStayTime     = 0.5,
     TeleportCooldown    = 0.5,
     PromptRange         = 30,
-    EnableAutoPickaxe   = false,
+    EnableAutoPickaxe   = true,
     PickaxeInterval     = 0.3,
     SafeZone            = CFrame.new(-56.86, 3.50, 0.91),
     EnableZone10Farm    = true,
     Zone10Pos           = Vector3.new(-2873.74, 3.50, 1.24),
     Zone10VerifyDist    = 30,
-    RespawnTimeout      = 12,
+    RespawnTimeout      = 5, 
     AutoRejoinOnDisconnect = true,
     LastServerJobId     = "",
-    HopMaxPlayers       = 1,
-    HopTryMax           = 15,
     PillName            = "huongcuto20m",
     StatUpdateInterval  = 3,
     StartupDelay        = 5,
@@ -281,40 +279,64 @@ local function arApply(char)
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
     local hrp = getHRP(char)
+    if not hrp then return end
+
+    -- Tắt trạng thái ngã
     pcall(function()
         hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
         hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
         hum:SetStateEnabled(Enum.HumanoidStateType.Physics, false)
     end)
+
     local st = hum:GetState()
-    if isRagdollState(st) or hum.PlatformStand then
-        if hrp and not hasGroundNear(char, hrp, 20) then return end
-        if not arHoldingPos then arStartHolding(char) end
-        if hrp and not arIsMoving then
-            zeroVelocity(hrp)
-            removeForces(hrp)
+    local isDown = isRagdollState(st) or hum.PlatformStand
+
+    if isDown then
+        -- Lưu vị trí gốc nếu chưa có
+        if not arSavedPos then
+            arSavedPos = hrp.CFrame
         end
-        pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+
+        -- Neo cứng (Anchored) để không bị văng
+        if CONFIG.AnchorOnRagdoll then
+            if not hrp.Anchored then
+                pcall(function() hrp.Anchored = true end)
+            end
+            hrp.CFrame = arSavedPos
+        else
+            -- Nếu không anchor, kéo về nếu văng xa
+            if (hrp.Position - arSavedPos.Position).Magnitude > 5 then
+                hrp.CFrame = arSavedPos
+                zeroVelocity(hrp)
+            end
+        end
+
+        -- Xoá lực văng
+        zeroVelocity(hrp)
+        removeForces(hrp)
+
+        -- Ép đứng dậy
+        pcall(function()
+            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+            hum:ChangeState(Enum.HumanoidStateType.Running)
+        end)
+        
         if hum.PlatformStand then
             pcall(function() hum.PlatformStand = false end)
         end
-        pcall(function()
-            hum.Sit = false
-            hum.Jump = false
-        end)
     else
-        if arHoldingPos then arStopHolding(char) end
+        -- Nếu đã đứng bình thường, mở neo
+        if hrp.Anchored and CONFIG.AnchorOnRagdoll then
+            pcall(function() hrp.Anchored = false end)
+        end
+        arSavedPos = nil
     end
+    if hum.WalkSpeed < 1 then hum.WalkSpeed = 16 end
 end
 
 local function antiRagdollLoop()
     while STATE.running do
-        if not CONFIG.EnableRagdollTele then
-            if arHoldingPos then arStopHolding(LP.Character) end
-            task.wait(0.5); continue
-        end
-        if CONFIG.EnableAntiRagdoll and not arPaused then
+        if CONFIG.EnableAntiRagdoll then
             local char = LP.Character
             if char then pcall(arApply, char) end
         end
@@ -324,7 +346,6 @@ end
 
 RunService.RenderStepped:Connect(function(dt)
     if not CONFIG.EnableAntiRagdoll then return end
-    if not CONFIG.EnableRagdollTele then return end
     if arPaused then return end
     if not arHoldingPos or not arSavedPos then return end
     local char = LP.Character
@@ -523,7 +544,7 @@ local function waitForRespawn(timeout)
         if hrp and hum and hum.Health > 0 then
             return true
         end
-        task.wait(0.2)
+        task.wait(0.1)
     end
     return false
 end
@@ -541,7 +562,7 @@ local function runZone10Once()
         TELEPORT_LOCK = false
         return false
     end
-    task.wait(0.8)
+    task.wait(0.3)
     local char = LP.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then
@@ -551,7 +572,7 @@ local function runZone10Once()
     end
     pcall(function() hrp.Anchored = false end)
     teleportChar(CONFIG.Zone10Pos)
-    task.wait(0.4)
+    task.wait(0.1)
     teleportChar(CONFIG.Zone10Pos)
     arPaused = false
     TELEPORT_LOCK = false
@@ -562,16 +583,15 @@ local function zone10FarmingLoop()
     if not CONFIG.EnableZone10Farm then return end
     if ZONE10_DONE then return end
     while not LP.Character or not LP.Character:FindFirstChild("HumanoidRootPart") do
-        task.wait(0.5)
+        task.wait(0.2)
     end
-    task.wait(1)
-    while TELEPORT_LOCK do task.wait(0.5) end
+    while TELEPORT_LOCK do task.wait(0.2) end
     if isAtZone10() then
         ZONE10_DONE = true
         return
     end
     local ok = pcall(runZone10Once)
-    task.wait(1)
+    task.wait(0.5)
     if ok and isAtZone10() then
         ZONE10_DONE = true
     else
@@ -579,58 +599,16 @@ local function zone10FarmingLoop()
     end
 end
 
--- HOP
-local function hopServer()
-    local tries = 0
-    while tries < CONFIG.HopTryMax do
-        tries = tries + 1
-        local okApi, result = pcall(function()
-            local url = string.format(
-                "https://games.roblox.com/v1/games/%d/servers/Public?limit=100",
-                game.PlaceId)
-            local http
-            if request then http = request
-            elseif http_request then http = http_request
-            elseif syn and syn.request then http = syn.request
-            elseif fluxus and fluxus.request then http = fluxus.request
-            end
-            if not http then return nil end
-            local res = http({ Url = url, Method = "GET" })
-            if res and res.Body then
-                return HttpService:JSONDecode(res.Body)
-            end
-            return nil
-        end)
-        if okApi and result and result.data then
-            local best, bestCount
-            for _, srv in ipairs(result.data) do
-                if srv.id and srv.id ~= game.JobId then
-                    local c = srv.playing or 0
-                    if c <= CONFIG.HopMaxPlayers then
-                        if not bestCount or c < bestCount then
-                            best, bestCount = srv, c
-                        end
-                    end
-                end
-            end
-            if best then
-                pcall(function()
-                    if HAS_ASYNC and HAS_OPTS then
-                        local opts = Instance.new("TeleportOptions")
-                        opts.ServerInstanceId = best.id
-                        TeleportService:TeleportAsync(game.PlaceId, {LP}, opts)
-                    else
-                        TeleportService:TeleportToPlaceInstance(
-                            game.PlaceId, best.id, LP)
-                    end
-                end)
-                return true
-            end
-        end
-        task.wait(2)
+-- IY REJOIN LOGIC (CƠ BẢN)
+local function simpleRejoin()
+    local count = #Players:GetPlayers()
+    if count <= 1 then
+        LP:Kick("\nRejoining...")
+        task.wait(0.5)
+        TeleportService:Teleport(game.PlaceId, LP)
+    else
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP)
     end
-    pcall(function() TeleportService:Teleport(game.PlaceId, LP) end)
-    return false
 end
 
 -- AUTO REJOIN
@@ -683,11 +661,16 @@ local function getPingCached()
     return cachedPing
 end
 
--- UI
+-- ========== UI ==========
 local parentGui = gethui and gethui() or game:GetService("CoreGui") or LP:WaitForChild("PlayerGui")
+for _, gui in ipairs(parentGui:GetChildren()) do
+    if gui:IsA("ScreenGui") and (gui.Name == "FarmUI" or gui.Name:find("FarmUI_") or gui.Name:find("IYRejoinUI") or gui.Name:find("RejoinPanel")) then
+        gui:Destroy()
+    end
+end
 
 local screen = Instance.new("ScreenGui")
-screen.Name = "FarmUI"
+screen.Name = "FarmUI_" .. tostring(math.random(1000,9999))
 screen.ResetOnSpawn = false
 screen.IgnoreGuiInset = true
 screen.DisplayOrder = 999
@@ -862,7 +845,7 @@ local pages = {}
 
 local function makeTab(name, order)
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(0.5, -6, 1, -8)
+    b.Size = UDim2.new(0.5, -4, 1, -8)
     b.BackgroundColor3 = C.tabOff
     b.Text = name
     b.TextColor3 = C.dim
@@ -892,8 +875,7 @@ local function makeTab(name, order)
     page.Parent = panel
 
     local layout = Instance.new("UIListLayout")
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Padding = UDim.new(0, 8)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder    layout.Padding = UDim.new(0, 8)
     layout.Parent = page
 
     local pad = Instance.new("Frame")
@@ -978,6 +960,7 @@ local function actionBtn(parent, label, color, onClick)
     return b
 end
 
+-- MAIN tab
 sectionLabel(tabMainPage, "CHỨC NĂNG")
 
 toggleBtn(tabMainPage, "AUTO STEAL (LOOP TP)", CONFIG.EnableRagdollTele, C.ok,
@@ -1001,6 +984,7 @@ toggleBtn(tabMainPage, "AUTO TELE ZONE10", CONFIG.EnableZone10Farm, C.ok,
         end
     end)
 
+-- SERVER tab
 sectionLabel(tabServerPage, "SERVER")
 
 local infoLbl = Instance.new("TextLabel")
@@ -1025,11 +1009,74 @@ local function refreshServerInfo()
                    "target: " .. tgt
 end
 
-actionBtn(tabServerPage, "HOP SERVER (≤ " .. CONFIG.HopMaxPlayers .. ")", C.accent, function(b)
-    b.Text = "HOPPING..."
-    task.spawn(function()
-        hopServer()
+sectionLabel(tabServerPage, "REJOIN PANEL")
+
+-- PANEL REJOIN ĐỘC LẬP
+local rejoinUI = Instance.new("Frame")
+rejoinUI.Size = UDim2.fromOffset(200, 120)
+rejoinUI.Position = UDim2.new(0, 20, 0, 200)
+rejoinUI.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+rejoinUI.BorderSizePixel = 0
+rejoinUI.Active = true
+rejoinUI.Visible = false
+rejoinUI.Parent = screen
+corner(rejoinUI, 12); stroke(rejoinUI, C.accent, 2)
+
+local rTitle = Instance.new("TextLabel")
+rTitle.Size = UDim2.new(1, 0, 0, 40)
+rTitle.BackgroundTransparency = 1
+rTitle.Text = "REJOIN"
+rTitle.TextColor3 = C.accent
+rTitle.Font = Enum.Font.GothamBold
+rTitle.TextSize = 14
+rTitle.Parent = rejoinUI
+
+do
+    local dragging, dragStart, startPos
+    rTitle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; dragStart = input.Position; startPos = rejoinUI.Position
+        end
     end)
+    rTitle.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+            local d = input.Position - dragStart
+            rejoinUI.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
+                startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+end
+
+local rBtn1 = Instance.new("TextButton")
+rBtn1.Size = UDim2.new(1, -20, 0, 50)
+rBtn1.Position = UDim2.new(0, 10, 0, 55)
+rBtn1.BackgroundColor3 = C.ok
+rBtn1.Text = "REJOIN"
+rBtn1.TextColor3 = Color3.new(1,1,1)
+rBtn1.Font = Enum.Font.GothamBold
+rBtn1.TextSize = 14
+rBtn1.Parent = rejoinUI
+corner(rBtn1, 8)
+
+rBtn1.MouseButton1Click:Connect(function()
+    rBtn1.Text = "..."
+    task.spawn(function()
+        pcall(simpleRejoin)
+    end)
+    task.wait(2)
+    rBtn1.Text = "REJOIN"
+end)
+
+-- Nút bật tắt Panel
+toggleBtn(tabServerPage, "SHOW REJOIN PANEL", false, C.ok, function(v)
+    rejoinUI.Visible = v
 end)
 
 sectionLabel(tabServerPage, "AUTO")
