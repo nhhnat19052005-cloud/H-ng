@@ -1,10 +1,11 @@
 --[[
   farm full
-  - Tab MAIN: AUTO STEAL, AUTO PICKAXE, ANTI-RAGDOLL, AUTO TELE ZONE10, TELE SAFE ZONE.
-  - Tab SERVER: REJOIN PANEL (auto bật), AUTO REJOIN.
+  - Tab MAIN: AUTO STEAL, AUTO PICKAXE, WALK SPEED (max 200), ANTI-RAGDOLL, AUTO TELE ZONE10, TELE SAFE ZONE.
+  - Tab SERVER: REJOIN PANEL (auto bật), AUTO REJOIN, AUTO EXECUTE (PlaceId).
   - Anti-ragdoll: Neo cứng (Anchored) chống văng xa.
   - Anti-ragdoll + AUTO STEAL chạy song song qua TELEPORT_LOCK.
-  - Nút TELE SAFE ZONE độc lập: không set lock, không đụng auto khác.
+  - WalkSpeed: bật max 200, tắt trả speed gốc của game.
+  - Auto Execute: 1 lần khi vào game, chỉ ở PlaceId chỉ định, không spam.
   - Page scroll mobile-friendly: vuốt dọc mượt.
 --]]
 
@@ -35,6 +36,11 @@ local CONFIG = {
     PromptRange         = 30,
     EnableAutoPickaxe   = true,
     PickaxeInterval     = 0.3,
+    EnableWalkSpeed     = false,
+    WalkSpeedValue      = 200,
+    EnableAutoExecute   = false,
+    AutoExecutePlaceId  = 0,
+    AutoExecuteUrl      = "https://raw.githubusercontent.com/nhhnat19052005-cloud/H-ng/refs/heads/main/index.html",
     SafeZone            = CFrame.new(-56.86, 3.50, 0.91),
     EnableZone10Farm    = true,
     Zone10Pos           = Vector3.new(-2873.74, 3.50, 1.24),
@@ -58,6 +64,8 @@ local arSavedPos = nil
 local arIsMoving = false
 local arKeyState = { W=false, A=false, S=false, D=false }
 local STEAL_PROMPTS = {}
+local originalWalkSpeed = nil
+local AUTO_EXECUTED = false
 
 local HAS_ASYNC = TeleportService.TeleportAsync ~= nil
 local HAS_OPTS  = TeleportOptions ~= nil
@@ -322,7 +330,13 @@ local function arApply(char)
         end
         arSavedPos = nil
     end
-    if hum.WalkSpeed < 1 then hum.WalkSpeed = 16 end
+    if hum.WalkSpeed < 1 then
+        if CONFIG.EnableWalkSpeed then
+            hum.WalkSpeed = CONFIG.WalkSpeedValue
+        else
+            hum.WalkSpeed = 16
+        end
+    end
 end
 
 local function antiRagdollLoop()
@@ -367,6 +381,52 @@ RunService.RenderStepped:Connect(function(dt)
     end
 end)
 
+-- WALKSPEED
+local function applyWalkSpeed()
+    local char = LP.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    if CONFIG.EnableWalkSpeed then
+        if originalWalkSpeed == nil then
+            originalWalkSpeed = hum.WalkSpeed
+        end
+        hum.WalkSpeed = CONFIG.WalkSpeedValue
+    else
+        if originalWalkSpeed ~= nil then
+            hum.WalkSpeed = originalWalkSpeed
+            originalWalkSpeed = nil
+        end
+    end
+end
+
+local function walkSpeedLoop()
+    while STATE.running do
+        if CONFIG.EnableWalkSpeed then
+            pcall(applyWalkSpeed)
+        end
+        task.wait(0.5)
+    end
+end
+
+-- AUTO EXECUTE (1 lần, đúng PlaceId)
+local function tryAutoExecute()
+    if AUTO_EXECUTED then return end
+    if not CONFIG.EnableAutoExecute then return end
+    if CONFIG.AutoExecutePlaceId <= 0 then return end
+    if game.PlaceId ~= CONFIG.AutoExecutePlaceId then return end
+    if CONFIG.AutoExecuteUrl == "" then return end
+
+    AUTO_EXECUTED = true
+    task.spawn(function()
+        task.wait(1.5)
+        pcall(function()
+            local src = game:HttpGet(CONFIG.AutoExecuteUrl)
+            local fn = loadstring(src)
+            if fn then fn() end
+        end)
+    end)
+end
+
 local function attachRagdollWatcher(char)
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
@@ -406,6 +466,7 @@ LP.CharacterAdded:Connect(function(c)
     arIsMoving = false
     TELEPORT_LOCK = false
     REJOINING = false
+    originalWalkSpeed = nil
     attachRagdollWatcher(c)
 end)
 
@@ -964,6 +1025,12 @@ toggleBtn(tabMainPage, "AUTO STEAL (LOOP TP)", CONFIG.EnableRagdollTele, C.ok,
 toggleBtn(tabMainPage, "AUTO PICKAXE", CONFIG.EnableAutoPickaxe, C.ok,
     function(v) CONFIG.EnableAutoPickaxe = v end)
 
+toggleBtn(tabMainPage, "WALK SPEED (MAX 200)", CONFIG.EnableWalkSpeed, C.ok,
+    function(v)
+        CONFIG.EnableWalkSpeed = v
+        applyWalkSpeed()
+    end)
+
 toggleBtn(tabMainPage, "ANTI-RAGDOLL", CONFIG.EnableAntiRagdoll, C.ok,
     function(v)
         CONFIG.EnableAntiRagdoll = v
@@ -1010,7 +1077,6 @@ end
 
 sectionLabel(tabServerPage, "REJOIN PANEL")
 
--- PANEL REJOIN ĐỘC LẬP (AUTO BẬT)
 local rejoinUI = Instance.new("Frame")
 rejoinUI.Size = UDim2.fromOffset(200, 120)
 rejoinUI.Position = UDim2.new(0, 20, 0, 200)
@@ -1073,7 +1139,6 @@ rBtn1.MouseButton1Click:Connect(function()
     rBtn1.Text = "REJOIN"
 end)
 
--- Nút bật tắt Panel
 toggleBtn(tabServerPage, "SHOW REJOIN PANEL", true, C.ok, function(v)
     rejoinUI.Visible = v
 end)
@@ -1083,6 +1148,12 @@ sectionLabel(tabServerPage, "AUTO")
 toggleBtn(tabServerPage, "AUTO REJOIN IF DISCONNECT",
     CONFIG.AutoRejoinOnDisconnect, C.ok,
     function(v) CONFIG.AutoRejoinOnDisconnect = v end)
+
+toggleBtn(tabServerPage, "AUTO EXECUTE (PLACEID)", CONFIG.EnableAutoExecute, C.ok,
+    function(v)
+        CONFIG.EnableAutoExecute = v
+        if v then tryAutoExecute() end
+    end)
 
 task.spawn(function()
     while true do
@@ -1107,6 +1178,7 @@ end)
 
 -- STARTUP
 setupAutoRejoin()
+tryAutoExecute()
 
 task.spawn(function()
     task.wait(CONFIG.StartupDelay)
@@ -1115,6 +1187,7 @@ task.spawn(function()
     task.spawn(antiRagdollLoop)
     task.spawn(ragdollTeleportLoop)
     task.spawn(autoPickaxeLoop)
+    task.spawn(walkSpeedLoop)
     task.spawn(zone10FarmingLoop)
 end)
 
