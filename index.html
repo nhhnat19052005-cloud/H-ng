@@ -1,11 +1,10 @@
--- Dynamic Island — Farm Script (Fixed `continue` loop for all executors)
+-- huongcuto20m — Full Script (Fixed)
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local TeleportService  = game:GetService("TeleportService")
 local Stats            = game:GetService("Stats")
 local UserInputService = game:GetService("UserInputService")
 local TweenService     = game:GetService("TweenService")
-
 local LP = Players.LocalPlayer
 
 local CONFIG = {
@@ -63,15 +62,21 @@ local originalPromptDistances = {}
 
 local STATUS_OVERRIDE = nil
 local STATUS_OVERRIDE_TIME = 0
+local GAME_SWING_BTN = nil
+local HAS_CLICKED_GAME_BTN = false
 
 local HAS_ASYNC = TeleportService.TeleportAsync ~= nil
 local HAS_OPTS  = TeleportOptions ~= nil
 
--- ================= LOGIC SCRIPTS =================
+-- ================= HÀM HỖ TRỢ CHUNG =================
 local function charOrigin()
     local char = LP.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     return hrp and hrp.Position or nil
+end
+
+local function getHRP(char)
+    return char and char:FindFirstChild("HumanoidRootPart")
 end
 
 local function hasGroundNear(char, hrp, dist)
@@ -111,10 +116,6 @@ local function teleportChar(pos)
     return true
 end
 
-local function getHRP(char)
-    return char and char:FindFirstChild("HumanoidRootPart")
-end
-
 local function removeForces(hrp)
     if not CONFIG.RemoveForces or not hrp then return end
     for _, d in ipairs(hrp:GetChildren()) do
@@ -138,40 +139,37 @@ local function zeroVelocity(hrp)
     end)
 end
 
-UserInputService.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
-    if input.KeyCode == Enum.KeyCode.W then arKeyState.W = true end
-    if input.KeyCode == Enum.KeyCode.A then arKeyState.A = true end
-    if input.KeyCode == Enum.KeyCode.S then arKeyState.S = true end
-    if input.KeyCode == Enum.KeyCode.D then arKeyState.D = true end
-end)
-
-UserInputService.InputEnded:Connect(function(input)
-    if input.KeyCode == Enum.KeyCode.W then arKeyState.W = false end
-    if input.KeyCode == Enum.KeyCode.A then arKeyState.A = false end
-    if input.KeyCode == Enum.KeyCode.S then arKeyState.S = false end
-    if input.KeyCode == Enum.KeyCode.D then arKeyState.D = false end
-end)
-
-if CONFIG.BlockRemote and hookmetamethod then
-    pcall(function()
-        local oldNamecall
-        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-            local method = getnamecallmethod()
-            if CONFIG.EnableAntiRagdoll and CONFIG.EnableRagdollTele
-                and (method == "FireServer" or method == "InvokeServer") then
-                local name = tostring(self.Name or ""):lower()
-                if name:find("ragdoll") or name:find("rag")
-                    or name:find("knock") or name:find("push")
-                    or name:find("launch") then
-                    return nil
-                end
+local function findPickaxe()
+    local char = LP.Character
+    if not char then return nil end
+    for _, tool in ipairs(char:GetChildren()) do
+        if tool:IsA("Tool") then
+            local n = tool.Name:lower()
+            if n:find("pickaxe") or n:find("pick") or n:find("axe")
+                or n:find("hammer") or n:find("shovel") then
+                return tool
             end
-            return oldNamecall(self, ...)
-        end)
-    end)
+        end
+    end
+    return nil
 end
 
+local function findPickaxeInBackpack()
+    local bp = LP:FindFirstChildOfClass("Backpack")
+    if not bp then return nil end
+    for _, tool in ipairs(bp:GetChildren()) do
+        if tool:IsA("Tool") then
+            local n = tool.Name:lower()
+            if n:find("pickaxe") or n:find("pick") or n:find("axe")
+                or n:find("hammer") or n:find("shovel") then
+                return tool
+            end
+        end
+    end
+    return nil
+end
+
+-- ================= PROMPT & STEAL =================
 local function isStealPrompt(p)
     local n = tostring(p.Name):lower()
     local a = tostring(p.ActionText or ""):lower()
@@ -278,27 +276,7 @@ local function promptScanLoop()
     end
 end
 
-local function arStartHolding(char)
-    if arHoldingPos then return end
-    local hrp = getHRP(char)
-    if not hrp then return end
-    if not hasGroundNear(char, hrp, 20) then return end
-    arSavedPos = hrp.CFrame
-    arHoldingPos = true
-end
-
-local function arStopHolding(char)
-    if not arHoldingPos then return end
-    local hrp = char and getHRP(char)
-    if hrp then
-        pcall(function() hrp.Anchored = false end)
-        zeroVelocity(hrp)
-    end
-    arHoldingPos = false
-    arSavedPos = nil
-    arIsMoving = false
-end
-
+-- ================= ANTI-RAGDOLL =================
 local function arGetMoveInput(hum)
     if hum then
         local md = hum.MoveDirection
@@ -382,6 +360,18 @@ local function arApply(char)
     end
 end
 
+local function arStopHolding(char)
+    if not arHoldingPos then return end
+    local hrp = char and getHRP(char)
+    if hrp then
+        pcall(function() hrp.Anchored = false end)
+        zeroVelocity(hrp)
+    end
+    arHoldingPos = false
+    arSavedPos = nil
+    arIsMoving = false
+end
+
 local function antiRagdollLoop()
     while STATE.running do
         if CONFIG.EnableAntiRagdoll then
@@ -424,6 +414,22 @@ RunService.RenderStepped:Connect(function(dt)
     end
 end)
 
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.W then arKeyState.W = true end
+    if input.KeyCode == Enum.KeyCode.A then arKeyState.A = true end
+    if input.KeyCode == Enum.KeyCode.S then arKeyState.S = true end
+    if input.KeyCode == Enum.KeyCode.D then arKeyState.D = true end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.W then arKeyState.W = false end
+    if input.KeyCode == Enum.KeyCode.A then arKeyState.A = false end
+    if input.KeyCode == Enum.KeyCode.S then arKeyState.S = false end
+    if input.KeyCode == Enum.KeyCode.D then arKeyState.D = false end
+end)
+
+-- ================= WALKSPEED =================
 local function applyWalkSpeed()
     local char = LP.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -450,6 +456,7 @@ local function walkSpeedLoop()
     end
 end
 
+-- ================= AUTO EXECUTE =================
 local function tryAutoExecute()
     if AUTO_EXECUTED then return end
     if not CONFIG.EnableAutoExecute then return end
@@ -468,6 +475,7 @@ local function tryAutoExecute()
     end)
 end
 
+-- ================= RAGDOLL WATCHER =================
 local function attachRagdollWatcher(char)
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
@@ -511,6 +519,7 @@ LP.CharacterAdded:Connect(function(c)
     attachRagdollWatcher(c)
 end)
 
+-- ================= RAGDOLL TELEPORT =================
 local function ragdollTeleportLoop()
     while STATE.running do
         if not CONFIG.EnableRagdollTele then
@@ -563,69 +572,90 @@ local function ragdollTeleportLoop()
     end
 end
 
-local function findPickaxe()
-    local char = LP.Character
-    if not char then return nil end
-    for _, tool in ipairs(char:GetChildren()) do
-        if tool:IsA("Tool") then
-            local n = tool.Name:lower()
-            if n:find("pickaxe") or n:find("pick") or n:find("axe")
-                or n:find("hammer") or n:find("shovel") then
-                return tool
+-- ================= AUTO SWING GAME BTN =================
+local function getGameBtn()
+    local pg = LP:FindFirstChild("PlayerGui")
+    if not pg then return nil end
+    for _, v in ipairs(pg:GetDescendants()) do
+        if v:IsA("TextButton") or v:IsA("ImageButton") then
+            local text = ""
+            if v:IsA("TextButton") then text = v.Text end
+            local lbl = v:FindFirstChildWhichIsA("TextLabel", true)
+            if lbl then text = text .. " " .. lbl.Text end
+            
+            if string.find(string.lower(text), "auto swing") then
+                return v
             end
         end
     end
     return nil
 end
 
-local function findPickaxeInBackpack()
-    local bp = LP:FindFirstChildOfClass("Backpack")
-    if not bp then return nil end
-    for _, tool in ipairs(bp:GetChildren()) do
-        if tool:IsA("Tool") then
-            local n = tool.Name:lower()
-            if n:find("pickaxe") or n:find("pick") or n:find("axe")
-                or n:find("hammer") or n:find("shovel") then
-                return tool
-            end
+local function fireGameBtn()
+    if not GAME_SWING_BTN or not GAME_SWING_BTN.Parent then
+        GAME_SWING_BTN = getGameBtn()
+    end
+    if not GAME_SWING_BTN then return false end
+    
+    local fired = false
+    if getconnections then
+        local conns = getconnections(GAME_SWING_BTN.MouseButton1Click)
+        if conns and #conns > 0 then
+            for _, conn in pairs(conns) do pcall(function() conn:Fire() end) end
+            fired = true
+        end
+        local actConns = getconnections(GAME_SWING_BTN.Activated)
+        if actConns and #actConns > 0 then
+            for _, conn in pairs(actConns) do pcall(function() conn:Fire() end) end
+            fired = true
         end
     end
-    return nil
+    if not fired and firesignal then
+        pcall(function()
+            firesignal(GAME_SWING_BTN.MouseButton1Click)
+            firesignal(GAME_SWING_BTN.Activated)
+            fired = true
+        end)
+    end
+    return fired
 end
 
+-- ================= AUTO PICKAXE =================
 local function autoPickaxeLoop()
-    local notified = false
     while STATE.running do
-        if not CONFIG.EnableAutoPickaxe then
-            task.wait(0.5)
-        else
+        if CONFIG.EnableAutoPickaxe then
             local char = LP.Character
             local hum = char and char:FindFirstChildOfClass("Humanoid")
+            
             local tool = findPickaxe()
-            if tool and hum then
-                pcall(function() tool:Activate() end)
-                pcall(function()
-                    local remote = tool:FindFirstChildOfClass("RemoteEvent")
-                    if remote then remote:FireServer() end
-                end)
-                if not notified then
-                    if not STATUS_OVERRIDE then
-                        STATUS_OVERRIDE = "AUTO PICKAXE"
-                        STATUS_OVERRIDE_TIME = tick() + 2.0
+            local bpTool = findPickaxeInBackpack()
+            
+            if tool or bpTool then
+                if not HAS_CLICKED_GAME_BTN then
+                    if fireGameBtn() then
+                        HAS_CLICKED_GAME_BTN = true
+                        if not STATUS_OVERRIDE then
+                            STATUS_OVERRIDE = "AUTO PICKAXE"
+                            STATUS_OVERRIDE_TIME = tick() + 2.0
+                        end
                     end
-                    notified = true
                 end
-            else
-                local bpTool = findPickaxeInBackpack()
-                if bpTool and hum then
+                
+                if tool and hum then
+                    pcall(function() tool:Activate() end)
+                elseif bpTool and hum then
                     pcall(function() hum:EquipTool(bpTool) end)
                 end
             end
+            
             task.wait(CONFIG.PickaxeInterval)
+        else
+            task.wait(0.5)
         end
     end
 end
 
+-- ================= ZONE 10 =================
 local function isAtZone10()
     local hrp = getHRP(LP.Character)
     if not hrp then return false end
@@ -705,6 +735,7 @@ local function zone10FarmingLoop()
     end
 end
 
+-- ================= REJOIN =================
 local function simpleRejoin()
     local count = #Players:GetPlayers()
     if count <= 1 then
@@ -867,7 +898,7 @@ local headerText = Instance.new("TextLabel")
 headerText.Size = UDim2.new(1, -130, 1, 0)
 headerText.Position = UDim2.new(0, 32, 0, 0)
 headerText.BackgroundTransparency = 1
-headerText.Text = "FARM MENU"
+headerText.Text = "huongcuto20m"
 headerText.Font = Enum.Font.GothamBold
 headerText.TextSize = 12
 headerText.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -1357,4 +1388,4 @@ task.spawn(function()
     end
 end)
 
-print("[Dynamic Island] Farm Loaded.")
+print("[huongcuto20m] Loaded.")
