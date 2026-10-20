@@ -1,20 +1,10 @@
---[[
-  farm full
-  - Tab MAIN: AUTO STEAL, AUTO PICKAXE, WALK SPEED, ANTI-RAGDOLL, AUTO TELE ZONE10, TELE SAFE ZONE, PROMPT RANGE.
-  - Tab SERVER: REJOIN PANEL (auto bật), AUTO REJOIN, AUTO EXECUTE (PlaceId).
-  - Anti-ragdoll: Neo cứng (Anchored) chống văng xa.
-  - Anti-ragdoll + AUTO STEAL chạy song song qua TELEPORT_LOCK.
-  - WalkSpeed: bật max 200, tắt trả speed gốc của game.
-  - Auto Execute: 1 lần khi vào game, chỉ ở PlaceId chỉ định, không spam.
-  - Prompt Range: tăng tầm bấm E (50 studs), xuyên tường, bấm là ăn. Tự bấm E, không auto.
-  - Page scroll mobile-friendly: vuốt dọc mượt.
---]]
-
+-- Dynamic Island — Farm Script (Fixed `continue` loop for all executors)
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local TeleportService  = game:GetService("TeleportService")
 local Stats            = game:GetService("Stats")
 local UserInputService = game:GetService("UserInputService")
+local TweenService     = game:GetService("TweenService")
 
 local LP = Players.LocalPlayer
 
@@ -71,9 +61,13 @@ local originalWalkSpeed = nil
 local AUTO_EXECUTED = false
 local originalPromptDistances = {}
 
+local STATUS_OVERRIDE = nil
+local STATUS_OVERRIDE_TIME = 0
+
 local HAS_ASYNC = TeleportService.TeleportAsync ~= nil
 local HAS_OPTS  = TeleportOptions ~= nil
 
+-- ================= LOGIC SCRIPTS =================
 local function charOrigin()
     local char = LP.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -178,7 +172,6 @@ if CONFIG.BlockRemote and hookmetamethod then
     end)
 end
 
--- PROMPT
 local function isStealPrompt(p)
     local n = tostring(p.Name):lower()
     local a = tostring(p.ActionText or ""):lower()
@@ -234,11 +227,15 @@ local function fireNearestStealPrompt()
             STEAL_PROMPTS[prompt] = nil
         end
     end
-    if best then firePrompt(best); return true end
+    if best then 
+        firePrompt(best)
+        STATUS_OVERRIDE = "AUTO STEAL"
+        STATUS_OVERRIDE_TIME = tick() + 2.0
+        return true 
+    end
     return false
 end
 
--- PROMPT RANGE EXPANDER
 local function expandPrompt(prompt)
     if not prompt or not prompt:IsA("ProximityPrompt") then return end
     if not originalPromptDistances[prompt] then
@@ -252,9 +249,7 @@ end
 local function restoreAllPrompts()
     for prompt, dist in pairs(originalPromptDistances) do
         if prompt and prompt.Parent then
-            pcall(function()
-                prompt.MaxActivationDistance = dist
-            end)
+            pcall(function() prompt.MaxActivationDistance = dist end)
         end
     end
     originalPromptDistances = {}
@@ -275,7 +270,7 @@ workspace.DescendantAdded:Connect(function(d)
 end)
 
 local function promptScanLoop()
-    while true do
+    while STATE.running do
         if CONFIG.EnablePromptRange then
             pcall(scanAllPrompts)
         end
@@ -283,7 +278,6 @@ local function promptScanLoop()
     end
 end
 
--- ANTI-RAGDOLL
 local function arStartHolding(char)
     if arHoldingPos then return end
     local hrp = getHRP(char)
@@ -430,7 +424,6 @@ RunService.RenderStepped:Connect(function(dt)
     end
 end)
 
--- WALKSPEED
 local function applyWalkSpeed()
     local char = LP.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -457,7 +450,6 @@ local function walkSpeedLoop()
     end
 end
 
--- AUTO EXECUTE
 local function tryAutoExecute()
     if AUTO_EXECUTED then return end
     if not CONFIG.EnableAutoExecute then return end
@@ -521,45 +513,56 @@ end)
 
 local function ragdollTeleportLoop()
     while STATE.running do
-        if not CONFIG.EnableRagdollTele then task.wait(0.5); continue end
-        if not CONFIG.SafeZone then task.wait(0.5); continue end
-        if TELEPORT_LOCK then task.wait(0.2); continue end
-        local byState = isRagdolled()
-        local byEvent = RAGDOLL_EVENT
-        RAGDOLL_EVENT = false
-        if not (byState or byEvent) then task.wait(0.1); continue end
-        local char = LP.Character
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        if not hrp then task.wait(0.5); continue end
-        if not hasGroundNear(char, hrp, 30) then task.wait(0.5); continue end
-        TELEPORT_LOCK = true
-        arHoldingPos = false
-        arSavedPos = nil
-        pcall(function() hrp.Anchored = false end)
-        local savedPos = hrp.Position
-        local spam1End = tick() + CONFIG.RagdollSpamTime1
-        while tick() < spam1End do
-            fireNearestStealPrompt()
-            task.wait(CONFIG.RagdollSpamInterval)
+        if not CONFIG.EnableRagdollTele then
+            task.wait(0.5)
+        elseif not CONFIG.SafeZone then
+            task.wait(0.5)
+        elseif TELEPORT_LOCK then
+            task.wait(0.2)
+        else
+            local byState = isRagdolled()
+            local byEvent = RAGDOLL_EVENT
+            RAGDOLL_EVENT = false
+            if not (byState or byEvent) then
+                task.wait(0.1)
+            else
+                local char = LP.Character
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if not hrp then
+                    task.wait(0.5)
+                elseif not hasGroundNear(char, hrp, 30) then
+                    task.wait(0.5)
+                else
+                    TELEPORT_LOCK = true
+                    arHoldingPos = false
+                    arSavedPos = nil
+                    pcall(function() hrp.Anchored = false end)
+                    local savedPos = hrp.Position
+                    local spam1End = tick() + CONFIG.RagdollSpamTime1
+                    while tick() < spam1End do
+                        fireNearestStealPrompt()
+                        task.wait(CONFIG.RagdollSpamInterval)
+                    end
+                    teleportChar(CONFIG.SafeZone.Position)
+                    task.wait(CONFIG.TeleportCooldown)
+                    task.wait(CONFIG.RagdollStayTime)
+                    teleportChar(savedPos)
+                    task.wait(CONFIG.TeleportCooldown)
+                    task.spawn(refreshPromptCache)
+                    task.wait(0.2)
+                    local spam2End = tick() + CONFIG.RagdollSpamTime
+                    while tick() < spam2End do
+                        fireNearestStealPrompt()
+                        task.wait(CONFIG.RagdollSpamInterval)
+                    end
+                    task.wait(CONFIG.TeleportInterval)
+                    TELEPORT_LOCK = false
+                end
+            end
         end
-        teleportChar(CONFIG.SafeZone.Position)
-        task.wait(CONFIG.TeleportCooldown)
-        task.wait(CONFIG.RagdollStayTime)
-        teleportChar(savedPos)
-        task.wait(CONFIG.TeleportCooldown)
-        task.spawn(refreshPromptCache)
-        task.wait(0.2)
-        local spam2End = tick() + CONFIG.RagdollSpamTime
-        while tick() < spam2End do
-            fireNearestStealPrompt()
-            task.wait(CONFIG.RagdollSpamInterval)
-        end
-        task.wait(CONFIG.TeleportInterval)
-        TELEPORT_LOCK = false
     end
 end
 
--- AUTO PICKAXE
 local function findPickaxe()
     local char = LP.Character
     if not char then return nil end
@@ -591,30 +594,38 @@ local function findPickaxeInBackpack()
 end
 
 local function autoPickaxeLoop()
+    local notified = false
     while STATE.running do
         if not CONFIG.EnableAutoPickaxe then
-            task.wait(0.5); continue
-        end
-        local char = LP.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        local tool = findPickaxe()
-        if tool and hum then
-            pcall(function() tool:Activate() end)
-            pcall(function()
-                local remote = tool:FindFirstChildOfClass("RemoteEvent")
-                if remote then remote:FireServer() end
-            end)
+            task.wait(0.5)
         else
-            local bpTool = findPickaxeInBackpack()
-            if bpTool and hum then
-                pcall(function() hum:EquipTool(bpTool) end)
+            local char = LP.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            local tool = findPickaxe()
+            if tool and hum then
+                pcall(function() tool:Activate() end)
+                pcall(function()
+                    local remote = tool:FindFirstChildOfClass("RemoteEvent")
+                    if remote then remote:FireServer() end
+                end)
+                if not notified then
+                    if not STATUS_OVERRIDE then
+                        STATUS_OVERRIDE = "AUTO PICKAXE"
+                        STATUS_OVERRIDE_TIME = tick() + 2.0
+                    end
+                    notified = true
+                end
+            else
+                local bpTool = findPickaxeInBackpack()
+                if bpTool and hum then
+                    pcall(function() hum:EquipTool(bpTool) end)
+                end
             end
+            task.wait(CONFIG.PickaxeInterval)
         end
-        task.wait(CONFIG.PickaxeInterval)
     end
 end
 
--- ZONE10
 local function isAtZone10()
     local hrp = getHRP(LP.Character)
     if not hrp then return false end
@@ -675,26 +686,25 @@ local function runZone10Once()
 end
 
 local function zone10FarmingLoop()
-    if not CONFIG.EnableZone10Farm then return end
-    if ZONE10_DONE then return end
-    while not LP.Character or not LP.Character:FindFirstChild("HumanoidRootPart") do
-        task.wait(0.2)
-    end
-    while TELEPORT_LOCK do task.wait(0.2) end
-    if isAtZone10() then
-        ZONE10_DONE = true
-        return
-    end
-    local ok = pcall(runZone10Once)
-    task.wait(0.5)
-    if ok and isAtZone10() then
-        ZONE10_DONE = true
-    else
-        ZONE10_DONE = false
+    if CONFIG.EnableZone10Farm and not ZONE10_DONE then
+        while not LP.Character or not LP.Character:FindFirstChild("HumanoidRootPart") do
+            task.wait(0.2)
+        end
+        while TELEPORT_LOCK do task.wait(0.2) end
+        if isAtZone10() then
+            ZONE10_DONE = true
+        else
+            local ok = pcall(runZone10Once)
+            task.wait(0.5)
+            if ok and isAtZone10() then
+                ZONE10_DONE = true
+            else
+                ZONE10_DONE = false
+            end
+        end
     end
 end
 
--- IY REJOIN LOGIC (CƠ BẢN)
 local function simpleRejoin()
     local count = #Players:GetPlayers()
     if count <= 1 then
@@ -706,7 +716,6 @@ local function simpleRejoin()
     end
 end
 
--- AUTO REJOIN
 local function setupAutoRejoin()
     if game.JobId and game.JobId ~= "" then
         CONFIG.LastServerJobId = game.JobId
@@ -730,512 +739,600 @@ local function setupAutoRejoin()
     end)
 end
 
-local fps = 60
-local frameCount = 0
-RunService.Heartbeat:Connect(function() frameCount = frameCount + 1 end)
-task.spawn(function()
-    while true do
-        task.wait(1)
-        fps = frameCount
-        frameCount = 0
+-- ================= UI DYNAMIC ISLAND =================
+local function getParent()
+    local ok, cg = pcall(function() return game:GetService("CoreGui") end)
+    if ok and cg then
+        local old = cg:FindFirstChild("DynIslandFarm")
+        if old then old:Destroy() end
+        local g = Instance.new("ScreenGui")
+        g.Name = "DynIslandFarm"
+        g.ResetOnSpawn = false
+        g.IgnoreGuiInset = true
+        g.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        if pcall(function() g.Parent = cg end) then return g end
+    end
+    local pg = LP:WaitForChild("PlayerGui")
+    local old = pg:FindFirstChild("DynIslandFarm")
+    if old then old:Destroy() end
+    local g = Instance.new("ScreenGui")
+    g.Name = "DynIslandFarm"
+    g.ResetOnSpawn = false
+    g.IgnoreGuiInset = true
+    g.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    g.Parent = pg
+    return g
+end
+local GUI = getParent()
+
+local activeGradients = {}
+RunService.RenderStepped:Connect(function()
+    local time = tick() * 100
+    for i = #activeGradients, 1, -1 do
+        local grad = activeGradients[i]
+        if grad and grad.Parent and grad.Parent.Parent then
+            grad.Rotation = time % 360
+        else
+            table.remove(activeGradients, i)
+        end
     end
 end)
 
-local cachedPing = 0
-local lastPingUpdate = 0
-local function getPingCached()
-    local now = tick()
-    if now - lastPingUpdate < CONFIG.StatUpdateInterval then
-        return cachedPing
-    end
-    lastPingUpdate = now
-    local ok, val = pcall(function()
-        return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
-    end)
-    if ok and val then cachedPing = math.floor(val) end
-    return cachedPing
-end
-
--- ========== UI ==========
-local parentGui = gethui and gethui() or game:GetService("CoreGui") or LP:WaitForChild("PlayerGui")
-for _, gui in ipairs(parentGui:GetChildren()) do
-    if gui:IsA("ScreenGui") and (gui.Name == "FarmUI" or gui.Name:find("FarmUI_") or gui.Name:find("IYRejoinUI") or gui.Name:find("RejoinPanel")) then
-        gui:Destroy()
-    end
-end
-
-local screen = Instance.new("ScreenGui")
-screen.Name = "FarmUI_" .. tostring(math.random(1000,9999))
-screen.ResetOnSpawn = false
-screen.IgnoreGuiInset = true
-screen.DisplayOrder = 999
-screen.Parent = parentGui
-
-local C = {
-    bg      = Color3.fromRGB(22, 24, 30),
-    card    = Color3.fromRGB(32, 35, 44),
-    accent  = Color3.fromRGB(255, 105, 150),
-    purple  = Color3.fromRGB(160, 120, 255),
-    ok      = Color3.fromRGB(80, 210, 130),
-    off     = Color3.fromRGB(230, 80, 90),
-    text    = Color3.fromRGB(240, 242, 248),
-    dim     = Color3.fromRGB(150, 155, 168),
-    line    = Color3.fromRGB(48, 52, 64),
-    tabOff  = Color3.fromRGB(40, 44, 54),
-    tabOn   = Color3.fromRGB(60, 50, 80),
-}
-
-local function corner(o, r)
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, r or 8)
-    c.Parent = o
-end
-local function stroke(o, col, t)
-    local s = Instance.new("UIStroke")
-    s.Color = col or C.line
-    s.Thickness = t or 1
-    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    s.Parent = o
-end
-
-local pill = Instance.new("Frame")
-pill.Size = UDim2.fromOffset(220, 36)
-pill.Position = UDim2.new(0.5, -110, 0, 20)
-pill.BackgroundColor3 = C.bg
-pill.BorderSizePixel = 0
-pill.Active = true
-pill.Parent = screen
-corner(pill, 18); stroke(pill, C.accent, 2)
-
-do
-    local dragging, dragStart, startPos
-    pill.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true; dragStart = input.Position; startPos = pill.Position
+local function addNeonBorder(targetFrame, thickness)
+    local borderFrame = Instance.new("Frame")
+    borderFrame.Name = "NeonBorder"
+    borderFrame.Size = UDim2.new(1, thickness*2, 1, thickness*2)
+    borderFrame.Position = UDim2.new(0, -thickness, 0, -thickness)
+    borderFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    borderFrame.BackgroundTransparency = 0
+    borderFrame.BorderSizePixel = 0
+    borderFrame.ZIndex = targetFrame.ZIndex - 1
+    borderFrame.Parent = targetFrame.Parent
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = borderFrame
+    
+    local grad = Instance.new("UIGradient")
+    grad.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 128)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(160, 0, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 128)),
+    }
+    grad.Parent = borderFrame
+    table.insert(activeGradients, grad)
+    
+    local function update()
+        borderFrame.Size = UDim2.new(1, thickness*2, 1, thickness*2)
+        borderFrame.Position = UDim2.new(0, -thickness, 0, -thickness)
+        local targetCorner = targetFrame:FindFirstChildOfClass("UICorner")
+        if targetCorner then
+            corner.CornerRadius = targetCorner.CornerRadius
         end
-    end)
-    pill.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if not dragging then return end
-        if input.UserInputType == Enum.UserInputType.MouseMovement
-        or input.UserInputType == Enum.UserInputType.Touch then
-            local d = input.Position - dragStart
-            pill.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
-                startPos.Y.Scale, startPos.Y.Offset + d.Y)
-        end
-    end)
+    end
+    targetFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(update)
+    if targetFrame:FindFirstChildOfClass("UICorner") then
+        targetFrame:FindFirstChildOfClass("UICorner"):GetPropertyChangedSignal("CornerRadius"):Connect(update)
+    end
+    update()
+    return borderFrame
 end
 
-local pillBtn = Instance.new("TextButton")
-pillBtn.Size = UDim2.new(1, 0, 1, 0)
-pillBtn.BackgroundTransparency = 1
-pillBtn.Text = ""
-pillBtn.Parent = pill
+local mainWrapper = Instance.new("Frame")
+mainWrapper.Name = "MainWrapper"
+mainWrapper.Size = UDim2.fromOffset(210, 38)
+mainWrapper.Position = UDim2.new(0.5, -105, 0, 20)
+mainWrapper.BackgroundTransparency = 1
+mainWrapper.ZIndex = 10
+mainWrapper.Parent = GUI
 
-local pillDot = Instance.new("Frame")
-pillDot.Size = UDim2.fromOffset(10, 10)
-pillDot.Position = UDim2.new(0, 14, 0.5, -5)
-pillDot.BackgroundColor3 = C.ok
-pillDot.Parent = pill
-corner(pillDot, 5)
+local main = Instance.new("Frame")
+main.Name = "Main"
+main.Size = UDim2.fromScale(1, 1)
+main.Position = UDim2.fromScale(0, 0)
+main.BackgroundColor3 = Color3.fromRGB(12, 15, 22)
+main.BackgroundTransparency = 0.05
+main.BorderSizePixel = 0
+main.ClipsDescendants = true
+main.ZIndex = 12
+main.Parent = mainWrapper
 
-local pillLabel = Instance.new("TextLabel")
-pillLabel.Size = UDim2.new(1, -40, 1, 0)
-pillLabel.Position = UDim2.new(0, 30, 0, 0)
-pillLabel.BackgroundTransparency = 1
-pillLabel.Font = Enum.Font.GothamBold
-pillLabel.TextSize = 11
-pillLabel.TextColor3 = C.text
-pillLabel.TextXAlignment = Enum.TextXAlignment.Left
-pillLabel.Text = CONFIG.PillName .. " • loading"
-pillLabel.Parent = pill
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(1, 0)
+mainCorner.Parent = main
 
-local W, H = 340, 500
-local panel = Instance.new("Frame")
-panel.Size = UDim2.fromOffset(W, H)
-panel.Position = UDim2.new(0.5, -W/2, 0, 80)
-panel.BackgroundColor3 = C.bg
-panel.BorderSizePixel = 0
-panel.Visible = false
-panel.Active = true
-panel.Parent = screen
-corner(panel, 14); stroke(panel, C.line, 1)
+addNeonBorder(main, 2)
 
-local header = Instance.new("Frame")
-header.Size = UDim2.new(1, 0, 0, 42)
+local header = Instance.new("TextButton")
+header.Name = "Header"
+header.Size = UDim2.fromOffset(210, 38)
+header.Position = UDim2.fromOffset(0, 0)
 header.BackgroundTransparency = 1
-header.Active = true
-header.Parent = panel
+header.Text = ""
+header.ZIndex = 13
+header.Parent = main
 
-local headerLbl = Instance.new("TextLabel")
-headerLbl.Size = UDim2.new(1, -50, 1, 0)
-headerLbl.Position = UDim2.new(0, 14, 0, 0)
-headerLbl.BackgroundTransparency = 1
-headerLbl.Font = Enum.Font.GothamBold
-headerLbl.TextSize = 15
-headerLbl.TextColor3 = C.accent
-headerLbl.TextXAlignment = Enum.TextXAlignment.Left
-headerLbl.Text = CONFIG.PillName
-headerLbl.Parent = header
+local dot = Instance.new("Frame")
+dot.Size = UDim2.fromOffset(8, 8)
+dot.Position = UDim2.new(0, 16, 0.5, -4)
+dot.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
+dot.BorderSizePixel = 0
+dot.ZIndex = 14
+dot.Parent = header
+local dotCorner = Instance.new("UICorner")
+dotCorner.CornerRadius = UDim.new(1, 0)
+dotCorner.Parent = dot
+
+local headerText = Instance.new("TextLabel")
+headerText.Size = UDim2.new(1, -130, 1, 0)
+headerText.Position = UDim2.new(0, 32, 0, 0)
+headerText.BackgroundTransparency = 1
+headerText.Text = "FARM MENU"
+headerText.Font = Enum.Font.GothamBold
+headerText.TextSize = 12
+headerText.TextColor3 = Color3.fromRGB(255, 255, 255)
+headerText.TextXAlignment = Enum.TextXAlignment.Left
+headerText.ZIndex = 14
+headerText.Parent = header
+
+local statsLabel = Instance.new("TextLabel")
+statsLabel.Size = UDim2.new(0, 95, 1, 0)
+statsLabel.Position = UDim2.new(1, -105, 0, 0)
+statsLabel.BackgroundTransparency = 1
+statsLabel.Text = "60 FPS | 0ms"
+statsLabel.Font = Enum.Font.Code
+statsLabel.TextSize = 11
+statsLabel.TextColor3 = Color3.fromRGB(150, 255, 150)
+statsLabel.TextXAlignment = Enum.TextXAlignment.Right
+statsLabel.ZIndex = 14
+statsLabel.RichText = true
+statsLabel.Parent = header
 
 local closeBtn = Instance.new("TextButton")
-closeBtn.Size = UDim2.fromOffset(32, 32)
-closeBtn.Position = UDim2.new(1, -40, 0, 5)
-closeBtn.BackgroundColor3 = C.off
-closeBtn.Text = "×"
-closeBtn.TextColor3 = Color3.new(1, 1, 1)
+closeBtn.Size = UDim2.fromOffset(24, 24)
+closeBtn.Position = UDim2.new(1, -34, 0.5, -12)
+closeBtn.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
+closeBtn.BackgroundTransparency = 0.1
+closeBtn.Text = "X"
 closeBtn.Font = Enum.Font.GothamBold
-closeBtn.TextSize = 18
-closeBtn.AutoButtonColor = false
+closeBtn.TextSize = 12
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.ZIndex = 15
+closeBtn.Visible = false
 closeBtn.Parent = header
-corner(closeBtn, 16)
 
-closeBtn.MouseButton1Click:Connect(function() panel.Visible = false end)
-pillBtn.MouseButton1Click:Connect(function() panel.Visible = not panel.Visible end)
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(1, 0)
+closeCorner.Parent = closeBtn
 
-do
-    local dragging, dragStart, startPos
-    header.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true; dragStart = input.Position; startPos = panel.Position
-        end
+local container = Instance.new("Frame")
+container.Name = "Container"
+container.Size = UDim2.new(1, 0, 1, -38)
+container.Position = UDim2.new(0, 0, 0, 38)
+container.BackgroundTransparency = 1
+container.ZIndex = 13
+container.ClipsDescendants = true
+container.Parent = main
+
+local glassOverlay = Instance.new("Frame")
+glassOverlay.Name = "GlassOverlay"
+glassOverlay.Size = UDim2.new(1, 0, 1, 0)
+glassOverlay.Position = UDim2.new(-1, 0, 0, 0)
+glassOverlay.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+glassOverlay.BackgroundTransparency = 1
+glassOverlay.BorderSizePixel = 0
+glassOverlay.ZIndex = 50
+glassOverlay.Visible = false
+glassOverlay.Parent = container
+
+local glassGrad = Instance.new("UIGradient")
+glassGrad.Color = ColorSequence.new{
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(200, 220, 255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255)),
+}
+glassGrad.Transparency = NumberSequence.new{
+    NumberSequenceKeypoint.new(0, 0.8),
+    NumberSequenceKeypoint.new(0.5, 0.4),
+    NumberSequenceKeypoint.new(1, 0.8),
+}
+glassGrad.Rotation = 45
+glassGrad.Parent = glassOverlay
+
+local function triggerGlassTransition()
+    glassOverlay.Visible = true
+    glassOverlay.Position = UDim2.new(-1, 0, 0, 0)
+    glassOverlay.BackgroundTransparency = 1
+    
+    local tweenInfo = TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+    local tween = TweenService:Create(glassOverlay, tweenInfo, {
+        Position = UDim2.new(1, 0, 0, 0),
+        BackgroundTransparency = 0.8
+    })
+    tween:Play()
+    tween.Completed:Connect(function()
+        glassOverlay.Visible = false
     end)
-    header.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if not dragging then return end
-        if input.UserInputType == Enum.UserInputType.MouseMovement
-        or input.UserInputType == Enum.UserInputType.Touch then
-            local d = input.Position - dragStart
-            panel.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
-                startPos.Y.Scale, startPos.Y.Offset + d.Y)
-        end
-    end)
+end
+
+local function playToggleLiquidGlass(containerFrame)
+    local flash = Instance.new("Frame")
+    flash.Size = UDim2.new(0.5, 0, 1, 0)
+    flash.Position = UDim2.new(-0.5, 0, 0, 0)
+    flash.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    flash.BackgroundTransparency = 0.5
+    flash.BorderSizePixel = 0
+    flash.ZIndex = 25
+    flash.Parent = containerFrame
+    local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(1, 0); c.Parent = flash
+    
+    local grad = Instance.new("UIGradient")
+    grad.Transparency = NumberSequence.new{
+        NumberSequenceKeypoint.new(0, 1),
+        NumberSequenceKeypoint.new(0.5, 0.3),
+        NumberSequenceKeypoint.new(1, 1),
+    }
+    grad.Parent = flash
+    
+    local tw = TweenService:Create(flash, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+        Position = UDim2.new(1, 0, 0, 0),
+        BackgroundTransparency = 1
+    })
+    tw:Play()
+    tw.Completed:Connect(function() flash:Destroy() end)
 end
 
 local tabBar = Instance.new("Frame")
-tabBar.Size = UDim2.new(1, -20, 0, 36)
-tabBar.Position = UDim2.new(0, 10, 0, 46)
-tabBar.BackgroundColor3 = C.card
+tabBar.Size = UDim2.new(1, -24, 0, 30)
+tabBar.Position = UDim2.new(0, 12, 0, 8)
+tabBar.BackgroundColor3 = Color3.fromRGB(20, 25, 35)
 tabBar.BorderSizePixel = 0
-tabBar.Parent = panel
-corner(tabBar, 8)
+tabBar.ZIndex = 14
+tabBar.Parent = container
+local tbCorner = Instance.new("UICorner")
+tbCorner.CornerRadius = UDim.new(0, 6)
+tbCorner.Parent = tabBar
 
-local tabLayout = Instance.new("UIListLayout")
-tabLayout.FillDirection = Enum.FillDirection.Horizontal
-tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
-tabLayout.Padding = UDim.new(0, 4)
-tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-tabLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-tabLayout.Parent = tabBar
+local tbLayout = Instance.new("UIListLayout")
+tbLayout.FillDirection = Enum.FillDirection.Horizontal
+tbLayout.SortOrder = Enum.SortOrder.LayoutOrder
+tbLayout.Padding = UDim.new(0, 4)
+tbLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+tbLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+tbLayout.Parent = tabBar
 
 local pages = {}
-
 local function makeTab(name, order)
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(0.5, -4, 1, -8)
-    b.BackgroundColor3 = C.tabOff
+    b.Size = UDim2.new(0.5, -6, 1, -6)
+    b.BackgroundColor3 = Color3.fromRGB(40, 44, 54)
     b.Text = name
-    b.TextColor3 = C.dim
+    b.TextColor3 = Color3.fromRGB(150, 155, 168)
     b.Font = Enum.Font.GothamBold
-    b.TextSize = 12
+    b.TextSize = 11
     b.AutoButtonColor = false
     b.LayoutOrder = order
+    b.ZIndex = 15
     b.Parent = tabBar
-    corner(b, 6)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 4)
+    c.Parent = b
 
     local page = Instance.new("ScrollingFrame")
-    page.Size = UDim2.new(1, -20, 1, -110)
-    page.Position = UDim2.new(0, 10, 0, 90)
+    page.Size = UDim2.new(1, -24, 1, -50)
+    page.Position = UDim2.new(0, 12, 0, 44)
     page.BackgroundTransparency = 1
     page.BorderSizePixel = 0
-    page.ScrollBarThickness = 8
-    page.ScrollBarImageColor3 = C.accent
+    page.ScrollBarThickness = 4
+    page.ScrollBarImageColor3 = Color3.fromRGB(0, 170, 255)
     page.ScrollingDirection = Enum.ScrollingDirection.Y
-    page.ScrollingEnabled = true
-    page.ElasticBehavior = Enum.ElasticBehavior.WhenScrollable
-    page.Active = true
-    page.Selectable = true
-    page.ClipsDescendants = true
     page.CanvasSize = UDim2.new(0, 0, 0, 0)
     page.AutomaticCanvasSize = Enum.AutomaticSize.Y
     page.Visible = false
-    page.Parent = panel
+    page.ZIndex = 14
+    page.Parent = container
 
     local layout = Instance.new("UIListLayout")
     layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Padding = UDim.new(0, 8)
+    layout.Padding = UDim.new(0, 6)
     layout.Parent = page
-
-    local pad = Instance.new("Frame")
-    pad.Size = UDim2.new(1, 0, 0, 8)
-    pad.BackgroundTransparency = 1
-    pad.LayoutOrder = 0
-    pad.Parent = page
 
     pages[name] = page
 
     b.MouseButton1Click:Connect(function()
-        for _, p in pairs(pages) do
-            p.Visible = false
-        end
+        if page.Visible then return end
+        triggerGlassTransition()
+        task.wait(0.1)
+        for _, p in pairs(pages) do p.Visible = false end
         page.Visible = true
         for _, child in ipairs(tabBar:GetChildren()) do
             if child:IsA("TextButton") then
-                child.BackgroundColor3 = C.tabOff
-                child.TextColor3 = C.dim
+                child.BackgroundColor3 = Color3.fromRGB(40, 44, 54)
+                child.TextColor3 = Color3.fromRGB(150, 155, 168)
             end
         end
-        b.BackgroundColor3 = C.tabOn
-        b.TextColor3 = C.text
+        b.BackgroundColor3 = Color3.fromRGB(60, 50, 80)
+        b.TextColor3 = Color3.fromRGB(255, 255, 255)
     end)
-
     return b, page
 end
 
 local tabMainBtn, tabMainPage = makeTab("MAIN", 1)
 local tabServerBtn, tabServerPage = makeTab("SERVER", 2)
-
 tabMainPage.Visible = true
-tabMainBtn.BackgroundColor3 = C.tabOn
-tabMainBtn.TextColor3 = C.text
+tabMainBtn.BackgroundColor3 = Color3.fromRGB(60, 50, 80)
+tabMainBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 
-local function sectionLabel(parent, text)
-    local l = Instance.new("TextLabel")
-    l.Size = UDim2.new(1, 0, 0, 20)
-    l.BackgroundTransparency = 1
-    l.Font = Enum.Font.GothamBold
-    l.TextSize = 11
-    l.TextColor3 = C.purple
-    l.TextXAlignment = Enum.TextXAlignment.Left
-    l.Text = text
-    l.Parent = parent
-    return l
+local function makeToggle(parent, labelText, defaultState, callback)
+    local btnWrapper = Instance.new("Frame")
+    btnWrapper.Size = UDim2.new(1, 0, 0, 32)
+    btnWrapper.BackgroundTransparency = 1
+    btnWrapper.ZIndex = 15
+    btnWrapper.Parent = parent
+    
+    local row = Instance.new("Frame")
+    row.Size = UDim2.fromScale(1, 1)
+    row.BackgroundColor3 = Color3.fromRGB(20, 25, 35)
+    row.BackgroundTransparency = 0.2
+    row.BorderSizePixel = 0
+    row.ZIndex = 16
+    row.Parent = btnWrapper
+    
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 8)
+    c.Parent = row
+    
+    local rowStroke = Instance.new("UIStroke")
+    rowStroke.Thickness = 1
+    rowStroke.Color = Color3.fromRGB(60, 70, 90)
+    rowStroke.Transparency = 0.5
+    rowStroke.Parent = row
+    
+    local txt = Instance.new("TextLabel")
+    txt.Size = UDim2.new(1, -60, 1, 0)
+    txt.Position = UDim2.new(0, 10, 0, 0)
+    txt.BackgroundTransparency = 1
+    txt.Text = labelText
+    txt.Font = Enum.Font.GothamMedium
+    txt.TextSize = 11
+    txt.TextColor3 = Color3.fromRGB(200, 210, 220)
+    txt.TextXAlignment = Enum.TextXAlignment.Left
+    txt.ZIndex = 17
+    txt.Parent = row
+    
+    local toggleWrapper = Instance.new("Frame")
+    toggleWrapper.Size = UDim2.fromOffset(36, 18)
+    toggleWrapper.Position = UDim2.new(1, -46, 0.5, -9)
+    toggleWrapper.BackgroundTransparency = 1
+    toggleWrapper.ZIndex = 20
+    toggleWrapper.Parent = row
+    
+    local borderFrame = Instance.new("Frame")
+    borderFrame.Size = UDim2.fromScale(1, 1)
+    borderFrame.Position = UDim2.fromScale(0, 0)
+    borderFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    borderFrame.BorderSizePixel = 0
+    borderFrame.ZIndex = 21
+    borderFrame.Parent = toggleWrapper
+    local bCorner = Instance.new("UICorner"); bCorner.CornerRadius = UDim.new(1, 0); bCorner.Parent = borderFrame
+    local bGrad = Instance.new("UIGradient")
+    bGrad.Color = ColorSequence.new{ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 128)), ColorSequenceKeypoint.new(0.5, Color3.fromRGB(160, 0, 255)), ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 128))}
+    bGrad.Parent = borderFrame
+    table.insert(activeGradients, bGrad)
+    
+    local pillBg = Instance.new("Frame")
+    pillBg.Size = UDim2.new(1, -4, 1, -4)
+    pillBg.Position = UDim2.new(0, 2, 0, 2)
+    pillBg.BackgroundColor3 = Color3.fromRGB(30, 34, 46)
+    pillBg.BorderSizePixel = 0
+    pillBg.ZIndex = 22
+    pillBg.Parent = toggleWrapper
+    local pCorner = Instance.new("UICorner"); pCorner.CornerRadius = UDim.new(1, 0); pCorner.Parent = pillBg
+    
+    local pStroke = Instance.new("UIStroke")
+    pStroke.Thickness = 1.5
+    pStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    pStroke.Transparency = 1
+    pStroke.Parent = pillBg
+    local strokeGrad = Instance.new("UIGradient")
+    strokeGrad.Color = ColorSequence.new{ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 20, 147)), ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 255, 127)), ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 20, 147))}
+    strokeGrad.Parent = pStroke
+    
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.fromOffset(12, 12)
+    knob.Position = UDim2.new(0, 3, 0.5, -6)
+    knob.BackgroundColor3 = Color3.fromRGB(160, 170, 190)
+    knob.BorderSizePixel = 0
+    knob.ZIndex = 23
+    knob.Parent = pillBg
+    local kCorner = Instance.new("UICorner"); kCorner.CornerRadius = UDim.new(1, 0); kCorner.Parent = knob
+    
+    local hit = Instance.new("TextButton")
+    hit.Size = UDim2.fromScale(1, 1)
+    hit.BackgroundTransparency = 1
+    hit.Text = ""
+    hit.ZIndex = 24
+    hit.Parent = row
+    
+    local state = defaultState
+    local function apply(v)
+        if v then
+            playToggleLiquidGlass(pillBg)
+            TweenService:Create(pStroke, TweenInfo.new(0.2), { Transparency = 0 }):Play()
+            TweenService:Create(pillBg, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(10, 12, 18) }):Play()
+            local exists = false
+            for _, g in ipairs(activeGradients) do if g == strokeGrad then exists = true break end end
+            if not exists then table.insert(activeGradients, strokeGrad) end
+            TweenService:Create(knob, TweenInfo.new(0.2, Enum.EasingStyle.Back), { Position = UDim2.new(1, -15, 0.5, -6), BackgroundColor3 = Color3.fromRGB(255, 255, 255) }):Play()
+            TweenService:Create(txt, TweenInfo.new(0.2), { TextColor3 = Color3.fromRGB(255, 255, 255) }):Play()
+        else
+            playToggleLiquidGlass(pillBg)
+            TweenService:Create(pStroke, TweenInfo.new(0.2), { Transparency = 1 }):Play()
+            TweenService:Create(pillBg, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(30, 34, 46) }):Play()
+            for i = #activeGradients, 1, -1 do if activeGradients[i] == strokeGrad then table.remove(activeGradients, i); break end end
+            TweenService:Create(knob, TweenInfo.new(0.2, Enum.EasingStyle.Back), { Position = UDim2.new(0, 3, 0.5, -6), BackgroundColor3 = Color3.fromRGB(160, 170, 190) }):Play()
+            TweenService:Create(txt, TweenInfo.new(0.2), { TextColor3 = Color3.fromRGB(180, 190, 210) }):Play()
+        end
+        if callback then callback(v) end
+    end
+    hit.MouseButton1Click:Connect(function() state = not state; apply(state) end)
+    if state then apply(state) end
+    return btnWrapper
 end
 
-local function toggleBtn(parent, label, initial, colorOn, onChange)
-    local b = Instance.new("TextButton")
-    b.Size = UDim2.new(1, 0, 0, 46)
-    b.BackgroundColor3 = initial and (colorOn or C.ok) or C.off
-    b.Text = label .. ": " .. (initial and "ON" or "OFF")
-    b.TextColor3 = Color3.new(1, 1, 1)
-    b.Font = Enum.Font.GothamBold
-    b.TextSize = 13
-    b.AutoButtonColor = false
-    b.Parent = parent
-    corner(b, 10); stroke(b, C.line, 1)
-    local state = initial
-    b.MouseButton1Click:Connect(function()
-        state = not state
-        b.BackgroundColor3 = state and (colorOn or C.ok) or C.off
-        b.Text = label .. ": " .. (state and "ON" or "OFF")
-        onChange(state)
-    end)
-    return b
+local function makeAction(parent, labelText, color, callback)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, 0, 0, 32)
+    btn.BackgroundColor3 = color or Color3.fromRGB(0, 170, 255)
+    btn.BackgroundTransparency = 0.2
+    btn.Text = labelText
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 12
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.AutoButtonColor = false
+    btn.ZIndex = 15
+    btn.Parent = parent
+    local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 8); c.Parent = btn
+    local s = Instance.new("UIStroke"); s.Thickness = 1; s.Color = color or Color3.fromRGB(0, 170, 255); s.Transparency = 0.5; s.Parent = btn
+    
+    btn.MouseEnter:Connect(function() TweenService:Create(btn, TweenInfo.new(0.1), { BackgroundTransparency = 0 }):Play() end)
+    btn.MouseLeave:Connect(function() TweenService:Create(btn, TweenInfo.new(0.1), { BackgroundTransparency = 0.2 }):Play() end)
+    btn.MouseButton1Click:Connect(callback)
+    return btn
 end
 
-local function actionBtn(parent, label, color, onClick)
-    local b = Instance.new("TextButton")
-    b.Size = UDim2.new(1, 0, 0, 46)
-    b.BackgroundColor3 = color
-    b.Text = label
-    b.TextColor3 = Color3.new(1, 1, 1)
-    b.Font = Enum.Font.GothamBold
-    b.TextSize = 13
-    b.AutoButtonColor = false
-    b.Parent = parent
-    corner(b, 10); stroke(b, C.line, 1)
-    b.MouseButton1Click:Connect(onClick)
-    return b
-end
+-- ADD ELEMENTS (MAIN TAB)
+makeToggle(tabMainPage, "AUTO STEAL", CONFIG.EnableRagdollTele, function(v) CONFIG.EnableRagdollTele = v end)
+makeToggle(tabMainPage, "AUTO PICKAXE", CONFIG.EnableAutoPickaxe, function(v) CONFIG.EnableAutoPickaxe = v end)
+makeToggle(tabMainPage, "WALK SPEED (200)", CONFIG.EnableWalkSpeed, function(v) CONFIG.EnableWalkSpeed = v; applyWalkSpeed() end)
+makeToggle(tabMainPage, "PROMPT RANGE (E)", CONFIG.EnablePromptRange, function(v) 
+    CONFIG.EnablePromptRange = v
+    if v then pcall(scanAllPrompts) else pcall(restoreAllPrompts) end
+end)
+makeToggle(tabMainPage, "ANTI-RAGDOLL", CONFIG.EnableAntiRagdoll, function(v) 
+    CONFIG.EnableAntiRagdoll = v
+    if not v then arStopHolding(LP.Character) end
+end)
+makeToggle(tabMainPage, "AUTO ZONE 10", CONFIG.EnableZone10Farm, function(v)
+    CONFIG.EnableZone10Farm = v
+    if v then ZONE10_DONE = false; task.spawn(zone10FarmingLoop) end
+end)
 
-local function manualTeleSafe()
+makeAction(tabMainPage, "TELEPORT SAFE ZONE", Color3.fromRGB(160, 0, 255), function()
     if TELEPORT_LOCK then return end
     local char = LP.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
     pcall(function() hrp.Anchored = false end)
     teleportChar(CONFIG.SafeZone.Position)
+end)
+
+-- ADD ELEMENTS (SERVER TAB)
+makeAction(tabServerPage, "REJOIN SERVER NOW", Color3.fromRGB(80, 210, 130), function()
+    pcall(simpleRejoin)
+end)
+
+makeToggle(tabServerPage, "AUTO REJOIN", CONFIG.AutoRejoinOnDisconnect, function(v) 
+    CONFIG.AutoRejoinOnDisconnect = v 
+end)
+
+makeToggle(tabServerPage, "AUTO EXECUTE", CONFIG.EnableAutoExecute, function(v) 
+    CONFIG.EnableAutoExecute = v 
+    if v then tryAutoExecute() end
+end)
+
+-- LOGIC ĐÓNG/MỞ UI
+local isOpen = false
+local function toggleMenu()
+    isOpen = not isOpen
+    local targetWidth = isOpen and 300 or 210
+    local targetHeight = isOpen and 350 or 38
+    local targetCorner = isOpen and UDim.new(0, 16) or UDim.new(1, 0)
+    local targetX = isOpen and (0.5 - 150) or (0.5 - 105)
+    
+    TweenService:Create(mainWrapper, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+        Size = UDim2.fromOffset(targetWidth, targetHeight),
+        Position = UDim2.new(0.5, targetX, 0, 20)
+    }):Play()
+    TweenService:Create(mainCorner, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+        CornerRadius = targetCorner
+    }):Play()
+    
+    if isOpen then
+        TweenService:Create(statsLabel, TweenInfo.new(0.2), { TextTransparency = 1 }):Play()
+        closeBtn.Visible = true
+    else
+        TweenService:Create(statsLabel, TweenInfo.new(0.2), { TextTransparency = 0 }):Play()
+        closeBtn.Visible = false
+    end
+    header.Size = UDim2.fromOffset(targetWidth, 38)
 end
 
--- MAIN tab
-sectionLabel(tabMainPage, "CHỨC NĂNG")
+header.MouseButton1Click:Connect(toggleMenu)
+closeBtn.MouseButton1Click:Connect(function() toggleMenu() end)
 
-toggleBtn(tabMainPage, "AUTO STEAL (LOOP TP)", CONFIG.EnableRagdollTele, C.ok,
-    function(v) CONFIG.EnableRagdollTele = v end)
+-- TRẠNG THÁI & STATS
+local frames = 0
+local lastTime = tick()
+local currentFps = 60
+local currentPing = 0
+local statUpdateTimer = 0
 
-toggleBtn(tabMainPage, "AUTO PICKAXE", CONFIG.EnableAutoPickaxe, C.ok,
-    function(v) CONFIG.EnableAutoPickaxe = v end)
-
-toggleBtn(tabMainPage, "WALK SPEED (MAX 200)", CONFIG.EnableWalkSpeed, C.ok,
-    function(v)
-        CONFIG.EnableWalkSpeed = v
-        applyWalkSpeed()
-    end)
-
-toggleBtn(tabMainPage, "PROMPT RANGE (E)", CONFIG.EnablePromptRange, C.ok,
-    function(v)
-        CONFIG.EnablePromptRange = v
-        if v then
-            pcall(scanAllPrompts)
+RunService.RenderStepped:Connect(function(dt)
+    frames = frames + 1
+    local now = tick()
+    statUpdateTimer = statUpdateTimer + dt
+    
+    if now - lastTime >= 0.5 then
+        currentFps = math.floor(frames / (now - lastTime))
+        frames = 0
+        lastTime = now
+    end
+    
+    if statUpdateTimer >= CONFIG.StatUpdateInterval then
+        statUpdateTimer = 0
+        local ok, ping = pcall(function() return Stats.Network.ServerStatsItem["Data Ping"]:GetValue() end)
+        if ok and ping then currentPing = math.floor(ping) else currentPing = math.floor(LP:GetNetworkPing() * 1000) end
+    end
+    
+    if not isOpen and mainWrapper.Visible then
+        local displayText = ""
+        if STATUS_OVERRIDE and tick() < STATUS_OVERRIDE_TIME then
+            if STATUS_OVERRIDE == "AUTO STEAL" then
+                displayText = "<font color='rgb(255, 100, 100)'>AUTO STEAL</font>"
+            elseif STATUS_OVERRIDE == "AUTO PICKAXE" then
+                displayText = "<font color='rgb(200, 100, 255)'>AUTO PICKAXE</font>"
+            else
+                displayText = STATUS_OVERRIDE
+            end
         else
-            pcall(restoreAllPrompts)
+            local pingColor = currentPing < 80 and "150, 255, 150" or (currentPing < 150 and "255, 255, 150" or "255, 100, 100")
+            displayText = string.format("%d FPS | <font color='rgb(%s)'>%dms</font>", currentFps, pingColor, currentPing)
         end
-    end)
-
-toggleBtn(tabMainPage, "ANTI-RAGDOLL", CONFIG.EnableAntiRagdoll, C.ok,
-    function(v)
-        CONFIG.EnableAntiRagdoll = v
-        if not v then arStopHolding(LP.Character) end
-    end)
-
-toggleBtn(tabMainPage, "AUTO TELE ZONE10", CONFIG.EnableZone10Farm, C.ok,
-    function(v)
-        CONFIG.EnableZone10Farm = v
-        if v then
-            ZONE10_DONE = false
-            task.spawn(zone10FarmingLoop)
-        end
-    end)
-
-actionBtn(tabMainPage, "TELE SAFE ZONE", C.purple, function()
-    task.spawn(manualTeleSafe)
-end)
-
--- SERVER tab
-sectionLabel(tabServerPage, "SERVER")
-
-local infoLbl = Instance.new("TextLabel")
-infoLbl.Size = UDim2.new(1, 0, 0, 62)
-infoLbl.BackgroundColor3 = C.card
-infoLbl.BorderSizePixel = 0
-infoLbl.Font = Enum.Font.Code
-infoLbl.TextSize = 11
-infoLbl.TextColor3 = C.text
-infoLbl.TextWrapped = true
-infoLbl.TextXAlignment = Enum.TextXAlignment.Left
-infoLbl.Text = "jobId: -\nplayers: -\ntarget: -"
-infoLbl.Parent = tabServerPage
-corner(infoLbl, 8); stroke(infoLbl, C.line, 1)
-
-local function refreshServerInfo()
-    local job = tostring(game.JobId):sub(1, 22)
-    local count = #Players:GetPlayers()
-    local tgt = (CONFIG.LastServerJobId ~= "" and CONFIG.LastServerJobId:sub(1, 22)) or "nil"
-    infoLbl.Text = "jobId: " .. job .. "\n" ..
-                   "players: " .. tostring(count) .. "\n" ..
-                   "target: " .. tgt
-end
-
-sectionLabel(tabServerPage, "REJOIN PANEL")
-
-local rejoinUI = Instance.new("Frame")
-rejoinUI.Size = UDim2.fromOffset(200, 120)
-rejoinUI.Position = UDim2.new(0, 20, 0, 200)
-rejoinUI.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-rejoinUI.BorderSizePixel = 0
-rejoinUI.Active = true
-rejoinUI.Visible = true
-rejoinUI.Parent = screen
-corner(rejoinUI, 12); stroke(rejoinUI, C.accent, 2)
-
-local rTitle = Instance.new("TextLabel")
-rTitle.Size = UDim2.new(1, 0, 0, 40)
-rTitle.BackgroundTransparency = 1
-rTitle.Text = "REJOIN"
-rTitle.TextColor3 = C.accent
-rTitle.Font = Enum.Font.GothamBold
-rTitle.TextSize = 14
-rTitle.Parent = rejoinUI
-
-do
-    local dragging, dragStart, startPos
-    rTitle.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true; dragStart = input.Position; startPos = rejoinUI.Position
-        end
-    end)
-    rTitle.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if not dragging then return end
-        if input.UserInputType == Enum.UserInputType.MouseMovement
-        or input.UserInputType == Enum.UserInputType.Touch then
-            local d = input.Position - dragStart
-            rejoinUI.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
-                startPos.Y.Scale, startPos.Y.Offset + d.Y)
-        end
-    end)
-end
-
-local rBtn1 = Instance.new("TextButton")
-rBtn1.Size = UDim2.new(1, -20, 0, 50)
-rBtn1.Position = UDim2.new(0, 10, 0, 55)
-rBtn1.BackgroundColor3 = C.ok
-rBtn1.Text = "REJOIN"
-rBtn1.TextColor3 = Color3.new(1,1,1)
-rBtn1.Font = Enum.Font.GothamBold
-rBtn1.TextSize = 14
-rBtn1.Parent = rejoinUI
-corner(rBtn1, 8)
-
-rBtn1.MouseButton1Click:Connect(function()
-    rBtn1.Text = "..."
-    task.spawn(function()
-        pcall(simpleRejoin)
-    end)
-    task.wait(2)
-    rBtn1.Text = "REJOIN"
-end)
-
-toggleBtn(tabServerPage, "SHOW REJOIN PANEL", true, C.ok, function(v)
-    rejoinUI.Visible = v
-end)
-
-sectionLabel(tabServerPage, "AUTO")
-
-toggleBtn(tabServerPage, "AUTO REJOIN IF DISCONNECT",
-    CONFIG.AutoRejoinOnDisconnect, C.ok,
-    function(v) CONFIG.AutoRejoinOnDisconnect = v end)
-
-toggleBtn(tabServerPage, "AUTO EXECUTE (PLACEID)", CONFIG.EnableAutoExecute, C.ok,
-    function(v)
-        CONFIG.EnableAutoExecute = v
-        if v then tryAutoExecute() end
-    end)
-
-task.spawn(function()
-    while true do
-        pcall(refreshServerInfo)
-        task.wait(2)
+        statsLabel.Text = displayText
     end
 end)
 
-task.spawn(function()
-    while true do
-        pcall(function()
-            pillLabel.Text = string.format(
-                "%s • %s • %dms • %dfps",
-                CONFIG.PillName,
-                STATE.running and "on" or "off",
-                getPingCached(),
-                fps)
-        end)
-        task.wait(CONFIG.StatUpdateInterval)
+-- KÉO THẢ
+local dragging, dragStart, startPos, dragInput
+header.InputBegan:Connect(function(input)
+    if not isOpen then return end 
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true; dragStart = input.Position; startPos = mainWrapper.Position
+        input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+    end
+end)
+header.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and input == dragInput and isOpen then
+        local delta = input.Position - dragStart
+        mainWrapper.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
     end
 end)
 
--- STARTUP
+-- KHỞI CHẠY SCRIPTS NGẦM
 setupAutoRejoin()
 tryAutoExecute()
 
@@ -1259,3 +1356,5 @@ task.spawn(function()
         refreshPromptCache()
     end
 end)
+
+print("[Dynamic Island] Farm Loaded.")
