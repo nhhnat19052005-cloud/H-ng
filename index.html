@@ -1,10 +1,12 @@
--- huongcuto20m — Full Script (Fixed)
+-- huongcuto20m — Full Script (Removed Egg Tween, Optimized)
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local TeleportService  = game:GetService("TeleportService")
 local Stats            = game:GetService("Stats")
 local UserInputService = game:GetService("UserInputService")
 local TweenService     = game:GetService("TweenService")
+local Lighting         = game:GetService("Lighting")
+local Workspace        = game:GetService("Workspace")
 local LP = Players.LocalPlayer
 
 local CONFIG = {
@@ -169,6 +171,35 @@ local function findPickaxeInBackpack()
     return nil
 end
 
+-- ================= CHỐNG LAG & XÓA HIỆU ỨNG =================
+local function clearHeavyEffects()
+    pcall(function()
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 1000000
+        Lighting.Brightness = 1
+        Lighting.EnvironmentDiffuseScale = 0
+        Lighting.EnvironmentSpecularScale = 0
+        
+        for _, v in ipairs(Lighting:GetChildren()) do
+            if v:IsA("BlurEffect") or v:IsA("SunRaysEffect") or v:IsA("ColorCorrectionEffect") 
+            or v:IsA("BloomEffect") or v:IsA("DepthOfFieldEffect") then
+                v:Destroy()
+            end
+        end
+        
+        for _, v in ipairs(Workspace:GetDescendants()) do
+            if v:IsA("ParticleEmitter") or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles") 
+            or v:IsA("Trail") or v:IsA("Beam") or v:IsA("Highlight") then
+                v.Enabled = false
+                if v:IsA("ParticleEmitter") then v.Rate = 0 end
+                if v:IsA("Beam") or v:IsA("Trail") then v.Transparency = NumberSequence.new(1) end
+            elseif v:IsA("PointLight") or v:IsA("SpotLight") or v:IsA("SurfaceLight") then
+                v.Enabled = false
+            end
+        end
+    end)
+end
+
 -- ================= PROMPT & STEAL =================
 local function isStealPrompt(p)
     local n = tostring(p.Name):lower()
@@ -179,16 +210,12 @@ end
 local function refreshPromptCache()
     STEAL_PROMPTS = {}
     for _, d in ipairs(workspace:GetDescendants()) do
-        if d:IsA("ProximityPrompt") and isStealPrompt(d) then
-            STEAL_PROMPTS[d] = true
-        end
+        if d:IsA("ProximityPrompt") and isStealPrompt(d) then STEAL_PROMPTS[d] = true end
     end
 end
 
 workspace.DescendantAdded:Connect(function(d)
-    if d:IsA("ProximityPrompt") and isStealPrompt(d) then
-        STEAL_PROMPTS[d] = true
-    end
+    if d:IsA("ProximityPrompt") and isStealPrompt(d) then STEAL_PROMPTS[d] = true end
 end)
 
 local function firePrompt(prompt)
@@ -236,9 +263,7 @@ end
 
 local function expandPrompt(prompt)
     if not prompt or not prompt:IsA("ProximityPrompt") then return end
-    if not originalPromptDistances[prompt] then
-        originalPromptDistances[prompt] = prompt.MaxActivationDistance
-    end
+    if not originalPromptDistances[prompt] then originalPromptDistances[prompt] = prompt.MaxActivationDistance end
     prompt.MaxActivationDistance = CONFIG.PromptRangeDist
     prompt.RequiresLineOfSight = false
     prompt.HoldDuration = 0
@@ -246,32 +271,24 @@ end
 
 local function restoreAllPrompts()
     for prompt, dist in pairs(originalPromptDistances) do
-        if prompt and prompt.Parent then
-            pcall(function() prompt.MaxActivationDistance = dist end)
-        end
+        if prompt and prompt.Parent then pcall(function() prompt.MaxActivationDistance = dist end) end
     end
     originalPromptDistances = {}
 end
 
 local function scanAllPrompts()
     for _, d in ipairs(workspace:GetDescendants()) do
-        if d:IsA("ProximityPrompt") then
-            expandPrompt(d)
-        end
+        if d:IsA("ProximityPrompt") then expandPrompt(d) end
     end
 end
 
 workspace.DescendantAdded:Connect(function(d)
-    if d:IsA("ProximityPrompt") and CONFIG.EnablePromptRange then
-        expandPrompt(d)
-    end
+    if d:IsA("ProximityPrompt") and CONFIG.EnablePromptRange then expandPrompt(d) end
 end)
 
 local function promptScanLoop()
     while STATE.running do
-        if CONFIG.EnablePromptRange then
-            pcall(scanAllPrompts)
-        end
+        if CONFIG.EnablePromptRange then pcall(scanAllPrompts) end
         task.wait(0.5)
     end
 end
@@ -322,13 +339,9 @@ local function arApply(char)
     local isDown = isRagdollState(st) or hum.PlatformStand
 
     if isDown then
-        if not arSavedPos then
-            arSavedPos = hrp.CFrame
-        end
+        if not arSavedPos then arSavedPos = hrp.CFrame end
         if CONFIG.AnchorOnRagdoll then
-            if not hrp.Anchored then
-                pcall(function() hrp.Anchored = true end)
-            end
+            if not hrp.Anchored then pcall(function() hrp.Anchored = true end) end
             hrp.CFrame = arSavedPos
         else
             if (hrp.Position - arSavedPos.Position).Magnitude > 5 then
@@ -342,21 +355,14 @@ local function arApply(char)
             hum:ChangeState(Enum.HumanoidStateType.GettingUp)
             hum:ChangeState(Enum.HumanoidStateType.Running)
         end)
-        if hum.PlatformStand then
-            pcall(function() hum.PlatformStand = false end)
-        end
+        if hum.PlatformStand then pcall(function() hum.PlatformStand = false end) end
     else
-        if hrp.Anchored and CONFIG.AnchorOnRagdoll then
-            pcall(function() hrp.Anchored = false end)
-        end
+        if hrp.Anchored and CONFIG.AnchorOnRagdoll then pcall(function() hrp.Anchored = false end) end
         arSavedPos = nil
     end
     if hum.WalkSpeed < 1 then
-        if CONFIG.EnableWalkSpeed then
-            hum.WalkSpeed = CONFIG.WalkSpeedValue
-        else
-            hum.WalkSpeed = 16
-        end
+        if CONFIG.EnableWalkSpeed then hum.WalkSpeed = CONFIG.WalkSpeedValue
+        else hum.WalkSpeed = 16 end
     end
 end
 
@@ -435,9 +441,7 @@ local function applyWalkSpeed()
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
     if CONFIG.EnableWalkSpeed then
-        if originalWalkSpeed == nil then
-            originalWalkSpeed = hum.WalkSpeed
-        end
+        if originalWalkSpeed == nil then originalWalkSpeed = hum.WalkSpeed end
         hum.WalkSpeed = CONFIG.WalkSpeedValue
     else
         if originalWalkSpeed ~= nil then
@@ -449,9 +453,7 @@ end
 
 local function walkSpeedLoop()
     while STATE.running do
-        if CONFIG.EnableWalkSpeed then
-            pcall(applyWalkSpeed)
-        end
+        if CONFIG.EnableWalkSpeed then pcall(applyWalkSpeed) end
         task.wait(0.5)
     end
 end
@@ -837,9 +839,7 @@ local function addNeonBorder(targetFrame, thickness)
         borderFrame.Size = UDim2.new(1, thickness*2, 1, thickness*2)
         borderFrame.Position = UDim2.new(0, -thickness, 0, -thickness)
         local targetCorner = targetFrame:FindFirstChildOfClass("UICorner")
-        if targetCorner then
-            corner.CornerRadius = targetCorner.CornerRadius
-        end
+        if targetCorner then corner.CornerRadius = targetCorner.CornerRadius end
     end
     targetFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(update)
     if targetFrame:FindFirstChildOfClass("UICorner") then
@@ -1035,7 +1035,7 @@ tbLayout.Parent = tabBar
 local pages = {}
 local function makeTab(name, order)
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(0.5, -6, 1, -6)
+    b.Size = UDim2.new(1/2, -6, 1, -6)
     b.BackgroundColor3 = Color3.fromRGB(40, 44, 54)
     b.Text = name
     b.TextColor3 = Color3.fromRGB(150, 155, 168)
@@ -1090,6 +1090,7 @@ end
 
 local tabMainBtn, tabMainPage = makeTab("MAIN", 1)
 local tabServerBtn, tabServerPage = makeTab("SERVER", 2)
+
 tabMainPage.Visible = true
 tabMainBtn.BackgroundColor3 = Color3.fromRGB(60, 50, 80)
 tabMainBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -1272,6 +1273,12 @@ makeToggle(tabServerPage, "AUTO EXECUTE", CONFIG.EnableAutoExecute, function(v)
     if v then tryAutoExecute() end
 end)
 
+makeAction(tabServerPage, "BOOST FPS (XÓA SÁNG)", Color3.fromRGB(255, 140, 0), function()
+    clearHeavyEffects()
+    STATUS_OVERRIDE = "ĐÃ BOOST FPS"
+    STATUS_OVERRIDE_TIME = tick() + 3.0
+end)
+
 -- LOGIC ĐÓNG/MỞ UI
 local isOpen = false
 local function toggleMenu()
@@ -1333,6 +1340,8 @@ RunService.RenderStepped:Connect(function(dt)
                 displayText = "<font color='rgb(255, 100, 100)'>AUTO STEAL</font>"
             elseif STATUS_OVERRIDE == "AUTO PICKAXE" then
                 displayText = "<font color='rgb(200, 100, 255)'>AUTO PICKAXE</font>"
+            elseif STATUS_OVERRIDE == "ĐÃ BOOST FPS" then
+                displayText = "<font color='rgb(255, 200, 0)'>FPS BOOSTED</font>"
             else
                 displayText = STATUS_OVERRIDE
             end
@@ -1366,6 +1375,7 @@ end)
 -- KHỞI CHẠY SCRIPTS NGẦM
 setupAutoRejoin()
 tryAutoExecute()
+clearHeavyEffects() -- Chạy ngay lúc đầu để dọn map
 
 task.spawn(function()
     task.wait(CONFIG.StartupDelay)
@@ -1376,7 +1386,10 @@ task.spawn(function()
     task.spawn(autoPickaxeLoop)
     task.spawn(walkSpeedLoop)
     task.spawn(promptScanLoop)
-    task.spawn(zone10FarmingLoop)
+    
+    if CONFIG.EnableZone10Farm then
+        zone10FarmingLoop()
+    end
 end)
 
 task.spawn(function()
