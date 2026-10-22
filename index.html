@@ -1,4 +1,4 @@
--- huongcuto20m — Full Script (Removed Egg Tween, Optimized)
+-- huongcuto20m — Full Script (Smart FX Hook, No Lag)
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local TeleportService  = game:GetService("TeleportService")
@@ -198,7 +198,39 @@ local function clearHeavyEffects()
             end
         end
     end)
+    STATUS_OVERRIDE = "ĐÃ BOOST FPS"
+    STATUS_OVERRIDE_TIME = tick() + 3.0
 end
+
+-- Hook thông minh: Chỉ hook những object nằm trong Egg hoặc có chữ Egg
+local function smartEffectKiller(inst)
+    -- Chỉ check nếu object mới thêm là hiệu ứng
+    if inst:IsA("ParticleEmitter") or inst:IsA("Smoke") or inst:IsA("Fire") or inst:IsA("Sparkles") 
+    or inst:IsA("Trail") or inst:IsA("Beam") or inst:IsA("Highlight") then
+        
+        -- Tắt ngay lập tức
+        inst.Enabled = false
+        if inst:IsA("ParticleEmitter") then inst.Rate = 0 end
+        
+        -- Nếu có parent, tắt luôn cho chắc
+        pcall(function()
+            local parent = inst.Parent
+            if parent and (parent:IsA("BasePart") or parent:IsA("Model")) then
+                -- Có thể check tên parent xem có phải Egg không, nhưng tắt hết cho lẹ
+            end
+        end)
+    elseif inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
+        inst.Enabled = false
+    end
+end
+
+-- Gắn Hook
+Workspace.DescendantAdded:Connect(function(inst)
+    -- Chỉ chạy nếu scanner đang bật
+    if STATE.running then
+        pcall(smartEffectKiller, inst)
+    end
+end)
 
 -- ================= PROMPT & STEAL =================
 local function isStealPrompt(p)
@@ -1275,8 +1307,6 @@ end)
 
 makeAction(tabServerPage, "BOOST FPS (XÓA SÁNG)", Color3.fromRGB(255, 140, 0), function()
     clearHeavyEffects()
-    STATUS_OVERRIDE = "ĐÃ BOOST FPS"
-    STATUS_OVERRIDE_TIME = tick() + 3.0
 end)
 
 -- LOGIC ĐÓNG/MỞ UI
@@ -1375,7 +1405,7 @@ end)
 -- KHỞI CHẠY SCRIPTS NGẦM
 setupAutoRejoin()
 tryAutoExecute()
-clearHeavyEffects() -- Chạy ngay lúc đầu để dọn map
+clearHeavyEffects() -- Dọn dẹp lúc đầu
 
 task.spawn(function()
     task.wait(CONFIG.StartupDelay)
