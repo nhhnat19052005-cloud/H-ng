@@ -1,4 +1,4 @@
--- huongcuto20m — Full Script (Smart FX Hook, No Lag)
+-- huongcuto20m — Full Script (Fixed, Zone 11)
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local TeleportService  = game:GetService("TeleportService")
@@ -36,9 +36,9 @@ local CONFIG = {
     EnablePromptRange   = false,
     PromptRangeDist     = 50,
     SafeZone            = CFrame.new(-56.86, 3.50, 0.91),
-    EnableZone10Farm    = true,
-    Zone10Pos           = Vector3.new(-2873.74, 3.50, 1.24),
-    Zone10VerifyDist    = 30,
+    EnableZone11Farm    = true,
+    Zone11Pos           = Vector3.new(-3881.7, 4.1, 1.0),
+    Zone11VerifyDist    = 30,
     RespawnTimeout      = 5,
     AutoRejoinOnDisconnect = true,
     LastServerJobId     = "",
@@ -52,7 +52,7 @@ local RAGDOLL_EVENT = false
 local TELEPORT_LOCK = false
 local REJOINING = false
 local SCRIPTS_STARTED = false
-local ZONE10_DONE = false
+local ZONE11_DONE = false
 local arHoldingPos = false
 local arSavedPos = nil
 local arIsMoving = false
@@ -202,31 +202,17 @@ local function clearHeavyEffects()
     STATUS_OVERRIDE_TIME = tick() + 3.0
 end
 
--- Hook thông minh: Chỉ hook những object nằm trong Egg hoặc có chữ Egg
 local function smartEffectKiller(inst)
-    -- Chỉ check nếu object mới thêm là hiệu ứng
     if inst:IsA("ParticleEmitter") or inst:IsA("Smoke") or inst:IsA("Fire") or inst:IsA("Sparkles") 
     or inst:IsA("Trail") or inst:IsA("Beam") or inst:IsA("Highlight") then
-        
-        -- Tắt ngay lập tức
         inst.Enabled = false
         if inst:IsA("ParticleEmitter") then inst.Rate = 0 end
-        
-        -- Nếu có parent, tắt luôn cho chắc
-        pcall(function()
-            local parent = inst.Parent
-            if parent and (parent:IsA("BasePart") or parent:IsA("Model")) then
-                -- Có thể check tên parent xem có phải Egg không, nhưng tắt hết cho lẹ
-            end
-        end)
     elseif inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
         inst.Enabled = false
     end
 end
 
--- Gắn Hook
 Workspace.DescendantAdded:Connect(function(inst)
-    -- Chỉ chạy nếu scanner đang bật
     if STATE.running then
         pcall(smartEffectKiller, inst)
     end
@@ -689,12 +675,12 @@ local function autoPickaxeLoop()
     end
 end
 
--- ================= ZONE 10 =================
-local function isAtZone10()
+-- ================= ZONE 11 =================
+local function isAtZone11()
     local hrp = getHRP(LP.Character)
     if not hrp then return false end
-    local d = (hrp.Position - CONFIG.Zone10Pos).Magnitude
-    return d <= CONFIG.Zone10VerifyDist
+    local d = (hrp.Position - CONFIG.Zone11Pos).Magnitude
+    return d <= CONFIG.Zone11VerifyDist
 end
 
 local function resetCharacter()
@@ -723,7 +709,7 @@ local function waitForRespawn(timeout)
     return false
 end
 
-local function runZone10Once()
+local function runZone11Once()
     TELEPORT_LOCK = true
     arHoldingPos = false
     arSavedPos = nil
@@ -742,28 +728,28 @@ local function runZone10Once()
         return false
     end
     pcall(function() hrp.Anchored = false end)
-    teleportChar(CONFIG.Zone10Pos)
+    teleportChar(CONFIG.Zone11Pos)
     task.wait(0.1)
-    teleportChar(CONFIG.Zone10Pos)
+    teleportChar(CONFIG.Zone11Pos)
     TELEPORT_LOCK = false
     return true
 end
 
-local function zone10FarmingLoop()
-    if CONFIG.EnableZone10Farm and not ZONE10_DONE then
+local function zone11FarmingLoop()
+    if CONFIG.EnableZone11Farm and not ZONE11_DONE then
         while not LP.Character or not LP.Character:FindFirstChild("HumanoidRootPart") do
             task.wait(0.2)
         end
         while TELEPORT_LOCK do task.wait(0.2) end
-        if isAtZone10() then
-            ZONE10_DONE = true
+        if isAtZone11() then
+            ZONE11_DONE = true
         else
-            local ok = pcall(runZone10Once)
+            local ok = pcall(runZone11Once)
             task.wait(0.5)
-            if ok and isAtZone10() then
-                ZONE10_DONE = true
+            if ok and isAtZone11() then
+                ZONE11_DONE = true
             else
-                ZONE10_DONE = false
+                ZONE11_DONE = false
             end
         end
     end
@@ -1277,9 +1263,9 @@ makeToggle(tabMainPage, "ANTI-RAGDOLL", CONFIG.EnableAntiRagdoll, function(v)
     CONFIG.EnableAntiRagdoll = v
     if not v then arStopHolding(LP.Character) end
 end)
-makeToggle(tabMainPage, "AUTO ZONE 10", CONFIG.EnableZone10Farm, function(v)
-    CONFIG.EnableZone10Farm = v
-    if v then ZONE10_DONE = false; task.spawn(zone10FarmingLoop) end
+makeToggle(tabMainPage, "AUTO ZONE 11", CONFIG.EnableZone11Farm, function(v)
+    CONFIG.EnableZone11Farm = v
+    if v then ZONE11_DONE = false; task.spawn(zone11FarmingLoop) end
 end)
 
 makeAction(tabMainPage, "TELEPORT SAFE ZONE", Color3.fromRGB(160, 0, 255), function()
@@ -1417,8 +1403,8 @@ task.spawn(function()
     task.spawn(walkSpeedLoop)
     task.spawn(promptScanLoop)
     
-    if CONFIG.EnableZone10Farm then
-        zone10FarmingLoop()
+    if CONFIG.EnableZone11Farm then
+        zone11FarmingLoop()
     end
 end)
 
