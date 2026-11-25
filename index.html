@@ -1,1420 +1,2212 @@
--- huongcuto20m — Full Script (Fixed, Zone 11)
-local Players          = game:GetService("Players")
-local RunService       = game:GetService("RunService")
-local TeleportService  = game:GetService("TeleportService")
-local Stats            = game:GetService("Stats")
-local UserInputService = game:GetService("UserInputService")
-local TweenService     = game:GetService("TweenService")
-local Lighting         = game:GetService("Lighting")
-local Workspace        = game:GetService("Workspace")
-local LP = Players.LocalPlayer
+-- system ore💎
+-- ESP ore (highlight + nhãn + line) cho 5 loại quặng, chỉ quét trong biome Cosmic Sanctuary, auto pickaxe, auto farm ore, server ít người, quick key. PC và mobile.
+-- tự lưu config vào file system_ore_config.json (cần executor có writefile/readfile)
+-- rủi ro: Roblox có thể ban nếu bị phát hiện, nên test trên acc phụ.
 
-local CONFIG = {
-    EnableAntiRagdoll   = false,
-    AntiRagdollInterval = 0.1,
-    BlockRemote         = true,
-    RestoreMotors       = true,
-    AnchorOnRagdoll     = true,
-    RemoveForces        = true,
-    MoveSpeed           = 150,
-    InputThreshold      = 0.5,
-    EnableRagdollTele   = true,
-    RagdollSpamTime1    = 1.0,
-    RagdollSpamTime     = 2.5,
-    RagdollSpamInterval = 0.1,
-    TeleportInterval    = 1.0,
-    RagdollStayTime     = 0.5,
-    TeleportCooldown    = 0.5,
-    PromptRange         = 30,
-    EnableAutoPickaxe   = true,
-    PickaxeInterval     = 0.3,
-    EnableWalkSpeed     = false,
-    WalkSpeedValue      = 200,
-    EnableAutoExecute   = false,
-    AutoExecutePlaceId  = 0,
-    AutoExecuteUrl      = "https://raw.githubusercontent.com/nhhnat19052005-cloud/H-ng/refs/heads/main/index.html",
-    EnablePromptRange   = false,
-    PromptRangeDist     = 50,
-    SafeZone            = CFrame.new(-56.86, 3.50, 0.91),
-    EnableZone11Farm    = true,
-    Zone11Pos           = Vector3.new(-3881.7, 4.1, 1.0),
-    Zone11VerifyDist    = 30,
-    RespawnTimeout      = 5,
-    AutoRejoinOnDisconnect = true,
-    LastServerJobId     = "",
-    PillName            = "huongcuto20m",
-    StatUpdateInterval  = 3,
-    StartupDelay        = 5,
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local UIS = game:GetService("UserInputService")
+local GuiService = game:GetService("GuiService")
+local Stats = game:GetService("Stats")
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
+
+local LocalPlayer = Players.LocalPlayer
+local SCRIPT_NAME = "system ore💎"
+
+-- ===== cấu hình =====
+local MAX_TRACKED = 300
+local MAX_PER_KEY = 60
+local QUEUE_BUDGET = 400
+local RESCAN_INTERVAL = 3
+local UI_INTERVAL = 0.25
+local EQUIP_INTERVAL = 0.5
+local NOTIF_DURATION = 1
+local DRAG_THRESHOLD = 6
+local NOTIF_WIDTH = 240
+local ICON_SIZE = 52
+local EXPANDED_VEC = Vector2.new(270, 412)
+local SIZE_MIN, SIZE_MAX, SIZE_STEP = 0.1, 2.0, 0.1
+local DIST_MIN, DIST_MAX, DIST_STEP = 10, 500, 10
+local DIST_DEFAULT = 300
+local LINE_WIDTH = 0.18
+local WALK_REACH = 6
+local WALK_STUCK_TIME = 2
+local WALK_GIVEUP = 12
+local WALK_SKIP_TIME = 10
+local WAIT_RADIUS = 8
+local WAIT_ANG_SPEED = 0.6
+local QUICK_MAX = 3
+local CFG_FILE = "system_ore_config.json"
+
+-- biome: tên model/folder/part chứa chữ này (bỏ khoảng trắng, không phân biệt hoa thường) là vùng quét
+local BIOME_KEYWORD = "Cosmic Sanctuary"
+local BIOME_SCAN_INTERVAL = 10
+local BIOME_PAD_Y = 50
+
+-- server ít người: số người tối đa để chấp nhận (1 = chỉ mình bạn)
+local HOP_MAX_PLAYERS = 2
+local HOP_CHECK = 5
+local HOP_COOLDOWN = 20
+-- link raw của script, để tự chạy lại sau khi hop nếu executor có queue_on_teleport. Để "" nếu không dùng.
+local REQUEUE_URL = ""
+
+-- chỉ 5 loại quặng này
+local ORES = {
+	{key = "secret", label = "Secret Ore", color = Color3.fromRGB(192, 194, 200)},
+	{key = "celestial", label = "Celestial Ore", color = Color3.fromRGB(40, 200, 110)},
+	{key = "inferno", label = "Inferno Ore", color = Color3.fromRGB(255, 95, 30)},
+	{key = "void", label = "Void Ore", color = Color3.fromRGB(170, 85, 255)},
+	{key = "cosmic", label = "Cosmic Ore", color = Color3.fromRGB(90, 190, 255)},
 }
 
-local STATE = { running = true }
-local RAGDOLL_EVENT = false
-local TELEPORT_LOCK = false
-local REJOINING = false
-local SCRIPTS_STARTED = false
-local ZONE11_DONE = false
-local arHoldingPos = false
-local arSavedPos = nil
-local arIsMoving = false
-local arKeyState = { W=false, A=false, S=false, D=false }
-local STEAL_PROMPTS = {}
-local originalWalkSpeed = nil
-local AUTO_EXECUTED = false
-local originalPromptDistances = {}
-
-local STATUS_OVERRIDE = nil
-local STATUS_OVERRIDE_TIME = 0
-local GAME_SWING_BTN = nil
-local HAS_CLICKED_GAME_BTN = false
-
-local HAS_ASYNC = TeleportService.TeleportAsync ~= nil
-local HAS_OPTS  = TeleportOptions ~= nil
-
--- ================= HÀM HỖ TRỢ CHUNG =================
-local function charOrigin()
-    local char = LP.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    return hrp and hrp.Position or nil
+-- thứ tự đi quặng: số càng nhỏ đi trước, chỉnh bằng ▲▼ ở tab Main
+local oreOrder = {}
+for i, o in ipairs(ORES) do
+	oreOrder[i] = o.key
 end
 
-local function getHRP(char)
-    return char and char:FindFirstChild("HumanoidRootPart")
+local function oreRank(key)
+	for i, k in ipairs(oreOrder) do
+		if k == key then
+			return i
+		end
+	end
+	return #oreOrder + 1
 end
 
-local function hasGroundNear(char, hrp, dist)
-    if not char or not hrp then return false end
-    dist = dist or 20
-    local ray = Ray.new(hrp.Position, Vector3.new(0, -dist, 0))
-    local hit = workspace:FindPartOnRay(ray, char)
-    return hit ~= nil
+local ON_COLOR = Color3.fromRGB(70, 210, 130)
+local OFF_COLOR = Color3.fromRGB(60, 60, 68)
+
+local BOUNCE = TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local FAST = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local SMOOTH = TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+
+local RAINBOW = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),
+	ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 255, 0)),
+	ColorSequenceKeypoint.new(0.33, Color3.fromRGB(0, 255, 0)),
+	ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 255, 255)),
+	ColorSequenceKeypoint.new(0.67, Color3.fromRGB(0, 0, 255)),
+	ColorSequenceKeypoint.new(0.83, Color3.fromRGB(255, 0, 255)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 0)),
+})
+
+-- ===== helper =====
+local function getContainer()
+	local ok, hui = pcall(gethui)
+	if ok and typeof(hui) == "Instance" then
+		return hui
+	end
+	local ok2, cg = pcall(function()
+		return game:GetService("CoreGui")
+	end)
+	if ok2 and cg then
+		return cg
+	end
+	return LocalPlayer:WaitForChild("PlayerGui")
 end
 
-local function isRagdollState(st)
-    return st == Enum.HumanoidStateType.Ragdoll
-        or st == Enum.HumanoidStateType.FallingDown
-        or st == Enum.HumanoidStateType.Physics
+local function tween(obj, info, props)
+	local t = TweenService:Create(obj, info, props)
+	t:Play()
+	return t
 end
 
-local function isRagdolled()
-    local char = LP.Character
-    if not char then return false end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return false end
-    if hum.PlatformStand then return true end
-    if isRagdollState(hum:GetState()) then return true end
-    if hum.Health <= 0 then return true end
-    return false
+local function toHex(c)
+	return string.format("#%02X%02X%02X",
+		math.floor(c.R * 255 + 0.5),
+		math.floor(c.G * 255 + 0.5),
+		math.floor(c.B * 255 + 0.5))
 end
 
-local function teleportChar(pos)
-    local char = LP.Character
-    if not char then return false end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return false end
-    pcall(function() hrp.Anchored = false end)
-    local cf = CFrame.new(pos, pos + hrp.CFrame.LookVector)
-    pcall(function() char:PivotTo(cf) end)
-    pcall(function() hrp.CFrame = cf end)
-    return true
+local function mkLabel(parent, props)
+	local l = Instance.new("TextLabel")
+	l.BackgroundTransparency = 1
+	l.Font = Enum.Font.GothamMedium
+	l.TextColor3 = Color3.fromRGB(255, 255, 255)
+	l.TextSize = 13
+	l.TextXAlignment = Enum.TextXAlignment.Left
+	l.TextTruncate = Enum.TextTruncate.AtEnd
+	for k, v in pairs(props) do
+		l[k] = v
+	end
+	l.Parent = parent
+	return l
 end
 
-local function removeForces(hrp)
-    if not CONFIG.RemoveForces or not hrp then return end
-    for _, d in ipairs(hrp:GetChildren()) do
-        if d:IsA("LinearVelocity") or d:IsA("BodyVelocity")
-            or d:IsA("BodyPosition") or d:IsA("BodyGyro")
-            or d:IsA("BodyForce") or d:IsA("BodyThrust")
-            or d:IsA("BodyAngularVelocity") or d:IsA("VectorForce")
-            or d:IsA("Torque") or d:IsA("AngularVelocity") then
-            pcall(function() d:Destroy() end)
-        end
-    end
+-- tập các UIGradient cầu vồng, xoay mỗi frame
+local rainbowGrads = {}
+local function rainbowStroke(parent, thickness, transparency)
+	local s = Instance.new("UIStroke")
+	s.Color = Color3.fromRGB(255, 255, 255)
+	s.Thickness = thickness
+	s.Transparency = transparency or 0
+	s.Parent = parent
+	local g = Instance.new("UIGradient")
+	g.Color = RAINBOW
+	g.Parent = s
+	rainbowGrads[g] = true
+	return s, g
 end
 
-local function zeroVelocity(hrp)
-    if not hrp then return end
-    pcall(function()
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-        hrp.Velocity = Vector3.zero
-        hrp.RotVelocity = Vector3.zero
-    end)
+local function rainbowFill(parent)
+	local g = Instance.new("UIGradient")
+	g.Color = RAINBOW
+	g.Parent = parent
+	rainbowGrads[g] = true
+	return g
 end
 
-local function findPickaxe()
-    local char = LP.Character
-    if not char then return nil end
-    for _, tool in ipairs(char:GetChildren()) do
-        if tool:IsA("Tool") then
-            local n = tool.Name:lower()
-            if n:find("pickaxe") or n:find("pick") or n:find("axe")
-                or n:find("hammer") or n:find("shovel") then
-                return tool
-            end
-        end
-    end
-    return nil
+local function getPing()
+	local ok, v = pcall(function()
+		return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+	end)
+	if ok and typeof(v) == "number" then
+		return math.floor(v + 0.5)
+	end
+	return nil
 end
 
-local function findPickaxeInBackpack()
-    local bp = LP:FindFirstChildOfClass("Backpack")
-    if not bp then return nil end
-    for _, tool in ipairs(bp:GetChildren()) do
-        if tool:IsA("Tool") then
-            local n = tool.Name:lower()
-            if n:find("pickaxe") or n:find("pick") or n:find("axe")
-                or n:find("hammer") or n:find("shovel") then
-                return tool
-            end
-        end
-    end
-    return nil
+local function getViewport()
+	local cam = workspace.CurrentCamera
+	return (cam and cam.ViewportSize) or Vector2.new(400, 800)
 end
 
--- ================= CHỐNG LAG & XÓA HIỆU ỨNG =================
-local function clearHeavyEffects()
-    pcall(function()
-        Lighting.GlobalShadows = false
-        Lighting.FogEnd = 1000000
-        Lighting.Brightness = 1
-        Lighting.EnvironmentDiffuseScale = 0
-        Lighting.EnvironmentSpecularScale = 0
-        
-        for _, v in ipairs(Lighting:GetChildren()) do
-            if v:IsA("BlurEffect") or v:IsA("SunRaysEffect") or v:IsA("ColorCorrectionEffect") 
-            or v:IsA("BloomEffect") or v:IsA("DepthOfFieldEffect") then
-                v:Destroy()
-            end
-        end
-        
-        for _, v in ipairs(Workspace:GetDescendants()) do
-            if v:IsA("ParticleEmitter") or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles") 
-            or v:IsA("Trail") or v:IsA("Beam") or v:IsA("Highlight") then
-                v.Enabled = false
-                if v:IsA("ParticleEmitter") then v.Rate = 0 end
-                if v:IsA("Beam") or v:IsA("Trail") then v.Transparency = NumberSequence.new(1) end
-            elseif v:IsA("PointLight") or v:IsA("SpotLight") or v:IsA("SurfaceLight") then
-                v.Enabled = false
-            end
-        end
-    end)
-    STATUS_OVERRIDE = "ĐÃ BOOST FPS"
-    STATUS_OVERRIDE_TIME = tick() + 3.0
+local function topInset()
+	return GuiService:GetGuiInset().Y
 end
 
-local function smartEffectKiller(inst)
-    if inst:IsA("ParticleEmitter") or inst:IsA("Smoke") or inst:IsA("Fire") or inst:IsA("Sparkles") 
-    or inst:IsA("Trail") or inst:IsA("Beam") or inst:IsA("Highlight") then
-        inst.Enabled = false
-        if inst:IsA("ParticleEmitter") then inst.Rate = 0 end
-    elseif inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
-        inst.Enabled = false
-    end
+local function getPart(inst)
+	if inst:IsA("BasePart") then
+		return inst
+	end
+	if inst.PrimaryPart then
+		return inst.PrimaryPart
+	end
+	return inst:FindFirstChildWhichIsA("BasePart", true)
 end
 
-Workspace.DescendantAdded:Connect(function(inst)
-    if STATE.running then
-        pcall(smartEffectKiller, inst)
-    end
+local function getRoot()
+	local char = LocalPlayer.Character
+	return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function distanceTo(part)
+	local root = getRoot()
+	if not (root and part and part.Parent) then
+		return nil
+	end
+	return (root.Position - part.Position).Magnitude
+end
+
+local function isOwn(inst)
+	local p = inst
+	while p and p ~= workspace do
+		if string.sub(p.Name, 1, 6) == "SysOre" then
+			return true
+		end
+		p = p.Parent
+	end
+	return false
+end
+
+-- kiểm tra tên instance có phải do script tạo không
+local function isOwnName(x)
+	return string.sub(x.Name, 1, 6) == "SysOre"
+end
+
+-- ===== nhận diện: chỉ các quặng đã cho =====
+local function norm(s)
+	return string.lower((string.gsub(s, "[%s_%-]", "")))
+end
+
+local function matchOre(text)
+	if type(text) ~= "string" then
+		return nil
+	end
+	local s = norm(text)
+	if not string.find(s, "ore", 1, true) then
+		return nil
+	end
+	for _, o in ipairs(ORES) do
+		if string.find(s, o.key, 1, true) then
+			return o
+		end
+	end
+	return nil
+end
+
+local function oreTarget(inst)
+	local best, ore = nil, nil
+	local cur = inst
+	while cur and cur ~= workspace do
+		if cur:IsA("BasePart") or cur:IsA("Model") then
+			local o = matchOre(cur.Name)
+			if o then
+				best, ore = cur, o
+			end
+		end
+		cur = cur.Parent
+	end
+	return best, ore
+end
+
+local function oreFromLabel(bb)
+	if string.sub(bb.Name, 1, 6) == "SysOre" then
+		return nil
+	end
+	local anchor = bb.Adornee
+	if not anchor then
+		local p = bb.Parent
+		if p and p:IsA("Attachment") then
+			p = p.Parent
+		end
+		if p and (p:IsA("BasePart") or p:IsA("Model")) then
+			anchor = p
+		end
+	end
+	if not anchor then
+		return nil
+	end
+	for _, d in ipairs(bb:GetDescendants()) do
+		if d:IsA("TextLabel") or d:IsA("TextButton") then
+			local o = matchOre(d.Text)
+			if o then
+				local t = oreTarget(anchor)
+				return t or anchor, o
+			end
+		end
+	end
+	return nil
+end
+
+local function resolveOre(inst)
+	if isOwn(inst) then
+		return nil
+	end
+	if inst:IsA("BillboardGui") then
+		return oreFromLabel(inst)
+	end
+	if inst:IsA("TextLabel") or inst:IsA("TextButton") then
+		local bb = inst:FindFirstAncestorWhichIsA("BillboardGui")
+		if bb then
+			return oreFromLabel(bb)
+		end
+		return nil
+	end
+	return oreTarget(inst)
+end
+
+-- ===== trạng thái =====
+local ensureRowsRefresh, notify, placeNotif, sizeValLbl, distValLbl
+local setWaitPos
+local waitLbl = nil
+local biomeLbl = nil
+local pills = {}
+local FUNC_BY_ID = {}
+local quickBar = nil
+
+local alive = true
+local espOn = false
+local scanDone = false
+local autoEquipOn = true
+local walkOn = false
+local hopOn = false
+local hopping = false
+local lastHopAt = -HOP_COOLDOWN
+local espScale = 1.0
+local maxDist = DIST_DEFAULT
+local waitPos = nil -- Vector3: chỗ đứng đợi khi không có quặng
+local waitAngle = 0 -- góc hiện tại khi đi vòng quanh chỗ đợi
+local restoring = true -- chặn ghi config trong lúc khôi phục
+local rootAtt = nil
+local statusText = "tắt"
+local fps, msValue, ping = 0, 0, nil
+local conns = {}
+
+-- biome: CFrame tâm và kích thước vùng quét
+local biomeCF, biomeSize, biomeName = nil, nil, nil
+
+local known, knownCount, knownTotal = {}, {}, 0
+for _, o in ipairs(ORES) do
+	knownCount[o.key] = 0
+end
+local tracked, trackedCount = {}, 0
+local trackedPerKey = {}
+local priority = {}
+local rows = {}
+local queue, queued, qHead, qTail = {}, {}, 1, 0
+
+local function allowed(key)
+	if next(priority) == nil then
+		return true
+	end
+	return priority[key] == true
+end
+
+-- ===== config tự lưu =====
+local function saveConfig()
+	if restoring or typeof(writefile) ~= "function" then
+		return
+	end
+	local pinList = {}
+	for id in pairs(pills) do
+		table.insert(pinList, id)
+	end
+	local pri = {}
+	for k, v in pairs(priority) do
+		if v then
+			pri[k] = true
+		end
+	end
+	local data = {
+		order = oreOrder,
+		priority = pri,
+		esp = espOn,
+		walk = walkOn,
+		hop = hopOn,
+		auto = autoEquipOn,
+		scale = espScale,
+		dist = maxDist,
+		pins = pinList,
+	}
+	if waitPos then
+		data.wait = {x = waitPos.X, y = waitPos.Y, z = waitPos.Z}
+	end
+	pcall(function()
+		writefile(CFG_FILE, HttpService:JSONEncode(data))
+	end)
+end
+
+local function loadConfig()
+	if typeof(isfile) ~= "function" or typeof(readfile) ~= "function" then
+		return nil
+	end
+	local ok, res = pcall(function()
+		if not isfile(CFG_FILE) then
+			return nil
+		end
+		return HttpService:JSONDecode(readfile(CFG_FILE))
+	end)
+	if ok and type(res) == "table" then
+		return res
+	end
+	return nil
+end
+
+-- đọc config cũ vào biến; bật lại toggle sẽ làm sau khi GUI dựng xong
+local wantEsp, wantWalk, wantHop, wantPins = false, false, false, {}
+do
+	local saved = loadConfig()
+	if saved then
+		local ORE_KEYS = {}
+		for _, o in ipairs(ORES) do
+			ORE_KEYS[o.key] = true
+		end
+
+		if type(saved.order) == "table" then
+			local seen, order = {}, {}
+			for _, k in ipairs(saved.order) do
+				if ORE_KEYS[k] and not seen[k] then
+					seen[k] = true
+					table.insert(order, k)
+				end
+			end
+			for _, o in ipairs(ORES) do
+				if not seen[o.key] then
+					table.insert(order, o.key)
+				end
+			end
+			oreOrder = order
+		end
+
+		if type(saved.priority) == "table" then
+			for k, v in pairs(saved.priority) do
+				if ORE_KEYS[k] and v == true then
+					priority[k] = true
+				end
+			end
+		end
+
+		if type(saved.scale) == "number" then
+			espScale = math.clamp(saved.scale, SIZE_MIN, SIZE_MAX)
+		end
+		if type(saved.dist) == "number" then
+			maxDist = math.clamp(saved.dist, DIST_MIN, DIST_MAX)
+		end
+		if type(saved.auto) == "boolean" then
+			autoEquipOn = saved.auto
+		end
+		wantEsp = saved.esp == true
+		wantWalk = saved.walk == true
+		wantHop = saved.hop == true
+
+		if type(saved.pins) == "table" then
+			for _, id in ipairs(saved.pins) do
+				if type(id) == "string" then
+					table.insert(wantPins, id)
+				end
+			end
+		end
+
+		local w = saved.wait
+		if type(w) == "table" and type(w.x) == "number"
+			and type(w.y) == "number" and type(w.z) == "number" then
+			waitPos = Vector3.new(w.x, w.y, w.z)
+		end
+	end
+end
+
+-- ===== biome: tìm vùng Cosmic Sanctuary, chỉ quặng nằm trong vùng này mới được quét =====
+local function findBiome()
+	local kw = norm(BIOME_KEYWORD)
+	local bestCF, bestSize, bestName, bestVol = nil, nil, nil, -1
+	for _, d in ipairs(workspace:GetDescendants()) do
+		if d:IsA("Model") or d:IsA("Folder") or d:IsA("BasePart") then
+			local n = norm(d.Name)
+			if string.find(n, kw, 1, true) and not string.find(n, "ore", 1, true)
+				and not isOwn(d) then
+				local cf, size
+				if d:IsA("BasePart") then
+					cf, size = d.CFrame, d.Size
+				elseif d:IsA("Model") then
+					local ok, c, s = pcall(function()
+						return d:GetBoundingBox()
+					end)
+					if ok then
+						cf, size = c, s
+					end
+				end
+				if cf and size then
+					local vol = size.X * size.Y * size.Z
+					if vol > bestVol then
+						bestCF, bestSize, bestName, bestVol = cf, size, d.Name, vol
+					end
+				end
+			end
+		end
+	end
+	return bestCF, bestSize, bestName
+end
+
+local function inBiome(pos)
+	if not (biomeCF and biomeSize and pos) then
+		return false
+	end
+	local rel = biomeCF:PointToObjectSpace(pos)
+	local h = biomeSize / 2
+	return math.abs(rel.X) <= h.X
+		and math.abs(rel.Y) <= h.Y + BIOME_PAD_Y
+		and math.abs(rel.Z) <= h.Z
+end
+
+-- ===== line (đi cùng ESP ore) =====
+local function refreshRootAtt()
+	local root = getRoot()
+	if not root then
+		return nil
+	end
+	if not rootAtt or rootAtt.Parent ~= root then
+		if rootAtt then
+			pcall(function() rootAtt:Destroy() end)
+		end
+		rootAtt = Instance.new("Attachment")
+		rootAtt.Name = "SysOreRootAtt"
+		rootAtt.Parent = root
+	end
+	return rootAtt
+end
+
+local function attachLine(e)
+	if e.beam then
+		return
+	end
+	local ra = refreshRootAtt()
+	if not ra then
+		return
+	end
+	local att1 = Instance.new("Attachment")
+	att1.Name = "SysOreAtt"
+	att1.Parent = e.part
+
+	local beam = Instance.new("Beam")
+	beam.Name = "SysOreBeam"
+	beam.Attachment0 = ra
+	beam.Attachment1 = att1
+	beam.Color = ColorSequence.new(e.ore.color)
+	beam.Width0 = LINE_WIDTH
+	beam.Width1 = LINE_WIDTH
+	beam.FaceCamera = true
+	beam.LightEmission = 1
+	beam.Transparency = NumberSequence.new(0.25)
+	beam.Enabled = e.inRange ~= false
+	beam.Parent = e.part
+
+	e.att1 = att1
+	e.beam = beam
+end
+
+local function detachLine(e)
+	pcall(function()
+		if e.beam then e.beam:Destroy() end
+		if e.att1 then e.att1:Destroy() end
+	end)
+	e.beam = nil
+	e.att1 = nil
+end
+
+-- ===== highlight + nhãn =====
+local function restoreGameTags(e)
+	for _, g in ipairs(e.hidden or {}) do
+		pcall(function() g.Enabled = true end)
+	end
+	e.hidden = {}
+end
+
+local function untrack(inst)
+	local e = tracked[inst]
+	if not e then
+		return
+	end
+	tracked[inst] = nil
+	trackedCount = trackedCount - 1
+	trackedPerKey[e.ore.key] = math.max(0, (trackedPerKey[e.ore.key] or 1) - 1)
+	detachLine(e)
+	restoreGameTags(e)
+	pcall(function()
+		if e.hl then e.hl:Destroy() end
+		if e.bb then e.bb:Destroy() end
+	end)
+end
+
+local function track(target, ore)
+	if tracked[target] or trackedCount >= MAX_TRACKED then
+		return
+	end
+	if (trackedPerKey[ore.key] or 0) >= MAX_PER_KEY then
+		return
+	end
+	-- nếu quặng cha đã được theo dõi thì bỏ qua, tránh 2 mục cho 1 quặng
+	local p = target.Parent
+	while p and p ~= workspace do
+		if tracked[p] then
+			return
+		end
+		p = p.Parent
+	end
+	-- nếu có mục con đang theo dõi thì gỡ đi, chỉ giữ mục cha
+	for t in pairs(tracked) do
+		if t ~= target and t:IsDescendantOf(target) then
+			untrack(t)
+		end
+	end
+	local part = getPart(target)
+	if not part then
+		return
+	end
+
+	local hl = Instance.new("Highlight")
+	hl.Name = "SysOreHL"
+	hl.Adornee = target
+	hl.FillColor = ore.color
+	hl.OutlineColor = ore.color
+	hl.FillTransparency = 0.45
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Parent = target
+
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "SysOreTag"
+	bb.Adornee = part
+	bb.Size = UDim2.fromOffset(140 * espScale, 22 * espScale)
+	bb.StudsOffset = Vector3.new(0, 2.5, 0)
+	bb.AlwaysOnTop = true
+	bb.Parent = part
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.fromScale(1, 1)
+	lbl.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
+	lbl.BackgroundTransparency = 0.25
+	lbl.Font = Enum.Font.GothamBold
+	lbl.TextSize = math.max(6, math.floor(13 * espScale + 0.5))
+	lbl.TextColor3 = ore.color
+	lbl.TextStrokeTransparency = 0.5
+	lbl.Text = ore.label
+	lbl.Parent = bb
+	local lc = Instance.new("UICorner")
+	lc.CornerRadius = UDim.new(0, 8)
+	lc.Parent = lbl
+
+	local e = {hl = hl, bb = bb, lbl = lbl, part = part, ore = ore,
+		inRange = true, target = target, hidden = {}}
+	tracked[target] = e
+	trackedCount = trackedCount + 1
+	trackedPerKey[ore.key] = (trackedPerKey[ore.key] or 0) + 1
+
+	if espOn then
+		attachLine(e)
+	end
+end
+
+local function applyScale()
+	for _, e in pairs(tracked) do
+		e.bb.Size = UDim2.fromOffset(140 * espScale, 22 * espScale)
+		e.lbl.TextSize = math.max(6, math.floor(13 * espScale + 0.5))
+	end
+end
+
+local function setScale(delta)
+	espScale = math.clamp(math.floor((espScale + delta) * 10 + 0.5) / 10, SIZE_MIN, SIZE_MAX)
+	if sizeValLbl then
+		sizeValLbl.Text = string.format("%.1fx", espScale)
+	end
+	applyScale()
+	saveConfig()
+end
+
+local function setInRange(e, on)
+	if e.inRange == on then
+		return
+	end
+	e.inRange = on
+	if e.hl then e.hl.Enabled = on end
+	if e.bb then e.bb.Enabled = on end
+	if e.beam then e.beam.Enabled = on end
+end
+
+local function setDist(delta)
+	maxDist = math.clamp(maxDist + delta, DIST_MIN, DIST_MAX)
+	if distValLbl then
+		distValLbl.Text = maxDist .. "m"
+	end
+	saveConfig()
+end
+
+local function syncTracked()
+	for inst, e in pairs(tracked) do
+		if not espOn or not allowed(e.ore.key) then
+			untrack(inst)
+		end
+	end
+	if not espOn then
+		return
+	end
+	for inst, ore in pairs(known) do
+		if trackedCount >= MAX_TRACKED then
+			break
+		end
+		if not tracked[inst] and allowed(ore.key) then
+			track(inst, ore)
+		end
+	end
+end
+
+local function addKnown(target, ore, announce)
+	if known[target] then
+		return
+	end
+	-- chỉ nhận quặng nằm trong biome
+	local p = getPart(target)
+	if not (p and inBiome(p.Position)) then
+		return
+	end
+	known[target] = ore
+	knownCount[ore.key] = knownCount[ore.key] + 1
+	knownTotal = knownTotal + 1
+	if espOn and allowed(ore.key) then
+		track(target, ore)
+		if announce then
+			notify(ore)
+		end
+	end
+end
+
+local function removeKnown(inst)
+	local ore = known[inst]
+	if ore then
+		known[inst] = nil
+		knownCount[ore.key] = math.max(0, knownCount[ore.key] - 1)
+		knownTotal = math.max(0, knownTotal - 1)
+	end
+	untrack(inst)
+end
+
+-- ===== hàng đợi quét =====
+local function enqueue(inst, mode)
+	if queued[inst] or isOwn(inst) then
+		return
+	end
+	queued[inst] = mode
+	qTail = qTail + 1
+	queue[qTail] = inst
+end
+
+local function resetQueue()
+	queue = {}
+	queued = {}
+	qHead, qTail = 1, 0
+end
+
+local function processQueue()
+	local n = 0
+	while qHead <= qTail and n < QUEUE_BUDGET do
+		local inst = queue[qHead]
+		queue[qHead] = nil
+		qHead = qHead + 1
+		n = n + 1
+		local mode = queued[inst]
+		queued[inst] = nil
+		if inst and inst:IsDescendantOf(workspace) then
+			local target, ore = resolveOre(inst)
+			if target and ore and not known[target] and target:IsDescendantOf(workspace) then
+				addKnown(target, ore, mode == "live" and scanDone)
+			end
+		end
+	end
+	if qHead > qTail then
+		resetQueue()
+		if espOn and not scanDone then
+			scanDone = true
+		end
+	end
+end
+
+local function enqueueWorkspace(mode)
+	for _, d in ipairs(workspace:GetDescendants()) do
+		if d:IsA("BasePart") or d:IsA("Model") or d:IsA("BillboardGui") then
+			enqueue(d, mode)
+		end
+	end
+end
+
+local function startESP()
+	espOn = true
+	scanDone = false
+	statusText = "đang quét"
+	resetQueue()
+	enqueueWorkspace("scan")
+end
+
+local function stopESP()
+	espOn = false
+	scanDone = false
+	statusText = "tắt"
+	resetQueue()
+	for inst in pairs(tracked) do
+		untrack(inst)
+	end
+	known = {}
+	knownTotal = 0
+	for k in pairs(knownCount) do
+		knownCount[k] = 0
+	end
+end
+
+table.insert(conns, workspace.DescendantAdded:Connect(function(inst)
+	if espOn then
+		enqueue(inst, "live")
+	end
+end))
+
+table.insert(conns, workspace.DescendantRemoving:Connect(function(inst)
+	if known[inst] or tracked[inst] then
+		removeKnown(inst)
+	end
+end))
+
+table.insert(conns, RunService.Heartbeat:Connect(function()
+	if espOn then
+		processQueue()
+	end
+end))
+
+task.spawn(function()
+	while alive do
+		task.wait(RESCAN_INTERVAL)
+		if espOn and qHead > qTail then
+			enqueueWorkspace("scan")
+		end
+	end
 end)
 
--- ================= PROMPT & STEAL =================
-local function isStealPrompt(p)
-    local n = tostring(p.Name):lower()
-    local a = tostring(p.ActionText or ""):lower()
-    return a:find("steal", 1, true) or n:find("steal", 1, true)
-end
-
-local function refreshPromptCache()
-    STEAL_PROMPTS = {}
-    for _, d in ipairs(workspace:GetDescendants()) do
-        if d:IsA("ProximityPrompt") and isStealPrompt(d) then STEAL_PROMPTS[d] = true end
-    end
-end
-
-workspace.DescendantAdded:Connect(function(d)
-    if d:IsA("ProximityPrompt") and isStealPrompt(d) then STEAL_PROMPTS[d] = true end
+task.spawn(function()
+	while alive do
+		task.wait(2)
+		for inst in pairs(known) do
+			if not inst:IsDescendantOf(workspace) then
+				removeKnown(inst)
+			end
+		end
+	end
 end)
 
-local function firePrompt(prompt)
-    if not prompt then return false end
-    return pcall(function()
-        if fireproximityprompt then fireproximityprompt(prompt); return end
-        if promptfire then promptfire(prompt); return end
-        if fireprompt then fireprompt(prompt); return end
-    end)
-end
-
-local function promptPos(prompt)
-    local p = prompt and prompt.Parent
-    if not p then return nil end
-    if p:IsA("BasePart") then return p.Position end
-    if p:IsA("Attachment") then return p.WorldPosition end
-    return nil
-end
-
-local function fireNearestStealPrompt()
-    local origin = charOrigin()
-    if not origin then return false end
-    local best, bestDist
-    for prompt in pairs(STEAL_PROMPTS) do
-        if prompt and prompt.Parent and prompt.Enabled then
-            local pos = promptPos(prompt)
-            if pos then
-                local dist = (pos - origin).Magnitude
-                if dist <= CONFIG.PromptRange and (not bestDist or dist < bestDist) then
-                    best, bestDist = prompt, dist
-                end
-            end
-        else
-            STEAL_PROMPTS[prompt] = nil
-        end
-    end
-    if best then 
-        firePrompt(best)
-        STATUS_OVERRIDE = "AUTO STEAL"
-        STATUS_OVERRIDE_TIME = tick() + 2.0
-        return true 
-    end
-    return false
-end
-
-local function expandPrompt(prompt)
-    if not prompt or not prompt:IsA("ProximityPrompt") then return end
-    if not originalPromptDistances[prompt] then originalPromptDistances[prompt] = prompt.MaxActivationDistance end
-    prompt.MaxActivationDistance = CONFIG.PromptRangeDist
-    prompt.RequiresLineOfSight = false
-    prompt.HoldDuration = 0
-end
-
-local function restoreAllPrompts()
-    for prompt, dist in pairs(originalPromptDistances) do
-        if prompt and prompt.Parent then pcall(function() prompt.MaxActivationDistance = dist end) end
-    end
-    originalPromptDistances = {}
-end
-
-local function scanAllPrompts()
-    for _, d in ipairs(workspace:GetDescendants()) do
-        if d:IsA("ProximityPrompt") then expandPrompt(d) end
-    end
-end
-
-workspace.DescendantAdded:Connect(function(d)
-    if d:IsA("ProximityPrompt") and CONFIG.EnablePromptRange then expandPrompt(d) end
+-- dò biome định kỳ; khi vừa thấy biome thì quét lại toàn bộ
+task.spawn(function()
+	while alive do
+		local cf, size, name = findBiome()
+		local wasNil = biomeCF == nil
+		biomeCF, biomeSize, biomeName = cf, size, name
+		if wasNil and cf and espOn then
+			enqueueWorkspace("scan")
+		end
+		task.wait(BIOME_SCAN_INTERVAL)
+	end
 end)
 
-local function promptScanLoop()
-    while STATE.running do
-        if CONFIG.EnablePromptRange then pcall(scanAllPrompts) end
-        task.wait(0.5)
-    end
+-- ===== server ít người =====
+local function httpGet(url)
+	local req = request or http_request or (syn and syn.request)
+	if not req then
+		return nil
+	end
+	local ok, res = pcall(req, {Url = url, Method = "GET"})
+	if ok and type(res) == "table" and res.Body then
+		return res.Body
+	end
+	return nil
 end
 
--- ================= ANTI-RAGDOLL =================
-local function arGetMoveInput(hum)
-    if hum then
-        local md = hum.MoveDirection
-        if md.Magnitude > CONFIG.InputThreshold then return md end
-    end
-    local dir = Vector3.zero
-    if arKeyState.W then dir = dir + Vector3.new(0,0,-1) end
-    if arKeyState.S then dir = dir + Vector3.new(0,0,1) end
-    if arKeyState.A then dir = dir + Vector3.new(-1,0,0) end
-    if arKeyState.D then dir = dir + Vector3.new(1,0,0) end
-    if dir.Magnitude > 0.1 then
-        dir = dir.Unit
-        local cam = workspace.CurrentCamera
-        if cam then
-            local camCF = cam.CFrame
-            local fwd = Vector3.new(camCF.LookVector.X, 0, camCF.LookVector.Z)
-            local rgt = Vector3.new(camCF.RightVector.X, 0, camCF.RightVector.Z)
-            if fwd.Magnitude > 0.01 then fwd = fwd.Unit end
-            if rgt.Magnitude > 0.01 then rgt = rgt.Unit end
-            local world = fwd * (-dir.Z) + rgt * dir.X
-            if world.Magnitude > 0.01 then return world.Unit end
-        end
-        return dir
-    end
-    return Vector3.zero
+local function findLowServer()
+	local url = "https://games.roblox.com/v1/games/" .. game.PlaceId
+		.. "/servers/Public?sortOrder=Asc&limit=100"
+	local body = httpGet(url)
+	if not body then
+		return nil, "không gọi được API server"
+	end
+	local ok, data = pcall(function()
+		return HttpService:JSONDecode(body)
+	end)
+	if not ok or type(data) ~= "table" or type(data.data) ~= "table" then
+		return nil, "API server lỗi"
+	end
+	local best, bestCount = nil, math.huge
+	for _, s in ipairs(data.data) do
+		local n = tonumber(s.playing) or math.huge
+		local mx = tonumber(s.maxPlayers) or 0
+		if s.id ~= game.JobId and n <= HOP_MAX_PLAYERS and n < bestCount and n < mx then
+			best, bestCount = s.id, n
+		end
+	end
+	if not best then
+		return nil, "không có server nào ≤ " .. HOP_MAX_PLAYERS .. " người"
+	end
+	return best
 end
 
-local function arApply(char)
-    if not char then return end
-    if TELEPORT_LOCK then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-    local hrp = getHRP(char)
-    if not hrp then return end
-
-    pcall(function()
-        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
-        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-        hum:SetStateEnabled(Enum.HumanoidStateType.Physics, false)
-    end)
-
-    local st = hum:GetState()
-    local isDown = isRagdollState(st) or hum.PlatformStand
-
-    if isDown then
-        if not arSavedPos then arSavedPos = hrp.CFrame end
-        if CONFIG.AnchorOnRagdoll then
-            if not hrp.Anchored then pcall(function() hrp.Anchored = true end) end
-            hrp.CFrame = arSavedPos
-        else
-            if (hrp.Position - arSavedPos.Position).Magnitude > 5 then
-                hrp.CFrame = arSavedPos
-                zeroVelocity(hrp)
-            end
-        end
-        zeroVelocity(hrp)
-        removeForces(hrp)
-        pcall(function()
-            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
-            hum:ChangeState(Enum.HumanoidStateType.Running)
-        end)
-        if hum.PlatformStand then pcall(function() hum.PlatformStand = false end) end
-    else
-        if hrp.Anchored and CONFIG.AnchorOnRagdoll then pcall(function() hrp.Anchored = false end) end
-        arSavedPos = nil
-    end
-    if hum.WalkSpeed < 1 then
-        if CONFIG.EnableWalkSpeed then hum.WalkSpeed = CONFIG.WalkSpeedValue
-        else hum.WalkSpeed = 16 end
-    end
+local function hopServer()
+	if hopping or os.clock() - lastHopAt < HOP_COOLDOWN then
+		return
+	end
+	hopping = true
+	lastHopAt = os.clock()
+	statusText = "đang tìm server ít người..."
+	local id, err = findLowServer()
+	if not id then
+		statusText = err
+		hopping = false
+		return
+	end
+	if REQUEUE_URL ~= "" and typeof(queue_on_teleport) == "function" then
+		pcall(queue_on_teleport, 'loadstring(game:HttpGet("' .. REQUEUE_URL .. '"))()')
+	end
+	local ok = pcall(function()
+		TeleportService:TeleportToPlaceInstance(game.PlaceId, id, LocalPlayer)
+	end)
+	if not ok then
+		statusText = "teleport lỗi"
+		hopping = false
+	end
 end
 
-local function arStopHolding(char)
-    if not arHoldingPos then return end
-    local hrp = char and getHRP(char)
-    if hrp then
-        pcall(function() hrp.Anchored = false end)
-        zeroVelocity(hrp)
-    end
-    arHoldingPos = false
-    arSavedPos = nil
-    arIsMoving = false
-end
-
-local function antiRagdollLoop()
-    while STATE.running do
-        if CONFIG.EnableAntiRagdoll then
-            local char = LP.Character
-            if char then pcall(arApply, char) end
-        end
-        task.wait(CONFIG.AntiRagdollInterval)
-    end
-end
-
-RunService.RenderStepped:Connect(function(dt)
-    if not CONFIG.EnableAntiRagdoll then return end
-    if TELEPORT_LOCK then return end
-    if not arHoldingPos or not arSavedPos then return end
-    local char = LP.Character
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    local hrp = getHRP(char)
-    if not hum or not hrp then return end
-    local st = hum:GetState()
-    if not (isRagdollState(st) or hum.PlatformStand) then
-        arIsMoving = false
-        return
-    end
-    local dir = arGetMoveInput(hum)
-    if dir.Magnitude > CONFIG.InputThreshold then
-        if hrp.Anchored then pcall(function() hrp.Anchored = false end) end
-        arIsMoving = true
-        pcall(function()
-            hrp.AssemblyLinearVelocity = dir * CONFIG.MoveSpeed
-            hrp.AssemblyAngularVelocity = Vector3.zero
-        end)
-        arSavedPos = CFrame.new(hrp.Position) * (arSavedPos - arSavedPos.Position)
-    else
-        arIsMoving = false
-        if CONFIG.AnchorOnRagdoll and not hrp.Anchored then
-            pcall(function() hrp.Anchored = true end)
-            pcall(function() hrp.CFrame = arSavedPos end)
-        end
-    end
+task.spawn(function()
+	while alive do
+		task.wait(HOP_CHECK)
+		if hopOn and not hopping and #Players:GetPlayers() > HOP_MAX_PLAYERS then
+			hopServer()
+		end
+	end
 end)
 
-UserInputService.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
-    if input.KeyCode == Enum.KeyCode.W then arKeyState.W = true end
-    if input.KeyCode == Enum.KeyCode.A then arKeyState.A = true end
-    if input.KeyCode == Enum.KeyCode.S then arKeyState.S = true end
-    if input.KeyCode == Enum.KeyCode.D then arKeyState.D = true end
+-- ===== auto pickaxe (ô 1) =====
+local function isPickaxe(t)
+	if not t:IsA("Tool") then
+		return false
+	end
+	local n = string.lower(t.Name)
+	return string.find(n, "pick", 1, true) ~= nil or string.find(n, "cuốc", 1, true) ~= nil
+end
+
+local function getPickaxe()
+	local char = LocalPlayer.Character
+	local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+	if char then
+		for _, t in ipairs(char:GetChildren()) do
+			if isPickaxe(t) then
+				return t
+			end
+		end
+	end
+	if backpack then
+		for _, t in ipairs(backpack:GetChildren()) do
+			if isPickaxe(t) then
+				return t
+			end
+		end
+		for _, t in ipairs(backpack:GetChildren()) do
+			if t:IsA("Tool") then
+				return t
+			end
+		end
+	end
+	return nil
+end
+
+task.spawn(function()
+	while alive do
+		task.wait(EQUIP_INTERVAL)
+		if autoEquipOn then
+			local char = LocalPlayer.Character
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+			if hum and hum.Health > 0 and not char:FindFirstChildOfClass("Tool") then
+				local pick = getPickaxe()
+				if pick then
+					pcall(function()
+						hum:EquipTool(pick)
+					end)
+				end
+			end
+		end
+	end
 end)
 
-UserInputService.InputEnded:Connect(function(input)
-    if input.KeyCode == Enum.KeyCode.W then arKeyState.W = false end
-    if input.KeyCode == Enum.KeyCode.A then arKeyState.A = false end
-    if input.KeyCode == Enum.KeyCode.S then arKeyState.S = false end
-    if input.KeyCode == Enum.KeyCode.D then arKeyState.D = false end
+-- ===== auto farm ore (đi bộ tới quặng trong khoảng cách ESP và có line) =====
+local walkTarget = nil
+local walkLastPos = nil
+local walkStuckT = 0
+local walkAge = 0
+local walkSkip = {}
+
+local function getHum()
+	local char = LocalPlayer.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if hum and hum.Health > 0 then
+		return hum
+	end
+	return nil
+end
+
+local function eligible(e)
+	if not e or not e.part or not e.part.Parent then
+		return false
+	end
+	if e.inRange == false or not e.beam then
+		return false
+	end
+	return true
+end
+
+local function inEspRange(part)
+	local root = getRoot()
+	if not (root and part) then
+		return false
+	end
+	return (root.Position - part.Position).Magnitude <= maxDist
+end
+
+-- chọn quặng: ưu tiên theo thứ tự đã đặt, cùng hạng thì chọn gần nhất
+local function pickBestOre()
+	local root = getRoot()
+	if not root then
+		return nil
+	end
+	local now = os.clock()
+	local best, bestRank, bestD = nil, math.huge, math.huge
+	for inst, e in pairs(tracked) do
+		local skipUntil = walkSkip[inst]
+		if inst:IsDescendantOf(workspace) and eligible(e)
+			and inEspRange(e.part) and (not skipUntil or skipUntil < now) then
+			local rank = oreRank(e.ore.key)
+			local d = (root.Position - e.part.Position).Magnitude
+			if rank < bestRank or (rank == bestRank and d < bestD) then
+				best, bestRank, bestD = inst, rank, d
+			end
+		end
+	end
+	return best
+end
+
+local function stopWalking()
+	walkTarget = nil
+	walkLastPos = nil
+	walkStuckT = 0
+	walkAge = 0
+	local hum, root = getHum(), getRoot()
+	if hum and root then
+		hum:MoveTo(root.Position)
+	end
+end
+
+task.spawn(function()
+	while alive do
+		task.wait(0.2)
+		if not (walkOn and espOn) then
+			if walkTarget then
+				stopWalking()
+			end
+		else
+			local hum, root = getHum(), getRoot()
+			if hum and root then
+				if walkTarget then
+					local e = tracked[walkTarget]
+					if not e or not walkTarget:IsDescendantOf(workspace)
+						or not eligible(e) or not inEspRange(e.part) then
+						walkTarget = nil
+						hum:MoveTo(root.Position)
+					end
+				end
+
+				-- nếu có quặng hạng cao hơn trong tầm thì đổi sang quặng đó
+				if walkTarget then
+					local better = pickBestOre()
+					if better and better ~= walkTarget
+						and oreRank(tracked[better].ore.key) < oreRank(tracked[walkTarget].ore.key) then
+						walkTarget = better
+						walkLastPos = nil
+						walkStuckT = 0
+						walkAge = 0
+					end
+				end
+
+				if not walkTarget then
+					walkTarget = pickBestOre()
+					walkLastPos = nil
+					walkStuckT = 0
+					walkAge = 0
+				end
+
+				if walkTarget then
+					local e = tracked[walkTarget]
+					local part = e and e.part
+					if part and part.Parent then
+						local d = (root.Position - part.Position).Magnitude
+						if d <= WALK_REACH then
+							hum:MoveTo(root.Position)
+							walkAge = 0
+							walkStuckT = 0
+						else
+							walkAge = walkAge + 0.2
+							if walkLastPos and (root.Position - walkLastPos).Magnitude < 0.3 then
+								walkStuckT = walkStuckT + 0.2
+							else
+								walkStuckT = 0
+							end
+							walkLastPos = root.Position
+
+							if walkStuckT >= WALK_STUCK_TIME then
+								hum.Jump = true
+								hum:MoveTo(part.Position)
+								walkStuckT = 0
+							elseif walkAge >= WALK_GIVEUP then
+								walkSkip[walkTarget] = os.clock() + WALK_SKIP_TIME
+								walkTarget = nil
+								hum:MoveTo(root.Position)
+							else
+								hum:MoveTo(part.Position)
+							end
+						end
+					else
+						walkTarget = nil
+					end
+				end
+
+				-- không có quặng nào để đi: đi vòng tròn quanh chỗ đợi để né quái
+				if not walkTarget and waitPos then
+					waitAngle = (waitAngle + WAIT_ANG_SPEED * 0.2) % (math.pi * 2)
+					local goal = waitPos + Vector3.new(
+						math.cos(waitAngle) * WAIT_RADIUS, 0, math.sin(waitAngle) * WAIT_RADIUS)
+					hum:MoveTo(goal)
+				end
+			end
+		end
+	end
 end)
 
--- ================= WALKSPEED =================
-local function applyWalkSpeed()
-    local char = LP.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-    if CONFIG.EnableWalkSpeed then
-        if originalWalkSpeed == nil then originalWalkSpeed = hum.WalkSpeed end
-        hum.WalkSpeed = CONFIG.WalkSpeedValue
-    else
-        if originalWalkSpeed ~= nil then
-            hum.WalkSpeed = originalWalkSpeed
-            originalWalkSpeed = nil
-        end
-    end
+-- ===== GUI =====
+local container = getContainer()
+local old = container:FindFirstChild(SCRIPT_NAME)
+if old then
+	old:Destroy()
 end
 
-local function walkSpeedLoop()
-    while STATE.running do
-        if CONFIG.EnableWalkSpeed then pcall(applyWalkSpeed) end
-        task.wait(0.5)
-    end
+local gui = Instance.new("ScreenGui")
+gui.Name = SCRIPT_NAME
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.DisplayOrder = 999
+gui.Parent = container
+
+local curSize = Vector2.new(ICON_SIZE, ICON_SIZE)
+local expanded = false
+
+local squareX, squareY = 0, 0
+
+local function clampSquare()
+	local vp = getViewport()
+	local minY = topInset() + 4
+	squareX = math.clamp(squareX, 0, math.max(0, vp.X - ICON_SIZE))
+	squareY = math.clamp(squareY, minY, math.max(minY, vp.Y - ICON_SIZE - 4))
 end
 
--- ================= AUTO EXECUTE =================
-local function tryAutoExecute()
-    if AUTO_EXECUTED then return end
-    if not CONFIG.EnableAutoExecute then return end
-    if CONFIG.AutoExecutePlaceId <= 0 then return end
-    if game.PlaceId ~= CONFIG.AutoExecutePlaceId then return end
-    if CONFIG.AutoExecuteUrl == "" then return end
-
-    AUTO_EXECUTED = true
-    task.spawn(function()
-        task.wait(1.5)
-        pcall(function()
-            local src = game:HttpGet(CONFIG.AutoExecuteUrl)
-            local fn = loadstring(src)
-            if fn then fn() end
-        end)
-    end)
+local function centerFor(size)
+	local vp = getViewport()
+	return math.max(0, (vp.X - size.X) / 2), math.max(0, (vp.Y - size.Y) / 2)
 end
 
--- ================= RAGDOLL WATCHER =================
-local function attachRagdollWatcher(char)
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-    hum.StateChanged:Connect(function(old, new)
-        if isRagdollState(new) then RAGDOLL_EVENT = true end
-    end)
-    char.DescendantRemoving:Connect(function(d)
-        if d:IsA("Motor6D") and CONFIG.RestoreMotors and CONFIG.EnableAntiRagdoll then
-            local info = {
-                Name = d.Name, Part0 = d.Part0, Part1 = d.Part1,
-                C0 = d.C0, C1 = d.C1, Parent = d.Parent,
-            }
-            task.spawn(function()
-                task.wait(0.1)
-                if not d.Parent and info.Part0 and info.Part1 then
-                    pcall(function()
-                        local new = Instance.new("Motor6D")
-                        new.Name = info.Name
-                        new.Part0 = info.Part0
-                        new.Part1 = info.Part1
-                        new.C0 = info.C0
-                        new.C1 = info.C1
-                        new.Parent = info.Parent
-                    end)
-                end
-            end)
-        end
-    end)
+local function currentPos()
+	if expanded then
+		return centerFor(curSize)
+	end
+	return squareX, squareY
 end
 
-if LP.Character then attachRagdollWatcher(LP.Character) end
-LP.CharacterAdded:Connect(function(c)
-    task.wait(0.5)
-    arHoldingPos = false
-    arSavedPos = nil
-    arIsMoving = false
-    TELEPORT_LOCK = false
-    REJOINING = false
-    originalWalkSpeed = nil
-    attachRagdollWatcher(c)
+do
+	local vp = getViewport()
+	squareX = vp.X - ICON_SIZE - 12
+	squareY = topInset() + 60
+	clampSquare()
+end
+
+local island = Instance.new("Frame")
+island.Name = "Island"
+do
+	local x, y = currentPos()
+	island.Position = UDim2.fromOffset(x, y)
+end
+island.Size = UDim2.fromOffset(ICON_SIZE, ICON_SIZE)
+island.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
+island.BackgroundTransparency = 0.04
+island.BorderSizePixel = 0
+island.ClipsDescendants = true
+island.Parent = gui
+
+local islandGrad = Instance.new("UIGradient")
+islandGrad.Rotation = 90
+islandGrad.Color = ColorSequence.new(Color3.fromRGB(22, 22, 28), Color3.fromRGB(6, 6, 9))
+islandGrad.Parent = island
+
+local islandCorner = Instance.new("UICorner")
+islandCorner.CornerRadius = UDim.new(0, 16)
+islandCorner.Parent = island
+
+rainbowStroke(island, 2, 0)
+rainbowStroke(island, 6, 0.7)
+
+mkLabel(island, {
+	Text = "💎",
+	Font = Enum.Font.GothamBold,
+	TextSize = 24,
+	TextXAlignment = Enum.TextXAlignment.Center,
+	Size = UDim2.fromOffset(ICON_SIZE, ICON_SIZE),
+	Position = UDim2.fromOffset(0, 0),
+	ZIndex = 3,
+})
+
+local expandedGroup = Instance.new("CanvasGroup")
+expandedGroup.Name = "Expanded"
+expandedGroup.Size = UDim2.fromScale(1, 1)
+expandedGroup.BackgroundTransparency = 1
+expandedGroup.GroupTransparency = 1
+expandedGroup.Visible = false
+expandedGroup.Parent = island
+
+mkLabel(expandedGroup, {
+	Text = SCRIPT_NAME,
+	Font = Enum.Font.GothamBold,
+	TextSize = 15,
+	Position = UDim2.fromOffset(ICON_SIZE + 6, 0),
+	Size = UDim2.new(1, -(ICON_SIZE + 14), 0, ICON_SIZE),
+})
+
+-- ===== nút chuyển tab =====
+local TAB_Y = 60
+local tabMain = Instance.new("TextButton")
+tabMain.Name = "TabMain"
+tabMain.Position = UDim2.fromOffset(14, TAB_Y)
+tabMain.Size = UDim2.new(0.5, -18, 0, 24)
+tabMain.Font = Enum.Font.GothamBold
+tabMain.TextSize = 12
+tabMain.TextColor3 = Color3.fromRGB(255, 255, 255)
+tabMain.Text = "Main"
+tabMain.AutoButtonColor = false
+tabMain.BorderSizePixel = 0
+tabMain.Parent = expandedGroup
+local tabMainC = Instance.new("UICorner")
+tabMainC.CornerRadius = UDim.new(0, 8)
+tabMainC.Parent = tabMain
+
+local tabQuick = Instance.new("TextButton")
+tabQuick.Name = "TabQuick"
+tabQuick.Position = UDim2.new(0.5, 4, 0, TAB_Y)
+tabQuick.Size = UDim2.new(0.5, -18, 0, 24)
+tabQuick.Font = Enum.Font.GothamBold
+tabQuick.TextSize = 12
+tabQuick.TextColor3 = Color3.fromRGB(255, 255, 255)
+tabQuick.Text = "Quick Key"
+tabQuick.AutoButtonColor = false
+tabQuick.BorderSizePixel = 0
+tabQuick.Parent = expandedGroup
+local tabQuickC = Instance.new("UICorner")
+tabQuickC.CornerRadius = UDim.new(0, 8)
+tabQuickC.Parent = tabQuick
+
+local CONTENT_Y = 92
+
+-- ===== tab Main =====
+local mainScroller = Instance.new("ScrollingFrame")
+mainScroller.Name = "MainScroller"
+mainScroller.Position = UDim2.fromOffset(0, CONTENT_Y)
+mainScroller.Size = UDim2.new(1, 0, 1, -CONTENT_Y)
+mainScroller.BackgroundTransparency = 1
+mainScroller.BorderSizePixel = 0
+mainScroller.ScrollBarThickness = 4
+mainScroller.ScrollBarImageColor3 = Color3.fromRGB(200, 200, 210)
+mainScroller.ScrollingDirection = Enum.ScrollingDirection.Y
+mainScroller.ElasticBehavior = Enum.ElasticBehavior.WhenScrollable
+mainScroller.CanvasSize = UDim2.new(0, 0, 0, 480)
+mainScroller.Parent = expandedGroup
+
+local statsLbl = mkLabel(mainScroller, {
+	Text = "FPS -- · PING -- · FRAME --",
+	TextSize = 11,
+	TextColor3 = Color3.fromRGB(170, 170, 178),
+	Position = UDim2.fromOffset(14, 0),
+	Size = UDim2.new(1, -28, 0, 16),
+})
+
+local posLbl = mkLabel(mainScroller, {
+	Text = "POS --",
+	TextSize = 11,
+	TextColor3 = Color3.fromRGB(170, 170, 178),
+	Position = UDim2.fromOffset(14, 16),
+	Size = UDim2.new(1, -28, 0, 14),
+})
+
+local divider = Instance.new("Frame")
+divider.Size = UDim2.new(1, -28, 0, 1)
+divider.Position = UDim2.fromOffset(14, 34)
+divider.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+divider.BackgroundTransparency = 0.85
+divider.BorderSizePixel = 0
+divider.Parent = mainScroller
+
+mkLabel(mainScroller, {
+	Text = "chạm để ưu tiên · ▲▼ thứ tự đi",
+	TextSize = 10,
+	TextColor3 = Color3.fromRGB(130, 130, 140),
+	Position = UDim2.fromOffset(14, 38),
+	Size = UDim2.new(1, -28, 0, 14),
+})
+
+local ROW_Y0, ROW_H = 56, 22
+
+local function mkArrow(parent, text, anchorX, posX)
+	local b = Instance.new("TextButton")
+	b.AnchorPoint = Vector2.new(1, 0)
+	b.Position = UDim2.new(1, posX, 0, 2)
+	b.Size = UDim2.fromOffset(18, ROW_H - 4)
+	b.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+	b.Font = Enum.Font.GothamBold
+	b.TextSize = 9
+	b.TextColor3 = Color3.fromRGB(255, 255, 255)
+	b.Text = text
+	b.AutoButtonColor = false
+	b.BorderSizePixel = 0
+	b.ZIndex = 2
+	b.Parent = parent
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, 5)
+	c.Parent = b
+	return b
+end
+
+for i, ore in ipairs(ORES) do
+	local y = ROW_Y0 + (i - 1) * ROW_H
+
+	local row = Instance.new("TextButton")
+	row.Position = UDim2.fromOffset(10, y)
+	row.Size = UDim2.new(1, -20, 0, ROW_H - 2)
+	row.BackgroundColor3 = ore.color
+	row.BackgroundTransparency = 1
+	row.AutoButtonColor = false
+	row.Text = ""
+	row.Parent = mainScroller
+	local rc = Instance.new("UICorner")
+	rc.CornerRadius = UDim.new(0, 7)
+	rc.Parent = row
+
+	local dot = Instance.new("Frame")
+	dot.Size = UDim2.fromOffset(9, 9)
+	dot.Position = UDim2.fromOffset(8, 7)
+	dot.BackgroundColor3 = ore.color
+	dot.BorderSizePixel = 0
+	dot.Parent = row
+	local dc = Instance.new("UICorner")
+	dc.CornerRadius = UDim.new(1, 0)
+	dc.Parent = dot
+
+	local nameLbl = mkLabel(row, {
+		Text = ore.label,
+		TextSize = 12,
+		Position = UDim2.fromOffset(24, 0),
+		Size = UDim2.new(1, -100, 1, 0),
+	})
+
+	local countLbl = mkLabel(row, {
+		Text = "0",
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -66, 0, 0),
+		Size = UDim2.fromOffset(34, ROW_H - 2),
+	})
+
+	local upBtn = mkArrow(row, "▲", true, -26)
+	local downBtn = mkArrow(row, "▼", true, -4)
+
+	rows[ore.key] = {
+		row = row,
+		refresh = function()
+			local rank = oreRank(ore.key)
+			local sel = priority[ore.key] == true
+			nameLbl.Text = rank .. ". " .. (sel and "★ " or "") .. ore.label
+			row.BackgroundTransparency = sel and 0.75 or 1
+			countLbl.Text = tostring(knownCount[ore.key] or 0)
+			row.Position = UDim2.fromOffset(10, ROW_Y0 + (rank - 1) * ROW_H)
+		end,
+	}
+
+	upBtn.Activated:Connect(function()
+		local idx = oreRank(ore.key)
+		if idx > 1 then
+			oreOrder[idx], oreOrder[idx - 1] = oreOrder[idx - 1], oreOrder[idx]
+		end
+		ensureRowsRefresh()
+		saveConfig()
+	end)
+
+	downBtn.Activated:Connect(function()
+		local idx = oreRank(ore.key)
+		if idx < #oreOrder then
+			oreOrder[idx], oreOrder[idx + 1] = oreOrder[idx + 1], oreOrder[idx]
+		end
+		ensureRowsRefresh()
+		saveConfig()
+	end)
+
+	row.Activated:Connect(function()
+		if priority[ore.key] then
+			priority[ore.key] = nil
+		else
+			priority[ore.key] = true
+		end
+		rows[ore.key].refresh()
+		syncTracked()
+		saveConfig()
+	end)
+end
+
+ensureRowsRefresh = function()
+	for _, r in pairs(rows) do
+		r.refresh()
+	end
+end
+
+-- ===== toggle: viền RGB, nền gradient, knob có bóng và co giãn khi bấm =====
+local KNOB_OFF_X, KNOB_ON_X, KNOB_Y = 14, 42, 14
+
+local function makeToggle(parent, y, text, initial, onChange)
+	local state = initial
+
+	mkLabel(parent, {
+		Text = text,
+		Font = Enum.Font.GothamBold,
+		TextSize = 13,
+		Position = UDim2.fromOffset(14, y),
+		Size = UDim2.new(0.6, 0, 0, 30),
+	})
+
+	local btn = Instance.new("TextButton")
+	btn.AnchorPoint = Vector2.new(1, 0)
+	btn.Position = UDim2.new(1, -14, 0, y + 2)
+	btn.Size = UDim2.fromOffset(56, 28)
+	btn.Text = ""
+	btn.AutoButtonColor = false
+	btn.BorderSizePixel = 0
+	btn.BackgroundColor3 = OFF_COLOR
+	btn.Parent = parent
+
+	local bc = Instance.new("UICorner")
+	bc.CornerRadius = UDim.new(1, 0)
+	bc.Parent = btn
+
+	local bg = Instance.new("UIGradient")
+	bg.Rotation = 90
+	bg.Parent = btn
+
+	local _, borderGrad = rainbowStroke(btn, 1.5, 0.2)
+
+	local knob = Instance.new("Frame")
+	knob.AnchorPoint = Vector2.new(0.5, 0.5)
+	knob.Size = UDim2.fromOffset(22, 22)
+	knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	knob.BorderSizePixel = 0
+	knob.Parent = btn
+	local kc = Instance.new("UICorner")
+	kc.CornerRadius = UDim.new(1, 0)
+	kc.Parent = knob
+	local kg = Instance.new("UIGradient")
+	kg.Rotation = 90
+	kg.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(205, 205, 215))
+	kg.Parent = knob
+	local ks = Instance.new("UIStroke")
+	ks.Color = Color3.fromRGB(0, 0, 0)
+	ks.Transparency = 0.7
+	ks.Thickness = 1
+	ks.Parent = knob
+
+	local function render(animate)
+		local color = state and ON_COLOR or OFF_COLOR
+		local pos = UDim2.fromOffset(state and KNOB_ON_X or KNOB_OFF_X, KNOB_Y)
+		bg.Color = ColorSequence.new(
+			color:Lerp(Color3.new(1, 1, 1), 0.25),
+			color:Lerp(Color3.new(0, 0, 0), 0.25)
+		)
+		if animate then
+			tween(btn, SMOOTH, {BackgroundColor3 = color})
+			tween(knob, BOUNCE, {Position = pos})
+			local t = tween(knob, FAST, {Size = UDim2.fromOffset(28, 22)})
+			t.Completed:Connect(function()
+				tween(knob, FAST, {Size = UDim2.fromOffset(22, 22)})
+			end)
+		else
+			btn.BackgroundColor3 = color
+			knob.Position = pos
+		end
+	end
+
+	local api = {borderGrad = borderGrad}
+	function api.get()
+		return state
+	end
+	function api.set(v, silent)
+		state = v
+		render(not silent)
+		if not silent and onChange then
+			onChange(v)
+		end
+	end
+
+	btn.Activated:Connect(function()
+		api.set(not state)
+	end)
+
+	render(false)
+	return api
+end
+
+local espToggle = makeToggle(mainScroller, 176, "ESP ore", false, function(on)
+	if on then
+		startESP()
+	else
+		stopESP()
+	end
+	saveConfig()
 end)
 
--- ================= RAGDOLL TELEPORT =================
-local function ragdollTeleportLoop()
-    while STATE.running do
-        if not CONFIG.EnableRagdollTele then
-            task.wait(0.5)
-        elseif not CONFIG.SafeZone then
-            task.wait(0.5)
-        elseif TELEPORT_LOCK then
-            task.wait(0.2)
-        else
-            local byState = isRagdolled()
-            local byEvent = RAGDOLL_EVENT
-            RAGDOLL_EVENT = false
-            if not (byState or byEvent) then
-                task.wait(0.1)
-            else
-                local char = LP.Character
-                local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                if not hrp then
-                    task.wait(0.5)
-                elseif not hasGroundNear(char, hrp, 30) then
-                    task.wait(0.5)
-                else
-                    TELEPORT_LOCK = true
-                    arHoldingPos = false
-                    arSavedPos = nil
-                    pcall(function() hrp.Anchored = false end)
-                    local savedPos = hrp.Position
-                    local spam1End = tick() + CONFIG.RagdollSpamTime1
-                    while tick() < spam1End do
-                        fireNearestStealPrompt()
-                        task.wait(CONFIG.RagdollSpamInterval)
-                    end
-                    teleportChar(CONFIG.SafeZone.Position)
-                    task.wait(CONFIG.TeleportCooldown)
-                    task.wait(CONFIG.RagdollStayTime)
-                    teleportChar(savedPos)
-                    task.wait(CONFIG.TeleportCooldown)
-                    task.spawn(refreshPromptCache)
-                    task.wait(0.2)
-                    local spam2End = tick() + CONFIG.RagdollSpamTime
-                    while tick() < spam2End do
-                        fireNearestStealPrompt()
-                        task.wait(CONFIG.RagdollSpamInterval)
-                    end
-                    task.wait(CONFIG.TeleportInterval)
-                    TELEPORT_LOCK = false
-                end
-            end
-        end
-    end
-end
-
--- ================= AUTO SWING GAME BTN =================
-local function getGameBtn()
-    local pg = LP:FindFirstChild("PlayerGui")
-    if not pg then return nil end
-    for _, v in ipairs(pg:GetDescendants()) do
-        if v:IsA("TextButton") or v:IsA("ImageButton") then
-            local text = ""
-            if v:IsA("TextButton") then text = v.Text end
-            local lbl = v:FindFirstChildWhichIsA("TextLabel", true)
-            if lbl then text = text .. " " .. lbl.Text end
-            
-            if string.find(string.lower(text), "auto swing") then
-                return v
-            end
-        end
-    end
-    return nil
-end
-
-local function fireGameBtn()
-    if not GAME_SWING_BTN or not GAME_SWING_BTN.Parent then
-        GAME_SWING_BTN = getGameBtn()
-    end
-    if not GAME_SWING_BTN then return false end
-    
-    local fired = false
-    if getconnections then
-        local conns = getconnections(GAME_SWING_BTN.MouseButton1Click)
-        if conns and #conns > 0 then
-            for _, conn in pairs(conns) do pcall(function() conn:Fire() end) end
-            fired = true
-        end
-        local actConns = getconnections(GAME_SWING_BTN.Activated)
-        if actConns and #actConns > 0 then
-            for _, conn in pairs(actConns) do pcall(function() conn:Fire() end) end
-            fired = true
-        end
-    end
-    if not fired and firesignal then
-        pcall(function()
-            firesignal(GAME_SWING_BTN.MouseButton1Click)
-            firesignal(GAME_SWING_BTN.Activated)
-            fired = true
-        end)
-    end
-    return fired
-end
-
--- ================= AUTO PICKAXE =================
-local function autoPickaxeLoop()
-    while STATE.running do
-        if CONFIG.EnableAutoPickaxe then
-            local char = LP.Character
-            local hum = char and char:FindFirstChildOfClass("Humanoid")
-            
-            local tool = findPickaxe()
-            local bpTool = findPickaxeInBackpack()
-            
-            if tool or bpTool then
-                if not HAS_CLICKED_GAME_BTN then
-                    if fireGameBtn() then
-                        HAS_CLICKED_GAME_BTN = true
-                        if not STATUS_OVERRIDE then
-                            STATUS_OVERRIDE = "AUTO PICKAXE"
-                            STATUS_OVERRIDE_TIME = tick() + 2.0
-                        end
-                    end
-                end
-                
-                if tool and hum then
-                    pcall(function() tool:Activate() end)
-                elseif bpTool and hum then
-                    pcall(function() hum:EquipTool(bpTool) end)
-                end
-            end
-            
-            task.wait(CONFIG.PickaxeInterval)
-        else
-            task.wait(0.5)
-        end
-    end
-end
-
--- ================= ZONE 11 =================
-local function isAtZone11()
-    local hrp = getHRP(LP.Character)
-    if not hrp then return false end
-    local d = (hrp.Position - CONFIG.Zone11Pos).Magnitude
-    return d <= CONFIG.Zone11VerifyDist
-end
-
-local function resetCharacter()
-    local char = LP.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if hum then
-        pcall(function() hum.Health = 0 end)
-        return true
-    end
-    pcall(function() LP:LoadCharacter() end)
-    return false
-end
-
-local function waitForRespawn(timeout)
-    timeout = timeout or CONFIG.RespawnTimeout
-    local deadline = tick() + timeout
-    while tick() < deadline do
-        local char = LP.Character
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if hrp and hum and hum.Health > 0 then
-            return true
-        end
-        task.wait(0.1)
-    end
-    return false
-end
-
-local function runZone11Once()
-    TELEPORT_LOCK = true
-    arHoldingPos = false
-    arSavedPos = nil
-    arIsMoving = false
-    resetCharacter()
-    local ok = waitForRespawn(CONFIG.RespawnTimeout)
-    if not ok then
-        TELEPORT_LOCK = false
-        return false
-    end
-    task.wait(0.3)
-    local char = LP.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then
-        TELEPORT_LOCK = false
-        return false
-    end
-    pcall(function() hrp.Anchored = false end)
-    teleportChar(CONFIG.Zone11Pos)
-    task.wait(0.1)
-    teleportChar(CONFIG.Zone11Pos)
-    TELEPORT_LOCK = false
-    return true
-end
-
-local function zone11FarmingLoop()
-    if CONFIG.EnableZone11Farm and not ZONE11_DONE then
-        while not LP.Character or not LP.Character:FindFirstChild("HumanoidRootPart") do
-            task.wait(0.2)
-        end
-        while TELEPORT_LOCK do task.wait(0.2) end
-        if isAtZone11() then
-            ZONE11_DONE = true
-        else
-            local ok = pcall(runZone11Once)
-            task.wait(0.5)
-            if ok and isAtZone11() then
-                ZONE11_DONE = true
-            else
-                ZONE11_DONE = false
-            end
-        end
-    end
-end
-
--- ================= REJOIN =================
-local function simpleRejoin()
-    local count = #Players:GetPlayers()
-    if count <= 1 then
-        LP:Kick("\nRejoining...")
-        task.wait(0.5)
-        TeleportService:Teleport(game.PlaceId, LP)
-    else
-        TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP)
-    end
-end
-
-local function setupAutoRejoin()
-    if game.JobId and game.JobId ~= "" then
-        CONFIG.LastServerJobId = game.JobId
-    end
-    Players.PlayerRemoving:Connect(function(plr)
-        if plr == LP and CONFIG.AutoRejoinOnDisconnect
-            and CONFIG.LastServerJobId ~= "" and not REJOINING then
-            REJOINING = true
-            task.wait(2)
-            pcall(function()
-                if HAS_ASYNC and HAS_OPTS then
-                    local opts = Instance.new("TeleportOptions")
-                    opts.ServerInstanceId = CONFIG.LastServerJobId
-                    TeleportService:TeleportAsync(game.PlaceId, {LP}, opts)
-                else
-                    TeleportService:TeleportToPlaceInstance(
-                        game.PlaceId, CONFIG.LastServerJobId, LP)
-                end
-            end)
-        end
-    end)
-end
-
--- ================= UI DYNAMIC ISLAND =================
-local function getParent()
-    local ok, cg = pcall(function() return game:GetService("CoreGui") end)
-    if ok and cg then
-        local old = cg:FindFirstChild("DynIslandFarm")
-        if old then old:Destroy() end
-        local g = Instance.new("ScreenGui")
-        g.Name = "DynIslandFarm"
-        g.ResetOnSpawn = false
-        g.IgnoreGuiInset = true
-        g.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-        if pcall(function() g.Parent = cg end) then return g end
-    end
-    local pg = LP:WaitForChild("PlayerGui")
-    local old = pg:FindFirstChild("DynIslandFarm")
-    if old then old:Destroy() end
-    local g = Instance.new("ScreenGui")
-    g.Name = "DynIslandFarm"
-    g.ResetOnSpawn = false
-    g.IgnoreGuiInset = true
-    g.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    g.Parent = pg
-    return g
-end
-local GUI = getParent()
-
-local activeGradients = {}
-RunService.RenderStepped:Connect(function()
-    local time = tick() * 100
-    for i = #activeGradients, 1, -1 do
-        local grad = activeGradients[i]
-        if grad and grad.Parent and grad.Parent.Parent then
-            grad.Rotation = time % 360
-        else
-            table.remove(activeGradients, i)
-        end
-    end
+local autoToggle = makeToggle(mainScroller, 210, "Auto pickaxe", autoEquipOn, function(on)
+	autoEquipOn = on
+	saveConfig()
 end)
 
-local function addNeonBorder(targetFrame, thickness)
-    local borderFrame = Instance.new("Frame")
-    borderFrame.Name = "NeonBorder"
-    borderFrame.Size = UDim2.new(1, thickness*2, 1, thickness*2)
-    borderFrame.Position = UDim2.new(0, -thickness, 0, -thickness)
-    borderFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    borderFrame.BackgroundTransparency = 0
-    borderFrame.BorderSizePixel = 0
-    borderFrame.ZIndex = targetFrame.ZIndex - 1
-    borderFrame.Parent = targetFrame.Parent
-    
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(1, 0)
-    corner.Parent = borderFrame
-    
-    local grad = Instance.new("UIGradient")
-    grad.Color = ColorSequence.new{
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 128)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(160, 0, 255)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 128)),
-    }
-    grad.Parent = borderFrame
-    table.insert(activeGradients, grad)
-    
-    local function update()
-        borderFrame.Size = UDim2.new(1, thickness*2, 1, thickness*2)
-        borderFrame.Position = UDim2.new(0, -thickness, 0, -thickness)
-        local targetCorner = targetFrame:FindFirstChildOfClass("UICorner")
-        if targetCorner then corner.CornerRadius = targetCorner.CornerRadius end
-    end
-    targetFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(update)
-    if targetFrame:FindFirstChildOfClass("UICorner") then
-        targetFrame:FindFirstChildOfClass("UICorner"):GetPropertyChangedSignal("CornerRadius"):Connect(update)
-    end
-    update()
-    return borderFrame
+local walkToggle = makeToggle(mainScroller, 244, "Auto farm ore", false, function(on)
+	walkOn = on
+	if on then
+		-- lần đầu bật mà chưa có chỗ đợi thì lấy vị trí hiện tại
+		if not waitPos then
+			local root = getRoot()
+			if root then
+				setWaitPos(root.Position)
+			end
+		end
+	else
+		stopWalking()
+	end
+	saveConfig()
+end)
+
+local hopToggle = makeToggle(mainScroller, 278, "Server ít người", false, function(on)
+	hopOn = on
+	if not on then
+		statusText = espOn and "đang quét" or "tắt"
+	end
+	saveConfig()
+end)
+
+-- ===== chỗ đợi quặng =====
+local WAIT_Y = 312
+mkLabel(mainScroller, {
+	Text = "Chỗ đợi quặng",
+	Font = Enum.Font.GothamBold,
+	TextSize = 13,
+	Position = UDim2.fromOffset(14, WAIT_Y),
+	Size = UDim2.new(0.5, 0, 0, 26),
+})
+
+waitLbl = mkLabel(mainScroller, {
+	Text = "chưa đặt",
+	TextSize = 10,
+	TextColor3 = Color3.fromRGB(150, 150, 160),
+	Position = UDim2.fromOffset(14, WAIT_Y + 26),
+	Size = UDim2.new(1, -28, 0, 12),
+})
+
+local waitBtn = Instance.new("TextButton")
+waitBtn.AnchorPoint = Vector2.new(1, 0)
+waitBtn.Position = UDim2.new(1, -14, 0, WAIT_Y)
+waitBtn.Size = UDim2.fromOffset(74, 26)
+waitBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+waitBtn.Font = Enum.Font.GothamBold
+waitBtn.TextSize = 11
+waitBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+waitBtn.Text = "Đặt đây"
+waitBtn.AutoButtonColor = false
+waitBtn.BorderSizePixel = 0
+waitBtn.Parent = mainScroller
+local waitBtnC = Instance.new("UICorner")
+waitBtnC.CornerRadius = UDim.new(0, 7)
+waitBtnC.Parent = waitBtn
+
+setWaitPos = function(v)
+	waitPos = v
+	if waitLbl then
+		if v then
+			waitLbl.Text = string.format("X %d · Y %d · Z %d",
+				math.floor(v.X + 0.5), math.floor(v.Y + 0.5), math.floor(v.Z + 0.5))
+		else
+			waitLbl.Text = "chưa đặt"
+		end
+	end
+	saveConfig()
+end
+setWaitPos(waitPos)
+
+waitBtn.Activated:Connect(function()
+	local root = getRoot()
+	if root then
+		setWaitPos(root.Position)
+	end
+end)
+
+-- ===== chỉnh kích thước và khoảng cách ESP =====
+local SIZE_Y = 362
+local DIST_Y = 396
+
+local function mkStepBtn(parent, y, text, xOff)
+	local b = Instance.new("TextButton")
+	b.AnchorPoint = Vector2.new(1, 0)
+	b.Position = UDim2.new(1, xOff, 0, y)
+	b.Size = UDim2.fromOffset(26, 26)
+	b.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+	b.Font = Enum.Font.GothamBold
+	b.TextSize = 16
+	b.TextColor3 = Color3.fromRGB(255, 255, 255)
+	b.Text = text
+	b.AutoButtonColor = false
+	b.BorderSizePixel = 0
+	b.Parent = parent
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, 7)
+	c.Parent = b
+	return b
 end
 
-local mainWrapper = Instance.new("Frame")
-mainWrapper.Name = "MainWrapper"
-mainWrapper.Size = UDim2.fromOffset(210, 38)
-mainWrapper.Position = UDim2.new(0.5, -105, 0, 20)
-mainWrapper.BackgroundTransparency = 1
-mainWrapper.ZIndex = 10
-mainWrapper.Parent = GUI
+mkLabel(mainScroller, {
+	Text = "Kích thước ESP",
+	Font = Enum.Font.GothamBold,
+	TextSize = 13,
+	Position = UDim2.fromOffset(14, SIZE_Y),
+	Size = UDim2.new(0.5, 0, 0, 26),
+})
 
-local main = Instance.new("Frame")
-main.Name = "Main"
-main.Size = UDim2.fromScale(1, 1)
-main.Position = UDim2.fromScale(0, 0)
-main.BackgroundColor3 = Color3.fromRGB(12, 15, 22)
-main.BackgroundTransparency = 0.05
-main.BorderSizePixel = 0
-main.ClipsDescendants = true
-main.ZIndex = 12
-main.Parent = mainWrapper
+local sizeMinus = mkStepBtn(mainScroller, SIZE_Y, "-", -82)
+local sizePlus = mkStepBtn(mainScroller, SIZE_Y, "+", -14)
 
-local mainCorner = Instance.new("UICorner")
-mainCorner.CornerRadius = UDim.new(1, 0)
-mainCorner.Parent = main
+sizeValLbl = mkLabel(mainScroller, {
+	Text = string.format("%.1fx", espScale),
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	TextXAlignment = Enum.TextXAlignment.Center,
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -46, 0, SIZE_Y),
+	Size = UDim2.fromOffset(30, 26),
+})
 
-addNeonBorder(main, 2)
+sizeMinus.Activated:Connect(function()
+	setScale(-SIZE_STEP)
+end)
+
+sizePlus.Activated:Connect(function()
+	setScale(SIZE_STEP)
+end)
+
+mkLabel(mainScroller, {
+	Text = "Khoảng cách ESP",
+	Font = Enum.Font.GothamBold,
+	TextSize = 13,
+	Position = UDim2.fromOffset(14, DIST_Y),
+	Size = UDim2.new(0.5, 0, 0, 26),
+})
+
+local distMinus = mkStepBtn(mainScroller, DIST_Y, "-", -82)
+local distPlus = mkStepBtn(mainScroller, DIST_Y, "+", -14)
+
+distValLbl = mkLabel(mainScroller, {
+	Text = maxDist .. "m",
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	TextXAlignment = Enum.TextXAlignment.Center,
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -46, 0, DIST_Y),
+	Size = UDim2.fromOffset(38, 26),
+})
+
+distMinus.Activated:Connect(function()
+	setDist(-DIST_STEP)
+end)
+
+distPlus.Activated:Connect(function()
+	setDist(DIST_STEP)
+end)
+
+local statusLbl = mkLabel(mainScroller, {
+	Text = "tắt",
+	TextSize = 10,
+	TextColor3 = Color3.fromRGB(150, 150, 160),
+	Position = UDim2.fromOffset(14, 430),
+	Size = UDim2.new(1, -28, 0, 14),
+})
+
+biomeLbl = mkLabel(mainScroller, {
+	Text = "biome: đang dò...",
+	TextSize = 10,
+	TextColor3 = Color3.fromRGB(150, 150, 160),
+	Position = UDim2.fromOffset(14, 448),
+	Size = UDim2.new(1, -28, 0, 14),
+})
+
+-- ===== danh sách chức năng cho Quick Key =====
+local FUNCS = {
+	{id = "esp", label = "ESP ore", order = 1,
+		get = function() return espOn end,
+		set = function(v) espToggle.set(v) end},
+	{id = "auto", label = "Auto pickaxe", order = 2,
+		get = function() return autoEquipOn end,
+		set = function(v) autoToggle.set(v) end},
+	{id = "walk", label = "Auto farm ore", order = 3,
+		get = function() return walkOn end,
+		set = function(v) walkToggle.set(v) end},
+}
+for _, f in ipairs(FUNCS) do
+	FUNC_BY_ID[f.id] = f
+end
+
+local function pinnedCount()
+	local n = 0
+	for _, p in pairs(pills) do
+		if p then
+			n = n + 1
+		end
+	end
+	return n
+end
+
+-- thanh nút ngoài màn hình, nằm bên trái
+quickBar = Instance.new("Frame")
+quickBar.Name = "SysOreQuickBar"
+quickBar.BackgroundTransparency = 1
+quickBar.Size = UDim2.fromOffset(174, 0)
+quickBar.AutomaticSize = Enum.AutomaticSize.Y
+quickBar.Parent = gui
+
+local quickLayout = Instance.new("UIListLayout")
+quickLayout.Padding = UDim.new(0, 8)
+quickLayout.SortOrder = Enum.SortOrder.LayoutOrder
+quickLayout.Parent = quickBar
+
+local function placeQuickBar()
+	local vp = getViewport()
+	quickBar.Position = UDim2.fromOffset(10, math.floor(vp.Y * 0.32))
+end
+placeQuickBar()
+
+-- nút Quick Key: viền LED cầu vồng bao quanh toàn bộ nút, glow mờ bên ngoài
+local PILL_W, PILL_H, PILL_RING = 174, 42, 2
+
+local function addPill(f)
+	if pills[f.id] then
+		return
+	end
+
+	local wrap = Instance.new("Frame")
+	wrap.Name = "SysOrePill"
+	wrap.Size = UDim2.fromOffset(PILL_W, PILL_H)
+	wrap.BackgroundTransparency = 1
+	wrap.LayoutOrder = f.order
+	wrap.Parent = quickBar
+
+	local glow = Instance.new("Frame")
+	glow.AnchorPoint = Vector2.new(0.5, 0.5)
+	glow.Position = UDim2.fromScale(0.5, 0.5)
+	glow.Size = UDim2.new(1, 8, 1, 8)
+	glow.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	glow.BackgroundTransparency = 0.7
+	glow.BorderSizePixel = 0
+	glow.ZIndex = 1
+	glow.Parent = wrap
+	local glowC = Instance.new("UICorner")
+	glowC.CornerRadius = UDim.new(0, 24)
+	glowC.Parent = glow
+	rainbowFill(glow)
+
+	local ring = Instance.new("Frame")
+	ring.Size = UDim2.fromScale(1, 1)
+	ring.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	ring.BorderSizePixel = 0
+	ring.ZIndex = 2
+	ring.Parent = wrap
+	local ringC = Instance.new("UICorner")
+	ringC.CornerRadius = UDim.new(0, 21)
+	ringC.Parent = ring
+	rainbowFill(ring)
+
+	local btn = Instance.new("TextButton")
+	btn.Name = "Btn"
+	btn.Position = UDim2.fromOffset(PILL_RING, PILL_RING)
+	btn.Size = UDim2.new(1, -PILL_RING * 2, 1, -PILL_RING * 2)
+	btn.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
+	btn.BorderSizePixel = 0
+	btn.AutoButtonColor = false
+	btn.Text = ""
+	btn.ZIndex = 3
+	btn.Parent = wrap
+	local bc = Instance.new("UICorner")
+	bc.CornerRadius = UDim.new(0, 19)
+	bc.Parent = btn
+
+	local bg = Instance.new("UIGradient")
+	bg.Rotation = 90
+	bg.Color = ColorSequence.new(Color3.fromRGB(26, 26, 34), Color3.fromRGB(8, 8, 12))
+	bg.Parent = btn
+
+	mkLabel(btn, {
+		Text = f.label,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		Position = UDim2.fromOffset(14, 0),
+		Size = UDim2.new(1, -52, 1, 0),
+		ZIndex = 4,
+	})
+
+	local dot = Instance.new("Frame")
+	dot.AnchorPoint = Vector2.new(1, 0.5)
+	dot.Position = UDim2.new(1, -12, 0.5, 0)
+	dot.Size = UDim2.fromOffset(12, 12)
+	dot.BackgroundColor3 = OFF_COLOR
+	dot.BorderSizePixel = 0
+	dot.ZIndex = 4
+	dot.Parent = btn
+	local dc = Instance.new("UICorner")
+	dc.CornerRadius = UDim.new(1, 0)
+	dc.Parent = dot
+	local dotStroke = rainbowStroke(dot, 1.5, 1)
+
+	pills[f.id] = {
+		wrap = wrap, btn = btn, dot = dot, bg = bg, dotStroke = dotStroke,
+	}
+
+	btn.Activated:Connect(function()
+		local t = tween(btn, FAST, {Size = UDim2.new(1, -PILL_RING * 2 - 6, 1, -PILL_RING * 2 - 4)})
+		t.Completed:Connect(function()
+			tween(btn, FAST, {Size = UDim2.new(1, -PILL_RING * 2, 1, -PILL_RING * 2)})
+		end)
+		f.set(not f.get())
+	end)
+end
+
+local function removePill(id)
+	local p = pills[id]
+	if not p then
+		return
+	end
+	pcall(function() p.wrap:Destroy() end)
+	pills[id] = nil
+end
+
+-- ===== tab Quick Key =====
+local quickScroller = Instance.new("ScrollingFrame")
+quickScroller.Name = "QuickScroller"
+quickScroller.Position = UDim2.fromOffset(0, CONTENT_Y)
+quickScroller.Size = UDim2.new(1, 0, 1, -CONTENT_Y)
+quickScroller.BackgroundTransparency = 1
+quickScroller.BorderSizePixel = 0
+quickScroller.ScrollBarThickness = 4
+quickScroller.ScrollBarImageColor3 = Color3.fromRGB(200, 200, 210)
+quickScroller.ScrollingDirection = Enum.ScrollingDirection.Y
+quickScroller.ElasticBehavior = Enum.ElasticBehavior.WhenScrollable
+quickScroller.CanvasSize = UDim2.new(0, 0, 0, 240)
+quickScroller.Visible = false
+quickScroller.Parent = expandedGroup
+
+local QUICK_HINT = "bật tối đa " .. QUICK_MAX .. " nút để hiện ra ngoài"
+local quickMsg = mkLabel(quickScroller, {
+	Text = QUICK_HINT,
+	TextSize = 10,
+	TextColor3 = Color3.fromRGB(130, 130, 140),
+	Position = UDim2.fromOffset(14, 0),
+	Size = UDim2.new(1, -28, 0, 14),
+})
+
+local quickToggles = {}
+for i, f in ipairs(FUNCS) do
+	quickToggles[f.id] = makeToggle(quickScroller, 24 + (i - 1) * 40, f.label, false, function(on)
+		if on then
+			if pinnedCount() >= QUICK_MAX then
+				quickToggles[f.id].set(false, true)
+				quickMsg.Text = "tối đa " .. QUICK_MAX .. " nút, tắt bớt trước"
+				task.delay(1.5, function()
+					quickMsg.Text = QUICK_HINT
+				end)
+				return
+			end
+			addPill(f)
+		else
+			removePill(f.id)
+		end
+		saveConfig()
+	end)
+end
+
+-- ===== chuyển tab =====
+local function selectTab(name)
+	local isMain = name == "main"
+	mainScroller.Visible = isMain
+	quickScroller.Visible = not isMain
+	tabMain.BackgroundColor3 = isMain and Color3.fromRGB(60, 60, 80) or Color3.fromRGB(28, 28, 36)
+	tabQuick.BackgroundColor3 = (not isMain) and Color3.fromRGB(60, 60, 80) or Color3.fromRGB(28, 28, 36)
+end
+
+tabMain.Activated:Connect(function()
+	selectTab("main")
+end)
+
+tabQuick.Activated:Connect(function()
+	selectTab("quick")
+end)
+
+selectTab("main")
+
+-- ===== thông báo quặng =====
+local notif = Instance.new("Frame")
+notif.Name = "OreNotif"
+notif.Size = UDim2.fromOffset(NOTIF_WIDTH, 26)
+notif.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
+notif.BackgroundTransparency = 1
+notif.BorderSizePixel = 0
+notif.Visible = false
+notif.ZIndex = 10
+notif.Parent = gui
+
+local notifCorner = Instance.new("UICorner")
+notifCorner.CornerRadius = UDim.new(0, 13)
+notifCorner.Parent = notif
+
+local notifStroke = rainbowStroke(notif, 2, 1)
+
+local notifLbl = Instance.new("TextLabel")
+notifLbl.Size = UDim2.fromScale(1, 1)
+notifLbl.BackgroundTransparency = 1
+notifLbl.Font = Enum.Font.GothamBold
+notifLbl.TextSize = 12
+notifLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+notifLbl.TextTransparency = 1
+notifLbl.RichText = true
+notifLbl.Text = ""
+notifLbl.ZIndex = 11
+notifLbl.Parent = notif
+
+placeNotif = function()
+	local vp = getViewport()
+	local x, y = currentPos()
+	local nx = math.clamp(x + curSize.X / 2 - NOTIF_WIDTH / 2, 0, math.max(0, vp.X - NOTIF_WIDTH))
+	local ny = math.min(y + curSize.Y + 6, vp.Y - 30)
+	notif.Position = UDim2.fromOffset(nx, ny)
+end
+
+local notifVals, notifOrder = {}, {}
+local notifToken = 0
+
+notify = function(ore)
+	if not notifVals[ore.key] then
+		notifVals[ore.key] = 0
+		table.insert(notifOrder, ore)
+	end
+	notifVals[ore.key] = notifVals[ore.key] + 1
+
+	local parts = {}
+	for _, o in ipairs(notifOrder) do
+		table.insert(parts, string.format('<font color="%s">+%d %s</font>',
+			toHex(o.color), notifVals[o.key], o.label))
+	end
+	notifLbl.Text = table.concat(parts, "  •  ")
+
+	placeNotif()
+	notif.Visible = true
+	tween(notif, FAST, {BackgroundTransparency = 0.1})
+	tween(notifStroke, FAST, {Transparency = 0})
+	tween(notifLbl, FAST, {TextTransparency = 0})
+
+	notifToken = notifToken + 1
+	local my = notifToken
+	task.delay(NOTIF_DURATION, function()
+		if my ~= notifToken then
+			return
+		end
+		tween(notif, FAST, {BackgroundTransparency = 1})
+		tween(notifStroke, FAST, {Transparency = 1})
+		tween(notifLbl, FAST, {TextTransparency = 1})
+		task.delay(0.22, function()
+			if my == notifToken then
+				notif.Visible = false
+				notifVals, notifOrder = {}, {}
+			end
+		end)
+	end)
+end
+
+-- ===== mở/đóng và kéo =====
+local function setExpanded(v)
+	expanded = v
+	curSize = v and EXPANDED_VEC or Vector2.new(ICON_SIZE, ICON_SIZE)
+	clampSquare()
+	local x, y = currentPos()
+	tween(island, BOUNCE, {
+		Size = UDim2.fromOffset(curSize.X, curSize.Y),
+		Position = UDim2.fromOffset(x, y),
+	})
+	tween(islandCorner, BOUNCE, {CornerRadius = UDim.new(0, v and 22 or 16)})
+	if v then
+		expandedGroup.Visible = true
+		tween(expandedGroup, FAST, {GroupTransparency = 0})
+	else
+		tween(expandedGroup, FAST, {GroupTransparency = 1})
+		task.delay(0.2, function()
+			if not expanded then
+				expandedGroup.Visible = false
+			end
+		end)
+	end
+	placeNotif()
+end
+
+local function applyDrag()
+	clampSquare()
+	island.Position = UDim2.fromOffset(squareX, squareY)
+	placeNotif()
+	placeQuickBar()
+end
 
 local header = Instance.new("TextButton")
 header.Name = "Header"
-header.Size = UDim2.fromOffset(210, 38)
-header.Position = UDim2.fromOffset(0, 0)
+header.Size = UDim2.new(1, 0, 0, ICON_SIZE)
 header.BackgroundTransparency = 1
 header.Text = ""
-header.ZIndex = 13
-header.Parent = main
+header.AutoButtonColor = false
+header.ZIndex = 20
+header.Parent = island
 
-local dot = Instance.new("Frame")
-dot.Size = UDim2.fromOffset(8, 8)
-dot.Position = UDim2.new(0, 16, 0.5, -4)
-dot.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
-dot.BorderSizePixel = 0
-dot.ZIndex = 14
-dot.Parent = header
-local dotCorner = Instance.new("UICorner")
-dotCorner.CornerRadius = UDim.new(1, 0)
-dotCorner.Parent = dot
+local dragging, moved = false, false
+local dragStart = Vector2.new(0, 0)
+local startX, startY = 0, 0
+local dragWasExpanded = false
 
-local headerText = Instance.new("TextLabel")
-headerText.Size = UDim2.new(1, -130, 1, 0)
-headerText.Position = UDim2.new(0, 32, 0, 0)
-headerText.BackgroundTransparency = 1
-headerText.Text = "huongcuto20m"
-headerText.Font = Enum.Font.GothamBold
-headerText.TextSize = 12
-headerText.TextColor3 = Color3.fromRGB(255, 255, 255)
-headerText.TextXAlignment = Enum.TextXAlignment.Left
-headerText.ZIndex = 14
-headerText.Parent = header
-
-local statsLabel = Instance.new("TextLabel")
-statsLabel.Size = UDim2.new(0, 95, 1, 0)
-statsLabel.Position = UDim2.new(1, -105, 0, 0)
-statsLabel.BackgroundTransparency = 1
-statsLabel.Text = "60 FPS | 0ms"
-statsLabel.Font = Enum.Font.Code
-statsLabel.TextSize = 11
-statsLabel.TextColor3 = Color3.fromRGB(150, 255, 150)
-statsLabel.TextXAlignment = Enum.TextXAlignment.Right
-statsLabel.ZIndex = 14
-statsLabel.RichText = true
-statsLabel.Parent = header
-
-local closeBtn = Instance.new("TextButton")
-closeBtn.Size = UDim2.fromOffset(24, 24)
-closeBtn.Position = UDim2.new(1, -34, 0.5, -12)
-closeBtn.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
-closeBtn.BackgroundTransparency = 0.1
-closeBtn.Text = "X"
-closeBtn.Font = Enum.Font.GothamBold
-closeBtn.TextSize = 12
-closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-closeBtn.ZIndex = 15
-closeBtn.Visible = false
-closeBtn.Parent = header
-
-local closeCorner = Instance.new("UICorner")
-closeCorner.CornerRadius = UDim.new(1, 0)
-closeCorner.Parent = closeBtn
-
-local container = Instance.new("Frame")
-container.Name = "Container"
-container.Size = UDim2.new(1, 0, 1, -38)
-container.Position = UDim2.new(0, 0, 0, 38)
-container.BackgroundTransparency = 1
-container.ZIndex = 13
-container.ClipsDescendants = true
-container.Parent = main
-
-local glassOverlay = Instance.new("Frame")
-glassOverlay.Name = "GlassOverlay"
-glassOverlay.Size = UDim2.new(1, 0, 1, 0)
-glassOverlay.Position = UDim2.new(-1, 0, 0, 0)
-glassOverlay.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-glassOverlay.BackgroundTransparency = 1
-glassOverlay.BorderSizePixel = 0
-glassOverlay.ZIndex = 50
-glassOverlay.Visible = false
-glassOverlay.Parent = container
-
-local glassGrad = Instance.new("UIGradient")
-glassGrad.Color = ColorSequence.new{
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
-    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(200, 220, 255)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255)),
-}
-glassGrad.Transparency = NumberSequence.new{
-    NumberSequenceKeypoint.new(0, 0.8),
-    NumberSequenceKeypoint.new(0.5, 0.4),
-    NumberSequenceKeypoint.new(1, 0.8),
-}
-glassGrad.Rotation = 45
-glassGrad.Parent = glassOverlay
-
-local function triggerGlassTransition()
-    glassOverlay.Visible = true
-    glassOverlay.Position = UDim2.new(-1, 0, 0, 0)
-    glassOverlay.BackgroundTransparency = 1
-    
-    local tweenInfo = TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-    local tween = TweenService:Create(glassOverlay, tweenInfo, {
-        Position = UDim2.new(1, 0, 0, 0),
-        BackgroundTransparency = 0.8
-    })
-    tween:Play()
-    tween.Completed:Connect(function()
-        glassOverlay.Visible = false
-    end)
+local function isPointer(t)
+	return t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch
 end
 
-local function playToggleLiquidGlass(containerFrame)
-    local flash = Instance.new("Frame")
-    flash.Size = UDim2.new(0.5, 0, 1, 0)
-    flash.Position = UDim2.new(-0.5, 0, 0, 0)
-    flash.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    flash.BackgroundTransparency = 0.5
-    flash.BorderSizePixel = 0
-    flash.ZIndex = 25
-    flash.Parent = containerFrame
-    local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(1, 0); c.Parent = flash
-    
-    local grad = Instance.new("UIGradient")
-    grad.Transparency = NumberSequence.new{
-        NumberSequenceKeypoint.new(0, 1),
-        NumberSequenceKeypoint.new(0.5, 0.3),
-        NumberSequenceKeypoint.new(1, 1),
-    }
-    grad.Parent = flash
-    
-    local tw = TweenService:Create(flash, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-        Position = UDim2.new(1, 0, 0, 0),
-        BackgroundTransparency = 1
-    })
-    tw:Play()
-    tw.Completed:Connect(function() flash:Destroy() end)
+table.insert(conns, header.InputBegan:Connect(function(input)
+	if isPointer(input.UserInputType) then
+		dragging = true
+		moved = false
+		dragWasExpanded = expanded
+		dragStart = Vector2.new(input.Position.X, input.Position.Y)
+		startX, startY = squareX, squareY
+	end
+end))
+
+table.insert(conns, UIS.InputChanged:Connect(function(input)
+	if not dragging then
+		return
+	end
+	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+		local dx = input.Position.X - dragStart.X
+		local dy = input.Position.Y - dragStart.Y
+		if not moved and math.sqrt(dx * dx + dy * dy) > DRAG_THRESHOLD then
+			moved = true
+		end
+		if moved and not dragWasExpanded then
+			squareX = startX + dx
+			squareY = startY + dy
+			applyDrag()
+		end
+	end
+end))
+
+table.insert(conns, UIS.InputEnded:Connect(function(input)
+	if not dragging then
+		return
+	end
+	if isPointer(input.UserInputType) then
+		dragging = false
+		if not moved then
+			setExpanded(not expanded)
+		end
+	end
+end))
+
+-- ===== khôi phục config đã lưu =====
+for _, id in ipairs(wantPins) do
+	if quickToggles[id] and pinnedCount() < QUICK_MAX then
+		quickToggles[id].set(true)
+	end
+end
+if wantEsp then
+	espToggle.set(true)
+end
+if wantWalk then
+	walkToggle.set(true)
+end
+if wantHop then
+	hopToggle.set(true)
+end
+restoring = false
+saveConfig()
+
+-- ===== cập nhật UI, throttle 4 lần/giây =====
+local function refreshUI()
+	ping = getPing()
+	local f = math.floor(fps + 0.5)
+	local pingText = ping and (ping .. "ms") or "--"
+	statsLbl.Text = string.format("FPS %d · PING %s · FRAME %.1fms", f, pingText, msValue)
+
+	local root = getRoot()
+	if root then
+		local p = root.Position
+		posLbl.Text = string.format("POS X %d · Y %d · Z %d",
+			math.floor(p.X + 0.5), math.floor(p.Y + 0.5), math.floor(p.Z + 0.5))
+	else
+		posLbl.Text = "POS --"
+	end
+
+	local walkText = walkOn and (walkTarget and "  ·  đang đi" or "  ·  chờ quặng") or ""
+	local hopText = hopOn and ("  ·  server ≤" .. HOP_MAX_PLAYERS .. " người") or ""
+	statusLbl.Text = statusText .. "  ·  " .. knownTotal .. " quặng · " .. trackedCount .. " highlight"
+		.. walkText .. hopText
+
+	if biomeLbl then
+		if biomeCF then
+			biomeLbl.Text = "biome: " .. tostring(biomeName)
+		else
+			biomeLbl.Text = "biome: chưa thấy '" .. BIOME_KEYWORD .. "' — không quét"
+		end
+	end
+
+	ensureRowsRefresh()
+	syncTracked()
+
+	for id, p in pairs(pills) do
+		local fn = FUNC_BY_ID[id]
+		if fn then
+			local on = fn.get()
+			p.dot.BackgroundColor3 = on and ON_COLOR or OFF_COLOR
+			p.dotStroke.Transparency = on and 0 or 1
+			local base = on and Color3.fromRGB(14, 40, 28) or Color3.fromRGB(26, 26, 34)
+			p.bg.Color = ColorSequence.new(base, Color3.fromRGB(8, 8, 12))
+		end
+	end
+
+	if espOn then
+		local ra = refreshRootAtt()
+		if ra then
+			for _, e in pairs(tracked) do
+				if not e.beam then
+					attachLine(e)
+				elseif e.beam.Attachment0 ~= ra then
+					e.beam.Attachment0 = ra
+				end
+			end
+		end
+	end
+
+	for _, e in pairs(tracked) do
+		local d = distanceTo(e.part)
+		setInRange(e, d == nil or d <= maxDist)
+		e.lbl.Text = e.ore.label .. (d and ("  " .. math.floor(d) .. "m") or "")
+		-- ẩn nhãn gốc của game trên quặng này, chỉ giữ nhãn của script
+		if e.target and e.target.Parent then
+			for _, g in ipairs(e.target:GetDescendants()) do
+				if g:IsA("BillboardGui") and g.Enabled and not isOwnName(g) then
+					g.Enabled = false
+					table.insert(e.hidden, g)
+				end
+			end
+		end
+	end
 end
 
-local tabBar = Instance.new("Frame")
-tabBar.Size = UDim2.new(1, -24, 0, 30)
-tabBar.Position = UDim2.new(0, 12, 0, 8)
-tabBar.BackgroundColor3 = Color3.fromRGB(20, 25, 35)
-tabBar.BorderSizePixel = 0
-tabBar.ZIndex = 14
-tabBar.Parent = container
-local tbCorner = Instance.new("UICorner")
-tbCorner.CornerRadius = UDim.new(0, 6)
-tbCorner.Parent = tabBar
+local sampleStart, frames, acc = os.clock(), 0, 0
+table.insert(conns, RunService.RenderStepped:Connect(function(dt)
+	local rot = (os.clock() * 120) % 360
+	for g in pairs(rainbowGrads) do
+		g.Rotation = rot
+	end
 
-local tbLayout = Instance.new("UIListLayout")
-tbLayout.FillDirection = Enum.FillDirection.Horizontal
-tbLayout.SortOrder = Enum.SortOrder.LayoutOrder
-tbLayout.Padding = UDim.new(0, 4)
-tbLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-tbLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-tbLayout.Parent = tabBar
+	msValue = dt * 1000
+	frames = frames + 1
+	local now = os.clock()
+	local elapsed = now - sampleStart
+	if elapsed >= 0.5 then
+		fps = frames / elapsed
+		frames = 0
+		sampleStart = now
+	end
+	acc = acc + dt
+	if acc >= UI_INTERVAL then
+		acc = 0
+		refreshUI()
+	end
+end))
 
-local pages = {}
-local function makeTab(name, order)
-    local b = Instance.new("TextButton")
-    b.Size = UDim2.new(1/2, -6, 1, -6)
-    b.BackgroundColor3 = Color3.fromRGB(40, 44, 54)
-    b.Text = name
-    b.TextColor3 = Color3.fromRGB(150, 155, 168)
-    b.Font = Enum.Font.GothamBold
-    b.TextSize = 11
-    b.AutoButtonColor = false
-    b.LayoutOrder = order
-    b.ZIndex = 15
-    b.Parent = tabBar
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, 4)
-    c.Parent = b
-
-    local page = Instance.new("ScrollingFrame")
-    page.Size = UDim2.new(1, -24, 1, -50)
-    page.Position = UDim2.new(0, 12, 0, 44)
-    page.BackgroundTransparency = 1
-    page.BorderSizePixel = 0
-    page.ScrollBarThickness = 4
-    page.ScrollBarImageColor3 = Color3.fromRGB(0, 170, 255)
-    page.ScrollingDirection = Enum.ScrollingDirection.Y
-    page.CanvasSize = UDim2.new(0, 0, 0, 0)
-    page.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    page.Visible = false
-    page.ZIndex = 14
-    page.Parent = container
-
-    local layout = Instance.new("UIListLayout")
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Padding = UDim.new(0, 6)
-    layout.Parent = page
-
-    pages[name] = page
-
-    b.MouseButton1Click:Connect(function()
-        if page.Visible then return end
-        triggerGlassTransition()
-        task.wait(0.1)
-        for _, p in pairs(pages) do p.Visible = false end
-        page.Visible = true
-        for _, child in ipairs(tabBar:GetChildren()) do
-            if child:IsA("TextButton") then
-                child.BackgroundColor3 = Color3.fromRGB(40, 44, 54)
-                child.TextColor3 = Color3.fromRGB(150, 155, 168)
-            end
-        end
-        b.BackgroundColor3 = Color3.fromRGB(60, 50, 80)
-        b.TextColor3 = Color3.fromRGB(255, 255, 255)
-    end)
-    return b, page
-end
-
-local tabMainBtn, tabMainPage = makeTab("MAIN", 1)
-local tabServerBtn, tabServerPage = makeTab("SERVER", 2)
-
-tabMainPage.Visible = true
-tabMainBtn.BackgroundColor3 = Color3.fromRGB(60, 50, 80)
-tabMainBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-
-local function makeToggle(parent, labelText, defaultState, callback)
-    local btnWrapper = Instance.new("Frame")
-    btnWrapper.Size = UDim2.new(1, 0, 0, 32)
-    btnWrapper.BackgroundTransparency = 1
-    btnWrapper.ZIndex = 15
-    btnWrapper.Parent = parent
-    
-    local row = Instance.new("Frame")
-    row.Size = UDim2.fromScale(1, 1)
-    row.BackgroundColor3 = Color3.fromRGB(20, 25, 35)
-    row.BackgroundTransparency = 0.2
-    row.BorderSizePixel = 0
-    row.ZIndex = 16
-    row.Parent = btnWrapper
-    
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, 8)
-    c.Parent = row
-    
-    local rowStroke = Instance.new("UIStroke")
-    rowStroke.Thickness = 1
-    rowStroke.Color = Color3.fromRGB(60, 70, 90)
-    rowStroke.Transparency = 0.5
-    rowStroke.Parent = row
-    
-    local txt = Instance.new("TextLabel")
-    txt.Size = UDim2.new(1, -60, 1, 0)
-    txt.Position = UDim2.new(0, 10, 0, 0)
-    txt.BackgroundTransparency = 1
-    txt.Text = labelText
-    txt.Font = Enum.Font.GothamMedium
-    txt.TextSize = 11
-    txt.TextColor3 = Color3.fromRGB(200, 210, 220)
-    txt.TextXAlignment = Enum.TextXAlignment.Left
-    txt.ZIndex = 17
-    txt.Parent = row
-    
-    local toggleWrapper = Instance.new("Frame")
-    toggleWrapper.Size = UDim2.fromOffset(36, 18)
-    toggleWrapper.Position = UDim2.new(1, -46, 0.5, -9)
-    toggleWrapper.BackgroundTransparency = 1
-    toggleWrapper.ZIndex = 20
-    toggleWrapper.Parent = row
-    
-    local borderFrame = Instance.new("Frame")
-    borderFrame.Size = UDim2.fromScale(1, 1)
-    borderFrame.Position = UDim2.fromScale(0, 0)
-    borderFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    borderFrame.BorderSizePixel = 0
-    borderFrame.ZIndex = 21
-    borderFrame.Parent = toggleWrapper
-    local bCorner = Instance.new("UICorner"); bCorner.CornerRadius = UDim.new(1, 0); bCorner.Parent = borderFrame
-    local bGrad = Instance.new("UIGradient")
-    bGrad.Color = ColorSequence.new{ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 128)), ColorSequenceKeypoint.new(0.5, Color3.fromRGB(160, 0, 255)), ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 128))}
-    bGrad.Parent = borderFrame
-    table.insert(activeGradients, bGrad)
-    
-    local pillBg = Instance.new("Frame")
-    pillBg.Size = UDim2.new(1, -4, 1, -4)
-    pillBg.Position = UDim2.new(0, 2, 0, 2)
-    pillBg.BackgroundColor3 = Color3.fromRGB(30, 34, 46)
-    pillBg.BorderSizePixel = 0
-    pillBg.ZIndex = 22
-    pillBg.Parent = toggleWrapper
-    local pCorner = Instance.new("UICorner"); pCorner.CornerRadius = UDim.new(1, 0); pCorner.Parent = pillBg
-    
-    local pStroke = Instance.new("UIStroke")
-    pStroke.Thickness = 1.5
-    pStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    pStroke.Transparency = 1
-    pStroke.Parent = pillBg
-    local strokeGrad = Instance.new("UIGradient")
-    strokeGrad.Color = ColorSequence.new{ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 20, 147)), ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 255, 127)), ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 20, 147))}
-    strokeGrad.Parent = pStroke
-    
-    local knob = Instance.new("Frame")
-    knob.Size = UDim2.fromOffset(12, 12)
-    knob.Position = UDim2.new(0, 3, 0.5, -6)
-    knob.BackgroundColor3 = Color3.fromRGB(160, 170, 190)
-    knob.BorderSizePixel = 0
-    knob.ZIndex = 23
-    knob.Parent = pillBg
-    local kCorner = Instance.new("UICorner"); kCorner.CornerRadius = UDim.new(1, 0); kCorner.Parent = knob
-    
-    local hit = Instance.new("TextButton")
-    hit.Size = UDim2.fromScale(1, 1)
-    hit.BackgroundTransparency = 1
-    hit.Text = ""
-    hit.ZIndex = 24
-    hit.Parent = row
-    
-    local state = defaultState
-    local function apply(v)
-        if v then
-            playToggleLiquidGlass(pillBg)
-            TweenService:Create(pStroke, TweenInfo.new(0.2), { Transparency = 0 }):Play()
-            TweenService:Create(pillBg, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(10, 12, 18) }):Play()
-            local exists = false
-            for _, g in ipairs(activeGradients) do if g == strokeGrad then exists = true break end end
-            if not exists then table.insert(activeGradients, strokeGrad) end
-            TweenService:Create(knob, TweenInfo.new(0.2, Enum.EasingStyle.Back), { Position = UDim2.new(1, -15, 0.5, -6), BackgroundColor3 = Color3.fromRGB(255, 255, 255) }):Play()
-            TweenService:Create(txt, TweenInfo.new(0.2), { TextColor3 = Color3.fromRGB(255, 255, 255) }):Play()
-        else
-            playToggleLiquidGlass(pillBg)
-            TweenService:Create(pStroke, TweenInfo.new(0.2), { Transparency = 1 }):Play()
-            TweenService:Create(pillBg, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(30, 34, 46) }):Play()
-            for i = #activeGradients, 1, -1 do if activeGradients[i] == strokeGrad then table.remove(activeGradients, i); break end end
-            TweenService:Create(knob, TweenInfo.new(0.2, Enum.EasingStyle.Back), { Position = UDim2.new(0, 3, 0.5, -6), BackgroundColor3 = Color3.fromRGB(160, 170, 190) }):Play()
-            TweenService:Create(txt, TweenInfo.new(0.2), { TextColor3 = Color3.fromRGB(180, 190, 210) }):Play()
-        end
-        if callback then callback(v) end
-    end
-    hit.MouseButton1Click:Connect(function() state = not state; apply(state) end)
-    if state then apply(state) end
-    return btnWrapper
-end
-
-local function makeAction(parent, labelText, color, callback)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, 0, 0, 32)
-    btn.BackgroundColor3 = color or Color3.fromRGB(0, 170, 255)
-    btn.BackgroundTransparency = 0.2
-    btn.Text = labelText
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 12
-    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.AutoButtonColor = false
-    btn.ZIndex = 15
-    btn.Parent = parent
-    local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 8); c.Parent = btn
-    local s = Instance.new("UIStroke"); s.Thickness = 1; s.Color = color or Color3.fromRGB(0, 170, 255); s.Transparency = 0.5; s.Parent = btn
-    
-    btn.MouseEnter:Connect(function() TweenService:Create(btn, TweenInfo.new(0.1), { BackgroundTransparency = 0 }):Play() end)
-    btn.MouseLeave:Connect(function() TweenService:Create(btn, TweenInfo.new(0.1), { BackgroundTransparency = 0.2 }):Play() end)
-    btn.MouseButton1Click:Connect(callback)
-    return btn
-end
-
--- ADD ELEMENTS (MAIN TAB)
-makeToggle(tabMainPage, "AUTO STEAL", CONFIG.EnableRagdollTele, function(v) CONFIG.EnableRagdollTele = v end)
-makeToggle(tabMainPage, "AUTO PICKAXE", CONFIG.EnableAutoPickaxe, function(v) CONFIG.EnableAutoPickaxe = v end)
-makeToggle(tabMainPage, "WALK SPEED (200)", CONFIG.EnableWalkSpeed, function(v) CONFIG.EnableWalkSpeed = v; applyWalkSpeed() end)
-makeToggle(tabMainPage, "PROMPT RANGE (E)", CONFIG.EnablePromptRange, function(v) 
-    CONFIG.EnablePromptRange = v
-    if v then pcall(scanAllPrompts) else pcall(restoreAllPrompts) end
+gui.Destroying:Connect(function()
+	alive = false
+	walkOn = false
+	hopOn = false
+	stopESP()
+	for _, c in ipairs(conns) do
+		c:Disconnect()
+	end
+	conns = {}
+	rainbowGrads = {}
 end)
-makeToggle(tabMainPage, "ANTI-RAGDOLL", CONFIG.EnableAntiRagdoll, function(v) 
-    CONFIG.EnableAntiRagdoll = v
-    if not v then arStopHolding(LP.Character) end
-end)
-makeToggle(tabMainPage, "AUTO ZONE 11", CONFIG.EnableZone11Farm, function(v)
-    CONFIG.EnableZone11Farm = v
-    if v then ZONE11_DONE = false; task.spawn(zone11FarmingLoop) end
-end)
-
-makeAction(tabMainPage, "TELEPORT SAFE ZONE", Color3.fromRGB(160, 0, 255), function()
-    if TELEPORT_LOCK then return end
-    local char = LP.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-    pcall(function() hrp.Anchored = false end)
-    teleportChar(CONFIG.SafeZone.Position)
-end)
-
--- ADD ELEMENTS (SERVER TAB)
-makeAction(tabServerPage, "REJOIN SERVER NOW", Color3.fromRGB(80, 210, 130), function()
-    pcall(simpleRejoin)
-end)
-
-makeToggle(tabServerPage, "AUTO REJOIN", CONFIG.AutoRejoinOnDisconnect, function(v) 
-    CONFIG.AutoRejoinOnDisconnect = v 
-end)
-
-makeToggle(tabServerPage, "AUTO EXECUTE", CONFIG.EnableAutoExecute, function(v) 
-    CONFIG.EnableAutoExecute = v 
-    if v then tryAutoExecute() end
-end)
-
-makeAction(tabServerPage, "BOOST FPS (XÓA SÁNG)", Color3.fromRGB(255, 140, 0), function()
-    clearHeavyEffects()
-end)
-
--- LOGIC ĐÓNG/MỞ UI
-local isOpen = false
-local function toggleMenu()
-    isOpen = not isOpen
-    local targetWidth = isOpen and 300 or 210
-    local targetHeight = isOpen and 350 or 38
-    local targetCorner = isOpen and UDim.new(0, 16) or UDim.new(1, 0)
-    local targetX = isOpen and (0.5 - 150) or (0.5 - 105)
-    
-    TweenService:Create(mainWrapper, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-        Size = UDim2.fromOffset(targetWidth, targetHeight),
-        Position = UDim2.new(0.5, targetX, 0, 20)
-    }):Play()
-    TweenService:Create(mainCorner, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-        CornerRadius = targetCorner
-    }):Play()
-    
-    if isOpen then
-        TweenService:Create(statsLabel, TweenInfo.new(0.2), { TextTransparency = 1 }):Play()
-        closeBtn.Visible = true
-    else
-        TweenService:Create(statsLabel, TweenInfo.new(0.2), { TextTransparency = 0 }):Play()
-        closeBtn.Visible = false
-    end
-    header.Size = UDim2.fromOffset(targetWidth, 38)
-end
-
-header.MouseButton1Click:Connect(toggleMenu)
-closeBtn.MouseButton1Click:Connect(function() toggleMenu() end)
-
--- TRẠNG THÁI & STATS
-local frames = 0
-local lastTime = tick()
-local currentFps = 60
-local currentPing = 0
-local statUpdateTimer = 0
-
-RunService.RenderStepped:Connect(function(dt)
-    frames = frames + 1
-    local now = tick()
-    statUpdateTimer = statUpdateTimer + dt
-    
-    if now - lastTime >= 0.5 then
-        currentFps = math.floor(frames / (now - lastTime))
-        frames = 0
-        lastTime = now
-    end
-    
-    if statUpdateTimer >= CONFIG.StatUpdateInterval then
-        statUpdateTimer = 0
-        local ok, ping = pcall(function() return Stats.Network.ServerStatsItem["Data Ping"]:GetValue() end)
-        if ok and ping then currentPing = math.floor(ping) else currentPing = math.floor(LP:GetNetworkPing() * 1000) end
-    end
-    
-    if not isOpen and mainWrapper.Visible then
-        local displayText = ""
-        if STATUS_OVERRIDE and tick() < STATUS_OVERRIDE_TIME then
-            if STATUS_OVERRIDE == "AUTO STEAL" then
-                displayText = "<font color='rgb(255, 100, 100)'>AUTO STEAL</font>"
-            elseif STATUS_OVERRIDE == "AUTO PICKAXE" then
-                displayText = "<font color='rgb(200, 100, 255)'>AUTO PICKAXE</font>"
-            elseif STATUS_OVERRIDE == "ĐÃ BOOST FPS" then
-                displayText = "<font color='rgb(255, 200, 0)'>FPS BOOSTED</font>"
-            else
-                displayText = STATUS_OVERRIDE
-            end
-        else
-            local pingColor = currentPing < 80 and "150, 255, 150" or (currentPing < 150 and "255, 255, 150" or "255, 100, 100")
-            displayText = string.format("%d FPS | <font color='rgb(%s)'>%dms</font>", currentFps, pingColor, currentPing)
-        end
-        statsLabel.Text = displayText
-    end
-end)
-
--- KÉO THẢ
-local dragging, dragStart, startPos, dragInput
-header.InputBegan:Connect(function(input)
-    if not isOpen then return end 
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true; dragStart = input.Position; startPos = mainWrapper.Position
-        input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
-    end
-end)
-header.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
-end)
-UserInputService.InputChanged:Connect(function(input)
-    if dragging and input == dragInput and isOpen then
-        local delta = input.Position - dragStart
-        mainWrapper.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    end
-end)
-
--- KHỞI CHẠY SCRIPTS NGẦM
-setupAutoRejoin()
-tryAutoExecute()
-clearHeavyEffects() -- Dọn dẹp lúc đầu
-
-task.spawn(function()
-    task.wait(CONFIG.StartupDelay)
-    if SCRIPTS_STARTED then return end
-    SCRIPTS_STARTED = true
-    task.spawn(antiRagdollLoop)
-    task.spawn(ragdollTeleportLoop)
-    task.spawn(autoPickaxeLoop)
-    task.spawn(walkSpeedLoop)
-    task.spawn(promptScanLoop)
-    
-    if CONFIG.EnableZone11Farm then
-        zone11FarmingLoop()
-    end
-end)
-
-task.spawn(function()
-    task.wait(2)
-    refreshPromptCache()
-    while true do
-        task.wait(6)
-        refreshPromptCache()
-    end
-end)
-
-print("[huongcuto20m] Loaded.")
