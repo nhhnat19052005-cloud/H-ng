@@ -1,4 +1,4 @@
--- Huongcuto (Delta Mobile Safe - gom biến tránh tràn local limit)
+-- Huongcuto (Delta Mobile Safe + Quick Key + Né/Nhảy vật cản + Auto Steal + Chỉ chạy sau Loading + Line cầu vồng về điểm)
 local S = {
 	Players = game:GetService("Players"),
 	RunService = game:GetService("RunService"),
@@ -8,6 +8,7 @@ local S = {
 	Stats = game:GetService("Stats"),
 	HttpService = game:GetService("HttpService"),
 	TeleportService = game:GetService("TeleportService"),
+	ProximityPromptService = game:GetService("ProximityPromptService"),
 }
 
 local LocalPlayer = S.Players.LocalPlayer
@@ -24,7 +25,7 @@ local CFG = {
 	DRAG_THRESHOLD = 6,
 	NOTIF_WIDTH = 240,
 	ICON_SIZE = 52,
-	EXPANDED_VEC = Vector2.new(270, 412),
+	EXPANDED_VEC = Vector2.new(270, 446),
 	SIZE_MIN = 0.1,
 	SIZE_MAX = 2.0,
 	SIZE_STEP = 0.1,
@@ -33,6 +34,7 @@ local CFG = {
 	DIST_STEP = 10,
 	DIST_DEFAULT = 300,
 	LINE_WIDTH = 0.18,
+	STEAL_LINE_WIDTH = 0.32,
 	WALK_REACH = 6,
 	WALK_STUCK_TIME = 1.0,
 	WALK_GIVEUP = 12,
@@ -40,6 +42,11 @@ local CFG = {
 	WAIT_RADIUS = 8,
 	WAIT_ANG_SPEED = 0.6,
 	WAIT_STUCK_TIME = 1.0,
+	STEAL_RETURN_POS = Vector3.new(-740, 63, -640),
+	STEAL_REACH = 7,
+	STEAL_MAX_TIME = 45,
+	STEAL_STUCK_TIME = 0.9,
+	STEAL_COOLDOWN = 1.2,
 	QUICK_MAX = 3,
 	FILE = "huongcuto_config.json",
 	LOADING_DURATION = 2,
@@ -84,6 +91,17 @@ local ST = {
 	scanDone = false,
 	autoEquipOn = true,
 	walkOn = false,
+	stealOn = false,
+	returningSteal = false,
+	stealStartedAt = 0,
+	lastStealTriggerAt = -CFG.STEAL_COOLDOWN,
+	stealLastPos = nil,
+	stealStuckT = 0,
+	stealSidestepUntil = 0,
+	stealSidestepGoal = nil,
+	stealSideSign = 1,
+	stealStreak = 0,
+	stealReturnPos = CFG.STEAL_RETURN_POS,
 	hopping = false,
 	lastHopAt = -CFG.HOP_COOLDOWN,
 	espScale = 1.0,
@@ -128,6 +146,8 @@ local tracked, trackedPerKey = {}, {}
 local priority, rows = {}, {}
 local queue, queued = {}, {}
 local walkSkip = {}
+local savedPromptHold, seenTools = {}, {}
+local stealLine = {part = nil, att1 = nil, beam = nil, grad = nil}
 local conns, rainbowGrads = {}, {}
 local pills, FUNC_BY_ID = {}, {}
 local UI = {}
@@ -328,6 +348,7 @@ local function saveConfig()
 		priority = pri,
 		esp = ST.espOn,
 		walk = ST.walkOn,
+		steal = ST.stealOn,
 		auto = ST.autoEquipOn,
 		scale = ST.espScale,
 		dist = ST.maxDist,
@@ -335,6 +356,9 @@ local function saveConfig()
 	}
 	if ST.waitPos then
 		data.wait = {x = ST.waitPos.X, y = ST.waitPos.Y, z = ST.waitPos.Z}
+	end
+	if ST.stealReturnPos then
+		data.stealPos = {x = ST.stealReturnPos.X, y = ST.stealReturnPos.Y, z = ST.stealReturnPos.Z}
 	end
 	pcall(function() writefile(CFG.FILE, S.HttpService:JSONEncode(data)) end)
 end
@@ -348,7 +372,7 @@ local function loadConfig()
 	return (ok and type(res) == "table") and res or nil
 end
 
-local wantEsp, wantWalk, wantPins = false, false, {}
+local wantEsp, wantWalk, wantSteal, wantPins = false, false, false, {}
 do
 	local saved = loadConfig()
 	if saved then
@@ -377,6 +401,7 @@ do
 		if type(saved.auto) == "boolean" then ST.autoEquipOn = saved.auto end
 		wantEsp = saved.esp == true
 		wantWalk = saved.walk == true
+		wantSteal = saved.steal == true
 		if type(saved.pins) == "table" then
 			for _, id in ipairs(saved.pins) do
 				if type(id) == "string" then table.insert(wantPins, id) end
@@ -385,6 +410,10 @@ do
 		local w = saved.wait
 		if type(w) == "table" and type(w.x) == "number" and type(w.y) == "number" and type(w.z) == "number" then
 			ST.waitPos = Vector3.new(w.x, w.y, w.z)
+		end
+		local sp = saved.stealPos
+		if type(sp) == "table" and type(sp.x) == "number" and type(sp.y) == "number" and type(sp.z) == "number" then
+			ST.stealReturnPos = Vector3.new(sp.x, sp.y, sp.z)
 		end
 	end
 end
@@ -464,6 +493,68 @@ local function detachLine(e)
 	end)
 	e.beam = nil
 	e.att1 = nil
+end
+
+-- ===== line cầu vồng nối tới điểm chạy về khi steal =====
+local function destroyStealLine()
+	if stealLine.grad then
+		rainbowGrads[stealLine.grad] = nil
+	end
+	pcall(function()
+		if stealLine.beam then stealLine.beam:Destroy() end
+		if stealLine.att1 then stealLine.att1:Destroy() end
+		if stealLine.part then stealLine.part:Destroy() end
+	end)
+	stealLine.part, stealLine.att1, stealLine.beam, stealLine.grad = nil, nil, nil, nil
+end
+
+local function syncStealLine()
+	if not (ST.alive and ST.uiReady and ST.stealOn and ST.returningSteal) then
+		if stealLine.beam then destroyStealLine() end
+		return
+	end
+	local ra = refreshRootAtt()
+	if not ra then return end
+
+	if not stealLine.part or not stealLine.part.Parent then
+		destroyStealLine()
+		local p = Instance.new("Part")
+		p.Name = "SysOreStealAnchor"
+		p.Anchored = true
+		p.CanCollide = false
+		p.CanTouch = false
+		p.CanQuery = false
+		p.Transparency = 1
+		p.Size = Vector3.new(0.2, 0.2, 0.2)
+		p.CFrame = CFrame.new(ST.stealReturnPos)
+		p.Parent = workspace
+
+		local att1 = Instance.new("Attachment")
+		att1.Name = "SysOreStealAtt"
+		att1.Parent = p
+
+		local beam = Instance.new("Beam")
+		beam.Name = "SysOreStealBeam"
+		beam.Attachment0 = ra
+		beam.Attachment1 = att1
+		beam.Color = RAINBOW
+		beam.Width0 = CFG.STEAL_LINE_WIDTH
+		beam.Width1 = CFG.STEAL_LINE_WIDTH
+		beam.FaceCamera = true
+		beam.LightEmission = 1
+		beam.LightInfluence = 0
+		beam.Transparency = NumberSequence.new(0.1)
+		beam.Parent = p
+
+		stealLine.part = p
+		stealLine.att1 = att1
+		stealLine.beam = beam
+	else
+		stealLine.part.CFrame = CFrame.new(ST.stealReturnPos)
+		if stealLine.beam and stealLine.beam.Attachment0 ~= ra then
+			stealLine.beam.Attachment0 = ra
+		end
+	end
 end
 
 local function untrack(inst)
@@ -626,7 +717,7 @@ local function stopESP()
 end
 
 table.insert(conns, workspace.DescendantAdded:Connect(function(inst)
-	if ST.espOn then enqueue(inst, "live") end
+	if ST.alive and ST.uiReady and ST.espOn then enqueue(inst, "live") end
 end))
 
 table.insert(conns, workspace.DescendantRemoving:Connect(function(inst)
@@ -634,31 +725,35 @@ table.insert(conns, workspace.DescendantRemoving:Connect(function(inst)
 end))
 
 table.insert(conns, S.RunService.Heartbeat:Connect(function()
-	if ST.espOn then processQueue() end
+	if ST.alive and ST.uiReady and ST.espOn then processQueue() end
 end))
 
 task.spawn(function()
 	while ST.alive do
 		task.wait(CFG.RESCAN_INTERVAL)
-		if ST.espOn and ST.qHead > ST.qTail then enqueueWorkspace("scan") end
+		if ST.uiReady and ST.espOn and ST.qHead > ST.qTail then enqueueWorkspace("scan") end
 	end
 end)
 
 task.spawn(function()
 	while ST.alive do
 		task.wait(2)
-		for inst in pairs(known) do
-			if not inst:IsDescendantOf(workspace) then removeKnown(inst) end
+		if ST.uiReady then
+			for inst in pairs(known) do
+				if not inst:IsDescendantOf(workspace) then removeKnown(inst) end
+			end
 		end
 	end
 end)
 
 task.spawn(function()
 	while ST.alive do
-		local cf, size, name = findBiome()
-		local wasNil = ST.biomeCF == nil
-		ST.biomeCF, ST.biomeSize, ST.biomeName = cf, size, name
-		if wasNil and cf and ST.espOn then enqueueWorkspace("scan") end
+		if ST.uiReady then
+			local cf, size, name = findBiome()
+			local wasNil = ST.biomeCF == nil
+			ST.biomeCF, ST.biomeSize, ST.biomeName = cf, size, name
+			if wasNil and cf and ST.espOn then enqueueWorkspace("scan") end
+		end
 		task.wait(CFG.BIOME_SCAN_INTERVAL)
 	end
 end)
@@ -690,7 +785,7 @@ local function findLowServer()
 end
 
 local function hopServer()
-	if ST.hopping or os.clock() - ST.lastHopAt < CFG.HOP_COOLDOWN then return end
+	if not ST.uiReady or ST.hopping or os.clock() - ST.lastHopAt < CFG.HOP_COOLDOWN then return end
 	ST.hopping = true
 	ST.lastHopAt = os.clock()
 	local prevStatus = ST.statusText
@@ -751,7 +846,7 @@ end
 task.spawn(function()
 	while ST.alive do
 		task.wait(CFG.EQUIP_INTERVAL)
-		if ST.autoEquipOn then
+		if ST.uiReady and ST.autoEquipOn and not ST.returningSteal then
 			local char = LocalPlayer.Character
 			local hum = char and char:FindFirstChildOfClass("Humanoid")
 			if hum and hum.Health > 0 and not char:FindFirstChildOfClass("Tool") then
@@ -766,13 +861,10 @@ end)
 local function forceJump(hum)
 	if not hum then return end
 	local now = os.clock()
-	if now - ST.lastJumpAt < 0.45 then return end
-	local state = hum:GetState()
-	if state ~= Enum.HumanoidStateType.Freefall and state ~= Enum.HumanoidStateType.Jumping then
-		ST.lastJumpAt = now
-		hum.Jump = true
-		pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
-	end
+	if now - ST.lastJumpAt < 0.4 then return end
+	ST.lastJumpAt = now
+	hum.Jump = true
+	pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
 end
 
 local function hasObstacleAhead(root, goalPos)
@@ -785,28 +877,186 @@ local function hasObstacleAhead(root, goalPos)
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	local ignoreList = {}
 	if UI.gui then table.insert(ignoreList, UI.gui) end
+	if stealLine.part then table.insert(ignoreList, stealLine.part) end
 	if LocalPlayer.Character then table.insert(ignoreList, LocalPlayer.Character) end
 	for _, p in ipairs(S.Players:GetPlayers()) do
 		if p.Character then table.insert(ignoreList, p.Character) end
 	end
 	params.FilterDescendantsInstances = ignoreList
 
-	local lowHit = workspace:Raycast(root.Position - Vector3.new(0, 1.2, 0), dir * 3.5, params)
-	local midHit = workspace:Raycast(root.Position + Vector3.new(0, 0.5, 0), dir * 3.5, params)
-	if not (lowHit or midHit) then return false, false end
+	local lowHit = workspace:Raycast(root.Position - Vector3.new(0, 1.4, 0), dir * 4.2, params)
+	local midHit = workspace:Raycast(root.Position + Vector3.new(0, 0.4, 0), dir * 4.2, params)
+	local chestHit = workspace:Raycast(root.Position + Vector3.new(0, 1.8, 0), dir * 4.2, params)
+	if not (lowHit or midHit or chestHit) then return false, false end
 
-	local highHit = workspace:Raycast(root.Position + Vector3.new(0, 3.6, 0), dir * 3.5, params)
+	local highHit = workspace:Raycast(root.Position + Vector3.new(0, 4.0, 0), dir * 4.2, params)
 	return true, highHit == nil
 end
 
-local function sidestepGoal(root, goalPos, dirSign)
+local function sidestepGoal(root, goalPos, dirSign, stepDist)
 	local flatDiff = Vector3.new(goalPos.X - root.Position.X, 0, goalPos.Z - root.Position.Z)
 	local forward = flatDiff.Magnitude > 0.1 and flatDiff.Unit or Vector3.new(0, 0, -1)
 	local right = Vector3.new(-forward.Z, 0, forward.X) * (dirSign or 1)
-	return root.Position + forward * 4.5 + right * 6
+	local lat = stepDist or 8.5
+	return root.Position + forward * 6.5 + right * lat
 end
 
--- ===== auto farm ore + chỗ đợi quặng =====
+-- ===== auto steal + instant prompt (chỉ chạy về khi Pick Up thành công + line cầu vồng) =====
+local function applyInstantPrompt(prompt)
+	if not (prompt and prompt:IsA("ProximityPrompt")) then return end
+	if ST.uiReady and ST.stealOn then
+		if savedPromptHold[prompt] == nil then
+			savedPromptHold[prompt] = prompt.HoldDuration
+		end
+		if prompt.HoldDuration ~= 0 then
+			pcall(function() prompt.HoldDuration = 0 end)
+		end
+	elseif savedPromptHold[prompt] ~= nil then
+		local prev = savedPromptHold[prompt]
+		savedPromptHold[prompt] = nil
+		pcall(function() prompt.HoldDuration = prev end)
+	end
+end
+
+local function refreshAllPrompts()
+	for _, d in ipairs(workspace:GetDescendants()) do
+		if d:IsA("ProximityPrompt") then
+			applyInstantPrompt(d)
+		end
+	end
+end
+
+local function snapshotExistingTools()
+	table.clear(seenTools)
+	local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+	if bp then
+		for _, t in ipairs(bp:GetChildren()) do
+			if t:IsA("Tool") then seenTools[t] = true end
+		end
+	end
+	local char = LocalPlayer.Character
+	if char then
+		for _, t in ipairs(char:GetChildren()) do
+			if t:IsA("Tool") then seenTools[t] = true end
+		end
+	end
+end
+
+local function triggerStealReturn(reason)
+	if not (ST.alive and ST.uiReady and ST.stealOn) then return end
+	local now = os.clock()
+	if now - ST.lastStealTriggerAt < CFG.STEAL_COOLDOWN then return end
+	local root = getRoot()
+	if not root then return end
+	if (root.Position - ST.stealReturnPos).Magnitude <= CFG.STEAL_REACH then return end
+
+	ST.lastStealTriggerAt = now
+	ST.returningSteal = true
+	ST.stealStartedAt = now
+	ST.stealLastPos = root.Position
+	ST.stealStuckT = 0
+	ST.stealSidestepUntil = 0
+	ST.stealSidestepGoal = nil
+	ST.stealStreak = 0
+	ST.walkTarget = nil
+	ST.walkSidestepUntil = 0
+	ST.walkSidestepGoal = nil
+	syncStealLine()
+	if UI.notifyStatus then
+		UI.notifyStatus("Pick Up xong (" .. (reason or "Steal") .. ") → chạy về", Color3.fromRGB(70, 210, 130))
+	end
+end
+
+local function onPickedUpItem(tool, reason)
+	if not (ST.alive and ST.uiReady and ST.stealOn) then return end
+	if not tool or not tool:IsA("Tool") then return end
+	if seenTools[tool] or isPickaxe(tool) then return end
+	seenTools[tool] = true
+	triggerStealReturn(reason or tool.Name)
+end
+
+local function bindContainerTools(container)
+	if not container then return end
+	for _, child in ipairs(container:GetChildren()) do
+		if child:IsA("Tool") then seenTools[child] = true end
+	end
+	table.insert(conns, container.ChildAdded:Connect(function(child)
+		if child:IsA("Tool") then
+			task.defer(function()
+				if ST.alive and ST.uiReady and ST.stealOn and child.Parent and (child.Parent == LocalPlayer.Character or child.Parent == LocalPlayer:FindFirstChildOfClass("Backpack")) then
+					onPickedUpItem(child, "Đã nhận đồ")
+				else
+					seenTools[child] = true
+				end
+			end)
+		end
+	end))
+end
+
+local function stopStealReturn(finished)
+	ST.returningSteal = false
+	ST.stealLastPos = nil
+	ST.stealStuckT = 0
+	ST.stealSidestepUntil = 0
+	ST.stealSidestepGoal = nil
+	ST.stealStreak = 0
+	destroyStealLine()
+	if finished and UI.notifyStatus then
+		UI.notifyStatus("Đã về vị trí — tiếp tục farm/chờ quặng", Color3.fromRGB(160, 210, 255))
+	end
+end
+
+local function setStealEnabled(on)
+	ST.stealOn = on
+	refreshAllPrompts()
+	if on then
+		if ST.uiReady then snapshotExistingTools() end
+	else
+		stopStealReturn(false)
+	end
+	saveConfig()
+end
+
+bindContainerTools(LocalPlayer:FindFirstChildOfClass("Backpack"))
+if LocalPlayer.Character then bindContainerTools(LocalPlayer.Character) end
+table.insert(conns, LocalPlayer.CharacterAdded:Connect(function(char)
+	bindContainerTools(char)
+end))
+
+table.insert(conns, workspace.DescendantAdded:Connect(function(inst)
+	if ST.alive and ST.uiReady and inst:IsA("ProximityPrompt") and ST.stealOn then
+		applyInstantPrompt(inst)
+	end
+end))
+
+table.insert(conns, S.ProximityPromptService.PromptTriggered:Connect(function(prompt, player)
+	if player == LocalPlayer and ST.alive and ST.uiReady and ST.stealOn then
+		local actionText = prompt and prompt.ActionText or "Pick Up"
+		task.delay(0.12, function()
+			if ST.alive and ST.uiReady and ST.stealOn then
+				triggerStealReturn(actionText)
+			end
+		end)
+	end
+end))
+
+table.insert(conns, S.UIS.InputBegan:Connect(function(input, gp)
+	if gp or not (ST.alive and ST.uiReady and ST.stealOn) then return end
+	if input.KeyCode == Enum.KeyCode.E then
+		refreshAllPrompts()
+	end
+end))
+
+task.spawn(function()
+	while ST.alive do
+		task.wait(0.35)
+		if ST.uiReady and ST.stealOn then
+			refreshAllPrompts()
+		end
+	end
+end)
+
+-- ===== auto farm ore + chỗ đợi quặng + chạy về khi steal =====
 local function getHum()
 	local char = LocalPlayer.Character
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -848,104 +1098,139 @@ local function stopWalking()
 	if hum and root then hum:MoveTo(root.Position) end
 end
 
+local function moveWithAvoidance(hum, root, goal, now, stuckT, lastPos, sidestepGoalRef, sidestepUntilRef, sideSign, stuckLimit, sidestepDur, streakRef)
+	if hum.WalkSpeed <= 0 then hum.WalkSpeed = 16 end
+	local movedFlat = lastPos and Vector3.new(root.Position.X - lastPos.X, 0, root.Position.Z - lastPos.Z).Magnitude or 999
+	local moved3D = lastPos and (root.Position - lastPos).Magnitude or 999
+	if movedFlat < 0.45 and moved3D < 0.55 then
+		stuckT = stuckT + 0.2
+	else
+		stuckT = 0
+		if streakRef then streakRef = 0 end
+	end
+	lastPos = root.Position
+
+	local activeGoal = (sidestepGoalRef and now < sidestepUntilRef) and sidestepGoalRef or goal
+	local blocked, canJump = hasObstacleAhead(root, activeGoal)
+	if blocked and canJump then forceJump(hum) end
+
+	if stuckT >= stuckLimit then
+		forceJump(hum)
+		local streak = (streakRef or 0) + 1
+		-- chỉ đổi bên né khi né cùng một bên 2 lần mà vẫn bị kẹt
+		if streak >= 2 then
+			sideSign = -sideSign
+			streak = 0
+		end
+		if streakRef ~= nil then streakRef = streak end
+		local latBoost = 8.5 + math.min(streak * 3, 6)
+		sidestepGoalRef = sidestepGoal(root, goal, sideSign, latBoost)
+		sidestepUntilRef = now + sidestepDur
+		stuckT = 0
+	end
+
+	if sidestepGoalRef and now < sidestepUntilRef then
+		hum:MoveTo(sidestepGoalRef)
+	else
+		sidestepGoalRef = nil
+		hum:MoveTo(goal)
+	end
+
+	return stuckT, lastPos, sidestepGoalRef, sidestepUntilRef, sideSign, streakRef
+end
+
 task.spawn(function()
 	while ST.alive do
 		task.wait(0.2)
-		if not (ST.walkOn and ST.espOn) then
-			if ST.walkTarget or ST.waitLastPos then stopWalking() end
-		else
+		if ST.uiReady then
 			local hum, root = getHum(), getRoot()
 			if hum and root then
 				local now = os.clock()
-				if ST.walkTarget then
-					local e = tracked[ST.walkTarget]
-					if not e or not ST.walkTarget:IsDescendantOf(workspace) or not eligible(e) or not inEspRange(e.part) then
-						ST.walkTarget = nil
-						ST.walkSidestepUntil = 0
+
+				if ST.stealOn and ST.returningSteal then
+					syncStealLine()
+					local dHome = (root.Position - ST.stealReturnPos).Magnitude
+					if dHome <= CFG.STEAL_REACH then
+						stopStealReturn(true)
 						hum:MoveTo(root.Position)
+					elseif (now - ST.stealStartedAt) >= CFG.STEAL_MAX_TIME then
+						-- gia hạn thêm nếu vẫn còn đang di chuyển hoặc chưa tới nơi
+						ST.stealStartedAt = now
+						forceJump(hum)
+						hum:MoveTo(ST.stealReturnPos)
+					else
+						ST.stealStuckT, ST.stealLastPos, ST.stealSidestepGoal, ST.stealSidestepUntil, ST.stealSideSign, ST.stealStreak =
+							moveWithAvoidance(
+								hum, root, ST.stealReturnPos, now,
+								ST.stealStuckT, ST.stealLastPos, ST.stealSidestepGoal, ST.stealSidestepUntil,
+								ST.stealSideSign, CFG.STEAL_STUCK_TIME, 1.6, ST.stealStreak
+							)
 					end
-				end
-
-				if ST.walkTarget then
-					local better = pickBestOre()
-					if better and better ~= ST.walkTarget and oreRank(tracked[better].ore.key) < oreRank(tracked[ST.walkTarget].ore.key) then
-						ST.walkTarget = better
-						ST.walkLastPos, ST.walkStuckT, ST.walkAge, ST.walkSidestepUntil = nil, 0, 0, 0
-					end
-				end
-
-				if not ST.walkTarget then
-					ST.walkTarget = pickBestOre()
-					ST.walkLastPos, ST.walkStuckT, ST.walkAge, ST.walkSidestepUntil = nil, 0, 0, 0
-				end
-
-				if ST.walkTarget then
-					ST.waitLastPos, ST.waitStuckT, ST.waitSidestepUntil = nil, 0, 0
-					local e = tracked[ST.walkTarget]
-					local part = e and e.part
-					if part and part.Parent then
-						local d = (root.Position - part.Position).Magnitude
-						if d <= CFG.WALK_REACH then
-							hum:MoveTo(root.Position)
-							ST.walkAge, ST.walkStuckT, ST.walkSidestepUntil = 0, 0, 0
-						else
-							ST.walkAge = ST.walkAge + 0.2
-							local movedFlat = ST.walkLastPos and Vector3.new(root.Position.X - ST.walkLastPos.X, 0, root.Position.Z - ST.walkLastPos.Z).Magnitude or 999
-							ST.walkStuckT = (movedFlat < 0.4) and (ST.walkStuckT + 0.2) or 0
-							ST.walkLastPos = root.Position
-
-							local activeGoal = (ST.walkSidestepGoal and now < ST.walkSidestepUntil) and ST.walkSidestepGoal or part.Position
-							local blocked, canJump = hasObstacleAhead(root, activeGoal)
-							if blocked and canJump then forceJump(hum) end
-
-							if ST.walkStuckT >= CFG.WALK_STUCK_TIME then
-								forceJump(hum)
-								ST.walkSideSign = -ST.walkSideSign
-								ST.walkSidestepGoal = sidestepGoal(root, part.Position, ST.walkSideSign)
-								ST.walkSidestepUntil = now + 1.4
-								ST.walkStuckT = 0
-							end
-
-							if ST.walkAge >= CFG.WALK_GIVEUP then
-								walkSkip[ST.walkTarget] = now + CFG.WALK_SKIP_TIME
+				else
+					if stealLine.beam then destroyStealLine() end
+					if not (ST.walkOn and ST.espOn) then
+						if ST.walkTarget or ST.waitLastPos then stopWalking() end
+					else
+						if ST.walkTarget then
+							local e = tracked[ST.walkTarget]
+							if not e or not ST.walkTarget:IsDescendantOf(workspace) or not eligible(e) or not inEspRange(e.part) then
 								ST.walkTarget = nil
 								ST.walkSidestepUntil = 0
 								hum:MoveTo(root.Position)
-							elseif ST.walkSidestepGoal and now < ST.walkSidestepUntil then
-								hum:MoveTo(ST.walkSidestepGoal)
-							else
-								ST.walkSidestepGoal = nil
-								hum:MoveTo(part.Position)
 							end
 						end
-					else
-						ST.walkTarget = nil
-					end
-				elseif ST.waitPos then
-					ST.waitAngle = (ST.waitAngle + CFG.WAIT_ANG_SPEED * 0.2 * ST.waitDir) % (math.pi * 2)
-					local goal = ST.waitPos + Vector3.new(math.cos(ST.waitAngle) * CFG.WAIT_RADIUS, 0, math.sin(ST.waitAngle) * CFG.WAIT_RADIUS)
 
-					local movedFlat = ST.waitLastPos and Vector3.new(root.Position.X - ST.waitLastPos.X, 0, root.Position.Z - ST.waitLastPos.Z).Magnitude or 999
-					ST.waitStuckT = (movedFlat < 0.35) and (ST.waitStuckT + 0.2) or 0
-					ST.waitLastPos = root.Position
+						if ST.walkTarget then
+							local better = pickBestOre()
+							if better and better ~= ST.walkTarget and oreRank(tracked[better].ore.key) < oreRank(tracked[ST.walkTarget].ore.key) then
+								ST.walkTarget = better
+								ST.walkLastPos, ST.walkStuckT, ST.walkAge, ST.walkSidestepUntil = nil, 0, 0, 0
+							end
+						end
 
-					local activeGoal = (ST.waitSidestepGoal and now < ST.waitSidestepUntil) and ST.waitSidestepGoal or goal
-					local blocked, canJump = hasObstacleAhead(root, activeGoal)
-					if blocked and canJump then forceJump(hum) end
+						if not ST.walkTarget then
+							ST.walkTarget = pickBestOre()
+							ST.walkLastPos, ST.walkStuckT, ST.walkAge, ST.walkSidestepUntil = nil, 0, 0, 0
+						end
 
-					if ST.waitStuckT >= CFG.WAIT_STUCK_TIME then
-						forceJump(hum)
-						ST.waitDir = -ST.waitDir
-						ST.waitSidestepGoal = sidestepGoal(root, goal, ST.waitDir)
-						ST.waitSidestepUntil = now + 1.3
-						ST.waitStuckT = 0
-					end
-
-					if ST.waitSidestepGoal and now < ST.waitSidestepUntil then
-						hum:MoveTo(ST.waitSidestepGoal)
-					else
-						ST.waitSidestepGoal = nil
-						hum:MoveTo(goal)
+						if ST.walkTarget then
+							ST.waitLastPos, ST.waitStuckT, ST.waitSidestepUntil = nil, 0, 0
+							local e = tracked[ST.walkTarget]
+							local part = e and e.part
+							if part and part.Parent then
+								local d = (root.Position - part.Position).Magnitude
+								if d <= CFG.WALK_REACH then
+									hum:MoveTo(root.Position)
+									ST.walkAge, ST.walkStuckT, ST.walkSidestepUntil = 0, 0, 0
+								else
+									ST.walkAge = ST.walkAge + 0.2
+									if ST.walkAge >= CFG.WALK_GIVEUP then
+										walkSkip[ST.walkTarget] = now + CFG.WALK_SKIP_TIME
+										ST.walkTarget = nil
+										ST.walkSidestepUntil = 0
+										hum:MoveTo(root.Position)
+									else
+										ST.walkStuckT, ST.walkLastPos, ST.walkSidestepGoal, ST.walkSidestepUntil, ST.walkSideSign =
+											moveWithAvoidance(
+												hum, root, part.Position, now,
+												ST.walkStuckT, ST.walkLastPos, ST.walkSidestepGoal, ST.walkSidestepUntil,
+												ST.walkSideSign, CFG.WALK_STUCK_TIME, 1.4
+											)
+									end
+								end
+							else
+								ST.walkTarget = nil
+							end
+						elseif ST.waitPos then
+							ST.waitAngle = (ST.waitAngle + CFG.WAIT_ANG_SPEED * 0.2 * ST.waitDir) % (math.pi * 2)
+							local goal = ST.waitPos + Vector3.new(math.cos(ST.waitAngle) * CFG.WAIT_RADIUS, 0, math.sin(ST.waitAngle) * CFG.WAIT_RADIUS)
+							ST.waitStuckT, ST.waitLastPos, ST.waitSidestepGoal, ST.waitSidestepUntil, ST.waitDir =
+								moveWithAvoidance(
+									hum, root, goal, now,
+									ST.waitStuckT, ST.waitLastPos, ST.waitSidestepGoal, ST.waitSidestepUntil,
+									ST.waitDir, CFG.WAIT_STUCK_TIME, 1.3
+								)
+						end
 					end
 				end
 			end
@@ -1072,7 +1357,7 @@ mainScroller.BorderSizePixel = 0
 mainScroller.ScrollBarThickness = 4
 mainScroller.ScrollBarImageColor3 = Color3.fromRGB(200, 200, 210)
 mainScroller.ScrollingDirection = Enum.ScrollingDirection.Y
-mainScroller.CanvasSize = UDim2.new(0, 0, 0, 480)
+mainScroller.CanvasSize = UDim2.new(0, 0, 0, 520)
 mainScroller.ZIndex = 22
 mainScroller.Parent = UI.expandedGroup
 
@@ -1252,28 +1537,25 @@ UI.walkToggle = makeToggle(mainScroller, 244, "Auto farm ore", false, function(o
 	saveConfig()
 end)
 
-mkLabel(mainScroller, {Text = "Hop Server", Font = Enum.Font.GothamBold, TextSize = 13, Position = UDim2.fromOffset(14, 278), Size = UDim2.new(0.55, 0, 0, 30), ZIndex = 23})
-local hopBtn = Instance.new("TextButton")
-hopBtn.AnchorPoint = Vector2.new(1, 0)
-hopBtn.Position = UDim2.new(1, -14, 0, 280)
-hopBtn.Size = UDim2.fromOffset(74, 28)
-hopBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
-hopBtn.Font = Enum.Font.GothamBold
-hopBtn.TextSize = 11
-hopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-hopBtn.Text = "Hop ngay"
-hopBtn.AutoButtonColor = false
-hopBtn.BorderSizePixel = 0
-hopBtn.ZIndex = 23
-hopBtn.Parent = mainScroller
-Instance.new("UICorner", hopBtn).CornerRadius = UDim.new(0, 7)
-rainbowStroke(hopBtn, 1.5, 0.2)
-hopBtn.Activated:Connect(hopServer)
+UI.stealToggle = makeToggle(mainScroller, 278, "Auto steal", false, function(on)
+	setStealEnabled(on)
+end)
 
-mkLabel(mainScroller, {Text = "Chỗ đợi quặng", Font = Enum.Font.GothamBold, TextSize = 13, Position = UDim2.fromOffset(14, 312), Size = UDim2.new(0.5, 0, 0, 26), ZIndex = 23})
+UI.stealPosLbl = mkLabel(mainScroller, {
+	Text = string.format("về: X %d · Y %d · Z %d",
+		math.floor(ST.stealReturnPos.X + 0.5), math.floor(ST.stealReturnPos.Y + 0.5), math.floor(ST.stealReturnPos.Z + 0.5)),
+	TextSize = 10,
+	TextColor3 = Color3.fromRGB(150, 150, 160),
+	Position = UDim2.fromOffset(14, 304),
+	Size = UDim2.new(1, -28, 0, 12),
+	ZIndex = 23,
+})
+
+local WAIT_Y = 320
+mkLabel(mainScroller, {Text = "Chỗ đợi quặng", Font = Enum.Font.GothamBold, TextSize = 13, Position = UDim2.fromOffset(14, WAIT_Y), Size = UDim2.new(0.5, 0, 0, 26), ZIndex = 23})
 local waitBtn = Instance.new("TextButton")
 waitBtn.AnchorPoint = Vector2.new(1, 0)
-waitBtn.Position = UDim2.new(1, -14, 0, 312)
+waitBtn.Position = UDim2.new(1, -14, 0, WAIT_Y)
 waitBtn.Size = UDim2.fromOffset(74, 26)
 waitBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
 waitBtn.Font = Enum.Font.GothamBold
@@ -1289,6 +1571,29 @@ waitBtn.Activated:Connect(function()
 	local root = getRoot()
 	if root then setWaitPos(root.Position) end
 end)
+UI.waitLbl.Position = UDim2.fromOffset(14, WAIT_Y + 26)
+
+local HOP_Y = 362
+mkLabel(mainScroller, {Text = "Hop Server", Font = Enum.Font.GothamBold, TextSize = 13, Position = UDim2.fromOffset(14, HOP_Y), Size = UDim2.new(0.55, 0, 0, 28), ZIndex = 23})
+local hopBtn = Instance.new("TextButton")
+hopBtn.AnchorPoint = Vector2.new(1, 0)
+hopBtn.Position = UDim2.new(1, -14, 0, HOP_Y)
+hopBtn.Size = UDim2.fromOffset(74, 28)
+hopBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+hopBtn.Font = Enum.Font.GothamBold
+hopBtn.TextSize = 11
+hopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+hopBtn.Text = "Hop ngay"
+hopBtn.AutoButtonColor = false
+hopBtn.BorderSizePixel = 0
+hopBtn.ZIndex = 23
+hopBtn.Parent = mainScroller
+Instance.new("UICorner", hopBtn).CornerRadius = UDim.new(0, 7)
+rainbowStroke(hopBtn, 1.5, 0.2)
+hopBtn.Activated:Connect(hopServer)
+
+local SIZE_Y = 398
+local DIST_Y = 432
 
 local function mkStepBtn(y, text, xOff)
 	local b = Instance.new("TextButton")
@@ -1308,10 +1613,10 @@ local function mkStepBtn(y, text, xOff)
 	return b
 end
 
-mkLabel(mainScroller, {Text = "Kích thước ESP", Font = Enum.Font.GothamBold, TextSize = 13, Position = UDim2.fromOffset(14, 362), Size = UDim2.new(0.5, 0, 0, 26), ZIndex = 23})
-local sizeMinus = mkStepBtn(362, "-", -82)
-local sizePlus = mkStepBtn(362, "+", -14)
-UI.sizeValLbl = mkLabel(mainScroller, {Text = string.format("%.1fx", ST.espScale), Font = Enum.Font.GothamBold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -46, 0, 362), Size = UDim2.fromOffset(30, 26), ZIndex = 23})
+mkLabel(mainScroller, {Text = "Kích thước ESP", Font = Enum.Font.GothamBold, TextSize = 13, Position = UDim2.fromOffset(14, SIZE_Y), Size = UDim2.new(0.5, 0, 0, 26), ZIndex = 23})
+local sizeMinus = mkStepBtn(SIZE_Y, "-", -82)
+local sizePlus = mkStepBtn(SIZE_Y, "+", -14)
+UI.sizeValLbl = mkLabel(mainScroller, {Text = string.format("%.1fx", ST.espScale), Font = Enum.Font.GothamBold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -46, 0, SIZE_Y), Size = UDim2.fromOffset(30, 26), ZIndex = 23})
 sizeMinus.Activated:Connect(function()
 	ST.espScale = math.clamp(math.floor((ST.espScale - CFG.SIZE_STEP) * 10 + 0.5) / 10, CFG.SIZE_MIN, CFG.SIZE_MAX)
 	UI.sizeValLbl.Text = string.format("%.1fx", ST.espScale)
@@ -1331,10 +1636,10 @@ sizePlus.Activated:Connect(function()
 	saveConfig()
 end)
 
-mkLabel(mainScroller, {Text = "Khoảng cách ESP", Font = Enum.Font.GothamBold, TextSize = 13, Position = UDim2.fromOffset(14, 396), Size = UDim2.new(0.5, 0, 0, 26), ZIndex = 23})
-local distMinus = mkStepBtn(396, "-", -82)
-local distPlus = mkStepBtn(396, "+", -14)
-UI.distValLbl = mkLabel(mainScroller, {Text = ST.maxDist .. "m", Font = Enum.Font.GothamBold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -46, 0, 396), Size = UDim2.fromOffset(38, 26), ZIndex = 23})
+mkLabel(mainScroller, {Text = "Khoảng cách ESP", Font = Enum.Font.GothamBold, TextSize = 13, Position = UDim2.fromOffset(14, DIST_Y), Size = UDim2.new(0.5, 0, 0, 26), ZIndex = 23})
+local distMinus = mkStepBtn(DIST_Y, "-", -82)
+local distPlus = mkStepBtn(DIST_Y, "+", -14)
+UI.distValLbl = mkLabel(mainScroller, {Text = ST.maxDist .. "m", Font = Enum.Font.GothamBold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -46, 0, DIST_Y), Size = UDim2.fromOffset(38, 26), ZIndex = 23})
 distMinus.Activated:Connect(function()
 	ST.maxDist = math.clamp(ST.maxDist - CFG.DIST_STEP, CFG.DIST_MIN, CFG.DIST_MAX)
 	UI.distValLbl.Text = ST.maxDist .. "m"
@@ -1346,15 +1651,16 @@ distPlus.Activated:Connect(function()
 	saveConfig()
 end)
 
-UI.statusLbl = mkLabel(mainScroller, {Text = "tắt", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(14, 430), Size = UDim2.new(1, -28, 0, 14), ZIndex = 23})
-UI.biomeLbl = mkLabel(mainScroller, {Text = "biome: đang dò...", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(14, 448), Size = UDim2.new(1, -28, 0, 14), ZIndex = 23})
+UI.statusLbl = mkLabel(mainScroller, {Text = "tắt", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(14, 466), Size = UDim2.new(1, -28, 0, 14), ZIndex = 23})
+UI.biomeLbl = mkLabel(mainScroller, {Text = "biome: đang dò...", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(14, 484), Size = UDim2.new(1, -28, 0, 14), ZIndex = 23})
 
 -- ===== Quick Key =====
 local FUNCS = {
 	{id = "esp", label = "ESP ore", order = 1, get = function() return ST.espOn end, set = function(v) UI.espToggle.set(v) end},
 	{id = "auto", label = "Auto pickaxe", order = 2, get = function() return ST.autoEquipOn end, set = function(v) UI.autoToggle.set(v) end},
 	{id = "walk", label = "Auto farm ore", order = 3, get = function() return ST.walkOn end, set = function(v) UI.walkToggle.set(v) end},
-	{id = "hop", label = "Hop Server", order = 4, action = hopServer},
+	{id = "steal", label = "Auto steal", order = 4, get = function() return ST.stealOn end, set = function(v) UI.stealToggle.set(v) end},
+	{id = "hop", label = "Hop Server", order = 5, action = hopServer},
 }
 for _, f in ipairs(FUNCS) do FUNC_BY_ID[f.id] = f end
 
@@ -1463,7 +1769,7 @@ quickScroller.Size = UDim2.new(1, 0, 1, -92)
 quickScroller.BackgroundTransparency = 1
 quickScroller.BorderSizePixel = 0
 quickScroller.ScrollBarThickness = 4
-quickScroller.CanvasSize = UDim2.new(0, 0, 0, 240)
+quickScroller.CanvasSize = UDim2.new(0, 0, 0, 260)
 quickScroller.Visible = false
 quickScroller.ZIndex = 22
 quickScroller.Parent = UI.expandedGroup
@@ -1659,6 +1965,7 @@ for _, id in ipairs(wantPins) do
 end
 if wantEsp then UI.espToggle.set(true) end
 if wantWalk then UI.walkToggle.set(true) end
+if wantSteal then UI.stealToggle.set(true) end
 ST.restoring = false
 saveConfig()
 
@@ -1675,12 +1982,18 @@ local function refreshUI()
 		UI.posLbl.Text = "POS --"
 	end
 
-	local walkText = ST.walkOn and (ST.walkTarget and "  ·  đang đi" or "  ·  chờ quặng") or ""
+	local walkText = ""
+	if ST.returningSteal then
+		walkText = "  ·  về điểm steal"
+	elseif ST.walkOn then
+		walkText = ST.walkTarget and "  ·  đang đi" or "  ·  chờ quặng"
+	end
 	UI.statusLbl.Text = ST.statusText .. "  ·  " .. ST.knownTotal .. " quặng · " .. ST.trackedCount .. " highlight" .. walkText
 	UI.biomeLbl.Text = ST.biomeCF and ("biome: " .. tostring(ST.biomeName)) or ("biome: chưa thấy '" .. CFG.BIOME_KEYWORD .. "' — không quét")
 
 	for _, r in pairs(rows) do r.refresh() end
 	syncTracked()
+	syncStealLine()
 	refreshQuickBarVis()
 
 	for id, p in pairs(pills) do
@@ -1745,7 +2058,10 @@ end))
 
 UI.gui.Destroying:Connect(function()
 	ST.alive = false
+	ST.uiReady = false
 	ST.walkOn = false
+	setStealEnabled(false)
+	destroyStealLine()
 	stopESP()
 	for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
 	conns, rainbowGrads = {}, {}
@@ -1766,6 +2082,13 @@ task.spawn(function()
 	pcall(function() loadFrame:Destroy() end)
 	ST.uiReady = true
 	UI.island.Visible = true
+	if ST.stealOn then
+		snapshotExistingTools()
+		refreshAllPrompts()
+	end
+	if ST.espOn then
+		startESP()
+	end
 	refreshQuickBarVis()
 	refreshUI()
 end)
