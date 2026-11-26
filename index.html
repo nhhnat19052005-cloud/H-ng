@@ -1,4 +1,4 @@
--- Huongcuto (Delta Mobile Safe + Quick Key + Né/Nhảy vật cản + Auto Steal + Chỉ chạy sau Loading + Line cầu vồng về điểm)
+-- Huongcuto (Delta Mobile Safe + Quick Key + Né/Nhảy vật cản + Auto Steal + Chỉ chạy sau Loading + Line cầu vồng về điểm + Menu ngang + Fix chạm tab)
 local S = {
 	Players = game:GetService("Players"),
 	RunService = game:GetService("RunService"),
@@ -25,7 +25,7 @@ local CFG = {
 	DRAG_THRESHOLD = 6,
 	NOTIF_WIDTH = 240,
 	ICON_SIZE = 52,
-	EXPANDED_VEC = Vector2.new(270, 446),
+	EXPANDED_VEC = Vector2.new(480, 252),
 	SIZE_MIN = 0.1,
 	SIZE_MAX = 2.0,
 	SIZE_STEP = 0.1,
@@ -151,6 +151,7 @@ local stealLine = {part = nil, att1 = nil, beam = nil, grad = nil}
 local conns, rainbowGrads = {}, {}
 local pills, FUNC_BY_ID = {}, {}
 local UI = {}
+local setWaitPos -- khai báo trước để các callback GUI gọi được
 
 for i, o in ipairs(ORES) do
 	oreOrder[i] = o.key
@@ -1117,7 +1118,6 @@ local function moveWithAvoidance(hum, root, goal, now, stuckT, lastPos, sidestep
 	if stuckT >= stuckLimit then
 		forceJump(hum)
 		local streak = (streakRef or 0) + 1
-		-- chỉ đổi bên né khi né cùng một bên 2 lần mà vẫn bị kẹt
 		if streak >= 2 then
 			sideSign = -sideSign
 			streak = 0
@@ -1154,7 +1154,6 @@ task.spawn(function()
 						stopStealReturn(true)
 						hum:MoveTo(root.Position)
 					elseif (now - ST.stealStartedAt) >= CFG.STEAL_MAX_TIME then
-						-- gia hạn thêm nếu vẫn còn đang di chuyển hoặc chưa tới nơi
 						ST.stealStartedAt = now
 						forceJump(hum)
 						hum:MoveTo(ST.stealReturnPos)
@@ -1238,7 +1237,7 @@ task.spawn(function()
 	end
 end)
 
--- ===== GUI =====
+-- ===== GUI (Menu ngang hình chữ nhật + Fix chạm tab) =====
 local container = getContainer()
 for _, name in ipairs({"Huongcuto", "system ore💎"}) do
 	local old = container:FindFirstChild(name)
@@ -1262,7 +1261,7 @@ end
 local function currentPos()
 	if ST.expanded then
 		local vp = getViewport()
-		return math.max(0, (vp.X - ST.curSize.X) / 2), math.max(0, (vp.Y - ST.curSize.Y) / 2)
+		return math.max(0, (vp.X - ST.curSize.X) / 2), math.max(topInset() + 4, (vp.Y - ST.curSize.Y) / 2)
 	end
 	return ST.squareX, ST.squareY
 end
@@ -1293,7 +1292,7 @@ local islandGrad = Instance.new("UIGradient")
 islandGrad.Rotation = 90
 islandGrad.Color = ColorSequence.new(Color3.fromRGB(22, 22, 28), Color3.fromRGB(6, 6, 9))
 islandGrad.Parent = UI.island
-Instance.new("UICorner", UI.island).CornerRadius = UDim.new(0, 16)
+Instance.new("UICorner", UI.island).CornerRadius = UDim.new(0, 14)
 rainbowStroke(UI.island, 2, 0)
 rainbowStroke(UI.island, 6, 0.7)
 
@@ -1311,75 +1310,125 @@ UI.expandedGroup.Name = "Expanded"
 UI.expandedGroup.Size = UDim2.fromScale(1, 1)
 UI.expandedGroup.BackgroundTransparency = 1
 UI.expandedGroup.Visible = false
-UI.expandedGroup.ZIndex = 21
+UI.expandedGroup.ZIndex = 22
 UI.expandedGroup.Parent = UI.island
 
+-- Thanh trên ngang: Icon + Tên + Tab Main / Quick Key + Stats/Pos
 mkLabel(UI.expandedGroup, {
 	Text = SCRIPT_NAME,
 	Font = Enum.Font.GothamBold,
 	TextSize = 15,
 	Position = UDim2.fromOffset(CFG.ICON_SIZE + 6, 0),
-	Size = UDim2.new(1, -(CFG.ICON_SIZE + 14), 0, CFG.ICON_SIZE),
-	ZIndex = 22,
+	Size = UDim2.fromOffset(105, CFG.ICON_SIZE),
+	ZIndex = 24,
 })
 
 local tabMain = Instance.new("TextButton")
-tabMain.Position = UDim2.fromOffset(14, 60)
-tabMain.Size = UDim2.new(0.5, -18, 0, 24)
+tabMain.Name = "TabMain"
+tabMain.Position = UDim2.fromOffset(172, 14)
+tabMain.Size = UDim2.fromOffset(72, 24)
 tabMain.Font = Enum.Font.GothamBold
 tabMain.TextSize = 12
 tabMain.TextColor3 = Color3.fromRGB(255, 255, 255)
 tabMain.Text = "Main"
 tabMain.AutoButtonColor = false
 tabMain.BorderSizePixel = 0
-tabMain.ZIndex = 22
+tabMain.Active = true
+tabMain.ZIndex = 28
 tabMain.Parent = UI.expandedGroup
 Instance.new("UICorner", tabMain).CornerRadius = UDim.new(0, 8)
 
 local tabQuick = Instance.new("TextButton")
-tabQuick.Position = UDim2.new(0.5, 4, 0, 60)
-tabQuick.Size = UDim2.new(0.5, -18, 0, 24)
+tabQuick.Name = "TabQuick"
+tabQuick.Position = UDim2.fromOffset(250, 14)
+tabQuick.Size = UDim2.fromOffset(88, 24)
 tabQuick.Font = Enum.Font.GothamBold
 tabQuick.TextSize = 12
 tabQuick.TextColor3 = Color3.fromRGB(255, 255, 255)
 tabQuick.Text = "Quick Key"
 tabQuick.AutoButtonColor = false
 tabQuick.BorderSizePixel = 0
-tabQuick.ZIndex = 22
+tabQuick.Active = true
+tabQuick.ZIndex = 28
 tabQuick.Parent = UI.expandedGroup
 Instance.new("UICorner", tabQuick).CornerRadius = UDim.new(0, 8)
 
-local mainScroller = Instance.new("ScrollingFrame")
-mainScroller.Position = UDim2.fromOffset(0, 92)
-mainScroller.Size = UDim2.new(1, 0, 1, -92)
-mainScroller.BackgroundTransparency = 1
-mainScroller.BorderSizePixel = 0
-mainScroller.ScrollBarThickness = 4
-mainScroller.ScrollBarImageColor3 = Color3.fromRGB(200, 200, 210)
-mainScroller.ScrollingDirection = Enum.ScrollingDirection.Y
-mainScroller.CanvasSize = UDim2.new(0, 0, 0, 520)
-mainScroller.ZIndex = 22
-mainScroller.Parent = UI.expandedGroup
+UI.statsLbl = mkLabel(UI.expandedGroup, {
+	Text = "FPS -- · PING --",
+	TextSize = 10,
+	TextXAlignment = Enum.TextXAlignment.Right,
+	TextColor3 = Color3.fromRGB(170, 170, 178),
+	Position = UDim2.fromOffset(342, 6),
+	Size = UDim2.new(1, -376, 0, 14),
+	ZIndex = 24,
+})
+UI.posLbl = mkLabel(UI.expandedGroup, {
+	Text = "POS --",
+	TextSize = 10,
+	TextXAlignment = Enum.TextXAlignment.Right,
+	TextColor3 = Color3.fromRGB(170, 170, 178),
+	Position = UDim2.fromOffset(342, 22),
+	Size = UDim2.new(1, -376, 0, 14),
+	ZIndex = 24,
+})
 
-UI.statsLbl = mkLabel(mainScroller, {Text = "FPS -- · PING -- · FRAME --", TextSize = 11, TextColor3 = Color3.fromRGB(170, 170, 178), Position = UDim2.fromOffset(14, 0), Size = UDim2.new(1, -28, 0, 16), ZIndex = 23})
-UI.posLbl = mkLabel(mainScroller, {Text = "POS --", TextSize = 11, TextColor3 = Color3.fromRGB(170, 170, 178), Position = UDim2.fromOffset(14, 16), Size = UDim2.new(1, -28, 0, 14), ZIndex = 23})
+local topDivider = Instance.new("Frame")
+topDivider.Position = UDim2.fromOffset(12, 54)
+topDivider.Size = UDim2.new(1, -24, 0, 1)
+topDivider.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+topDivider.BackgroundTransparency = 0.85
+topDivider.BorderSizePixel = 0
+topDivider.ZIndex = 23
+topDivider.Parent = UI.expandedGroup
 
-local divider = Instance.new("Frame")
-divider.Size = UDim2.new(1, -28, 0, 1)
-divider.Position = UDim2.fromOffset(14, 34)
-divider.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-divider.BackgroundTransparency = 0.85
-divider.BorderSizePixel = 0
-divider.ZIndex = 23
-divider.Parent = mainScroller
+-- Thân menu ngang: Cột trái (Ưu tiên & thứ tự quặng) | Cột phải (Chức năng & cấu hình)
+local mainBody = Instance.new("Frame")
+mainBody.Position = UDim2.fromOffset(0, 58)
+mainBody.Size = UDim2.new(1, 0, 1, -58)
+mainBody.BackgroundTransparency = 1
+mainBody.ZIndex = 24
+mainBody.Parent = UI.expandedGroup
 
-mkLabel(mainScroller, {Text = "chạm để ưu tiên · ▲▼ thứ tự đi", TextSize = 10, TextColor3 = Color3.fromRGB(130, 130, 140), Position = UDim2.fromOffset(14, 38), Size = UDim2.new(1, -28, 0, 14), ZIndex = 23})
+local leftPane = Instance.new("ScrollingFrame")
+leftPane.Position = UDim2.fromOffset(10, 0)
+leftPane.Size = UDim2.fromOffset(214, 186)
+leftPane.BackgroundTransparency = 1
+leftPane.BorderSizePixel = 0
+leftPane.ScrollBarThickness = 3
+leftPane.ScrollBarImageColor3 = Color3.fromRGB(200, 200, 210)
+leftPane.ScrollingDirection = Enum.ScrollingDirection.Y
+leftPane.CanvasSize = UDim2.new(0, 0, 0, 190)
+leftPane.ZIndex = 25
+leftPane.Parent = mainBody
+
+mkLabel(leftPane, {Text = "chạm ưu tiên · ▲▼ thứ tự", TextSize = 10, TextColor3 = Color3.fromRGB(130, 130, 140), Position = UDim2.fromOffset(4, 0), Size = UDim2.new(1, -8, 0, 14), ZIndex = 25})
+
+local midDivider = Instance.new("Frame")
+midDivider.Position = UDim2.fromOffset(229, 2)
+midDivider.Size = UDim2.fromOffset(1, 182)
+midDivider.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+midDivider.BackgroundTransparency = 0.85
+midDivider.BorderSizePixel = 0
+midDivider.ZIndex = 24
+midDivider.Parent = mainBody
+
+local rightPane = Instance.new("ScrollingFrame")
+rightPane.Position = UDim2.fromOffset(236, 0)
+rightPane.Size = UDim2.fromOffset(234, 186)
+rightPane.BackgroundTransparency = 1
+rightPane.BorderSizePixel = 0
+rightPane.ScrollBarThickness = 3
+rightPane.ScrollBarImageColor3 = Color3.fromRGB(200, 200, 210)
+rightPane.ScrollingDirection = Enum.ScrollingDirection.Y
+rightPane.CanvasSize = UDim2.new(0, 0, 0, 336)
+rightPane.ZIndex = 25
+rightPane.Parent = mainBody
 
 local function mkArrow(parent, text, posX)
 	local b = Instance.new("TextButton")
 	b.AnchorPoint = Vector2.new(1, 0)
-	b.Position = UDim2.new(1, posX, 0, 2)
-	b.Size = UDim2.fromOffset(18, 18)
+	b.Position = UDim2.new(1, posX, 0, 1)
+	b.Size = UDim2.fromOffset(17, 17)
 	b.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
 	b.Font = Enum.Font.GothamBold
 	b.TextSize = 9
@@ -1387,7 +1436,7 @@ local function mkArrow(parent, text, posX)
 	b.Text = text
 	b.AutoButtonColor = false
 	b.BorderSizePixel = 0
-	b.ZIndex = 24
+	b.ZIndex = 26
 	b.Parent = parent
 	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
 	return b
@@ -1395,29 +1444,29 @@ end
 
 for i, ore in ipairs(ORES) do
 	local row = Instance.new("TextButton")
-	row.Position = UDim2.fromOffset(10, 56 + (i - 1) * 22)
-	row.Size = UDim2.new(1, -20, 0, 20)
+	row.Position = UDim2.fromOffset(0, 16 + (i - 1) * 23)
+	row.Size = UDim2.new(1, -6, 0, 20)
 	row.BackgroundColor3 = ore.color
 	row.BackgroundTransparency = 1
 	row.AutoButtonColor = false
 	row.Text = ""
-	row.ZIndex = 23
-	row.Parent = mainScroller
+	row.ZIndex = 25
+	row.Parent = leftPane
 	Instance.new("UICorner", row).CornerRadius = UDim.new(0, 7)
 
 	local dot = Instance.new("Frame")
-	dot.Size = UDim2.fromOffset(9, 9)
-	dot.Position = UDim2.fromOffset(8, 7)
+	dot.Size = UDim2.fromOffset(8, 8)
+	dot.Position = UDim2.fromOffset(6, 6)
 	dot.BackgroundColor3 = ore.color
 	dot.BorderSizePixel = 0
-	dot.ZIndex = 24
+	dot.ZIndex = 26
 	dot.Parent = row
 	Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
 
-	local nameLbl = mkLabel(row, {Text = ore.label, TextSize = 12, Position = UDim2.fromOffset(24, 0), Size = UDim2.new(1, -100, 1, 0), ZIndex = 24})
-	local countLbl = mkLabel(row, {Text = "0", Font = Enum.Font.GothamBold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Right, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -66, 0, 0), Size = UDim2.fromOffset(34, 20), ZIndex = 24})
-	local upBtn = mkArrow(row, "▲", -26)
-	local downBtn = mkArrow(row, "▼", -4)
+	local nameLbl = mkLabel(row, {Text = ore.label, TextSize = 11, Position = UDim2.fromOffset(18, 0), Size = UDim2.new(1, -76, 1, 0), ZIndex = 26})
+	local countLbl = mkLabel(row, {Text = "0", Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Right, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -40, 0, 0), Size = UDim2.fromOffset(22, 20), ZIndex = 26})
+	local upBtn = mkArrow(row, "▲", -20)
+	local downBtn = mkArrow(row, "▼", -2)
 
 	rows[ore.key] = {
 		refresh = function()
@@ -1426,7 +1475,7 @@ for i, ore in ipairs(ORES) do
 			nameLbl.Text = rank .. ". " .. (sel and "★ " or "") .. ore.label
 			row.BackgroundTransparency = sel and 0.75 or 1
 			countLbl.Text = tostring(knownCount[ore.key] or 0)
-			row.Position = UDim2.fromOffset(10, 56 + (rank - 1) * 22)
+			row.Position = UDim2.fromOffset(0, 16 + (rank - 1) * 23)
 		end,
 	}
 
@@ -1452,19 +1501,20 @@ for i, ore in ipairs(ORES) do
 	end)
 end
 
-local function makeToggle(parent, y, text, initial, onChange)
+local function makeToggle(parent, y, text, initial, onChange, compact)
 	local state = initial
-	mkLabel(parent, {Text = text, Font = Enum.Font.GothamBold, TextSize = 13, Position = UDim2.fromOffset(14, y), Size = UDim2.new(0.6, 0, 0, 30), ZIndex = 23})
+	local rowH = compact and 26 or 30
+	mkLabel(parent, {Text = text, Font = Enum.Font.GothamBold, TextSize = 12, Position = UDim2.fromOffset(6, y), Size = UDim2.new(0.62, 0, 0, rowH), ZIndex = 25})
 
 	local btn = Instance.new("TextButton")
 	btn.AnchorPoint = Vector2.new(1, 0)
-	btn.Position = UDim2.new(1, -14, 0, y + 2)
-	btn.Size = UDim2.fromOffset(56, 28)
+	btn.Position = UDim2.new(1, -8, 0, y + (compact and 1 or 2))
+	btn.Size = UDim2.fromOffset(50, 24)
 	btn.Text = ""
 	btn.AutoButtonColor = false
 	btn.BorderSizePixel = 0
 	btn.BackgroundColor3 = CFG.OFF_COLOR
-	btn.ZIndex = 23
+	btn.ZIndex = 25
 	btn.Parent = parent
 	Instance.new("UICorner", btn).CornerRadius = UDim.new(1, 0)
 	local bg = Instance.new("UIGradient")
@@ -1474,16 +1524,16 @@ local function makeToggle(parent, y, text, initial, onChange)
 
 	local knob = Instance.new("Frame")
 	knob.AnchorPoint = Vector2.new(0.5, 0.5)
-	knob.Size = UDim2.fromOffset(22, 22)
+	knob.Size = UDim2.fromOffset(18, 18)
 	knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 	knob.BorderSizePixel = 0
-	knob.ZIndex = 24
+	knob.ZIndex = 26
 	knob.Parent = btn
 	Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
 
 	local function render(animate)
 		local color = state and CFG.ON_COLOR or CFG.OFF_COLOR
-		local pos = UDim2.fromOffset(state and 42 or 14, 14)
+		local pos = UDim2.fromOffset(state and 37 or 13, 12)
 		bg.Color = ColorSequence.new(color:Lerp(Color3.new(1, 1, 1), 0.25), color:Lerp(Color3.new(0, 0, 0), 0.25))
 		if animate then
 			tween(btn, TWEEN.SMOOTH, {BackgroundColor3 = color})
@@ -1506,25 +1556,17 @@ local function makeToggle(parent, y, text, initial, onChange)
 	return api
 end
 
-UI.espToggle = makeToggle(mainScroller, 176, "ESP ore", false, function(on)
+UI.espToggle = makeToggle(rightPane, 2, "ESP ore", false, function(on)
 	if on then startESP() else stopESP() end
 	saveConfig()
-end)
+end, true)
 
-UI.autoToggle = makeToggle(mainScroller, 210, "Auto pickaxe", ST.autoEquipOn, function(on)
+UI.autoToggle = makeToggle(rightPane, 30, "Auto pickaxe", ST.autoEquipOn, function(on)
 	ST.autoEquipOn = on
 	saveConfig()
-end)
+end, true)
 
-UI.waitLbl = mkLabel(mainScroller, {Text = "chưa đặt", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(14, 338), Size = UDim2.new(1, -28, 0, 12), ZIndex = 23})
-local function setWaitPos(v)
-	ST.waitPos = v
-	UI.waitLbl.Text = v and string.format("X %d · Y %d · Z %d", math.floor(v.X + 0.5), math.floor(v.Y + 0.5), math.floor(v.Z + 0.5)) or "chưa đặt"
-	saveConfig()
-end
-setWaitPos(ST.waitPos)
-
-UI.walkToggle = makeToggle(mainScroller, 244, "Auto farm ore", false, function(on)
+UI.walkToggle = makeToggle(rightPane, 58, "Auto farm ore", false, function(on)
 	ST.walkOn = on
 	if on then
 		if not ST.waitPos then
@@ -1535,28 +1577,28 @@ UI.walkToggle = makeToggle(mainScroller, 244, "Auto farm ore", false, function(o
 		stopWalking()
 	end
 	saveConfig()
-end)
+end, true)
 
-UI.stealToggle = makeToggle(mainScroller, 278, "Auto steal", false, function(on)
+UI.stealToggle = makeToggle(rightPane, 86, "Auto steal", false, function(on)
 	setStealEnabled(on)
-end)
+end, true)
 
-UI.stealPosLbl = mkLabel(mainScroller, {
+UI.stealPosLbl = mkLabel(rightPane, {
 	Text = string.format("về: X %d · Y %d · Z %d",
 		math.floor(ST.stealReturnPos.X + 0.5), math.floor(ST.stealReturnPos.Y + 0.5), math.floor(ST.stealReturnPos.Z + 0.5)),
 	TextSize = 10,
 	TextColor3 = Color3.fromRGB(150, 150, 160),
-	Position = UDim2.fromOffset(14, 304),
-	Size = UDim2.new(1, -28, 0, 12),
-	ZIndex = 23,
+	Position = UDim2.fromOffset(6, 114),
+	Size = UDim2.new(1, -14, 0, 12),
+	ZIndex = 25,
 })
 
-local WAIT_Y = 320
-mkLabel(mainScroller, {Text = "Chỗ đợi quặng", Font = Enum.Font.GothamBold, TextSize = 13, Position = UDim2.fromOffset(14, WAIT_Y), Size = UDim2.new(0.5, 0, 0, 26), ZIndex = 23})
+local WAIT_Y = 130
+mkLabel(rightPane, {Text = "Chỗ đợi quặng", Font = Enum.Font.GothamBold, TextSize = 12, Position = UDim2.fromOffset(6, WAIT_Y), Size = UDim2.new(0.55, 0, 0, 24), ZIndex = 25})
 local waitBtn = Instance.new("TextButton")
 waitBtn.AnchorPoint = Vector2.new(1, 0)
-waitBtn.Position = UDim2.new(1, -14, 0, WAIT_Y)
-waitBtn.Size = UDim2.fromOffset(74, 26)
+waitBtn.Position = UDim2.new(1, -8, 0, WAIT_Y)
+waitBtn.Size = UDim2.fromOffset(68, 24)
 waitBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
 waitBtn.Font = Enum.Font.GothamBold
 waitBtn.TextSize = 11
@@ -1564,21 +1606,30 @@ waitBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 waitBtn.Text = "Đặt đây"
 waitBtn.AutoButtonColor = false
 waitBtn.BorderSizePixel = 0
-waitBtn.ZIndex = 23
-waitBtn.Parent = mainScroller
+waitBtn.ZIndex = 25
+waitBtn.Parent = rightPane
 Instance.new("UICorner", waitBtn).CornerRadius = UDim.new(0, 7)
+
+UI.waitLbl = mkLabel(rightPane, {Text = "chưa đặt", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(6, WAIT_Y + 24), Size = UDim2.new(1, -14, 0, 12), ZIndex = 25})
+
+setWaitPos = function(v)
+	ST.waitPos = v
+	UI.waitLbl.Text = v and string.format("X %d · Y %d · Z %d", math.floor(v.X + 0.5), math.floor(v.Y + 0.5), math.floor(v.Z + 0.5)) or "chưa đặt"
+	saveConfig()
+end
+
 waitBtn.Activated:Connect(function()
 	local root = getRoot()
 	if root then setWaitPos(root.Position) end
 end)
-UI.waitLbl.Position = UDim2.fromOffset(14, WAIT_Y + 26)
+setWaitPos(ST.waitPos)
 
-local HOP_Y = 362
-mkLabel(mainScroller, {Text = "Hop Server", Font = Enum.Font.GothamBold, TextSize = 13, Position = UDim2.fromOffset(14, HOP_Y), Size = UDim2.new(0.55, 0, 0, 28), ZIndex = 23})
+local HOP_Y = 170
+mkLabel(rightPane, {Text = "Hop Server", Font = Enum.Font.GothamBold, TextSize = 12, Position = UDim2.fromOffset(6, HOP_Y), Size = UDim2.new(0.55, 0, 0, 24), ZIndex = 25})
 local hopBtn = Instance.new("TextButton")
 hopBtn.AnchorPoint = Vector2.new(1, 0)
-hopBtn.Position = UDim2.new(1, -14, 0, HOP_Y)
-hopBtn.Size = UDim2.fromOffset(74, 28)
+hopBtn.Position = UDim2.new(1, -8, 0, HOP_Y)
+hopBtn.Size = UDim2.fromOffset(68, 24)
 hopBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
 hopBtn.Font = Enum.Font.GothamBold
 hopBtn.TextSize = 11
@@ -1586,37 +1637,37 @@ hopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 hopBtn.Text = "Hop ngay"
 hopBtn.AutoButtonColor = false
 hopBtn.BorderSizePixel = 0
-hopBtn.ZIndex = 23
-hopBtn.Parent = mainScroller
+hopBtn.ZIndex = 25
+hopBtn.Parent = rightPane
 Instance.new("UICorner", hopBtn).CornerRadius = UDim.new(0, 7)
 rainbowStroke(hopBtn, 1.5, 0.2)
 hopBtn.Activated:Connect(hopServer)
 
-local SIZE_Y = 398
-local DIST_Y = 432
+local SIZE_Y = 200
+local DIST_Y = 230
 
 local function mkStepBtn(y, text, xOff)
 	local b = Instance.new("TextButton")
 	b.AnchorPoint = Vector2.new(1, 0)
 	b.Position = UDim2.new(1, xOff, 0, y)
-	b.Size = UDim2.fromOffset(26, 26)
+	b.Size = UDim2.fromOffset(24, 24)
 	b.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
 	b.Font = Enum.Font.GothamBold
-	b.TextSize = 16
+	b.TextSize = 15
 	b.TextColor3 = Color3.fromRGB(255, 255, 255)
 	b.Text = text
 	b.AutoButtonColor = false
 	b.BorderSizePixel = 0
-	b.ZIndex = 23
-	b.Parent = mainScroller
+	b.ZIndex = 25
+	b.Parent = rightPane
 	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 7)
 	return b
 end
 
-mkLabel(mainScroller, {Text = "Kích thước ESP", Font = Enum.Font.GothamBold, TextSize = 13, Position = UDim2.fromOffset(14, SIZE_Y), Size = UDim2.new(0.5, 0, 0, 26), ZIndex = 23})
-local sizeMinus = mkStepBtn(SIZE_Y, "-", -82)
-local sizePlus = mkStepBtn(SIZE_Y, "+", -14)
-UI.sizeValLbl = mkLabel(mainScroller, {Text = string.format("%.1fx", ST.espScale), Font = Enum.Font.GothamBold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -46, 0, SIZE_Y), Size = UDim2.fromOffset(30, 26), ZIndex = 23})
+mkLabel(rightPane, {Text = "Kích thước ESP", Font = Enum.Font.GothamBold, TextSize = 12, Position = UDim2.fromOffset(6, SIZE_Y), Size = UDim2.new(0.52, 0, 0, 24), ZIndex = 25})
+local sizeMinus = mkStepBtn(SIZE_Y, "-", -76)
+local sizePlus = mkStepBtn(SIZE_Y, "+", -8)
+UI.sizeValLbl = mkLabel(rightPane, {Text = string.format("%.1fx", ST.espScale), Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Center, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -42, 0, SIZE_Y), Size = UDim2.fromOffset(28, 24), ZIndex = 25})
 sizeMinus.Activated:Connect(function()
 	ST.espScale = math.clamp(math.floor((ST.espScale - CFG.SIZE_STEP) * 10 + 0.5) / 10, CFG.SIZE_MIN, CFG.SIZE_MAX)
 	UI.sizeValLbl.Text = string.format("%.1fx", ST.espScale)
@@ -1636,10 +1687,10 @@ sizePlus.Activated:Connect(function()
 	saveConfig()
 end)
 
-mkLabel(mainScroller, {Text = "Khoảng cách ESP", Font = Enum.Font.GothamBold, TextSize = 13, Position = UDim2.fromOffset(14, DIST_Y), Size = UDim2.new(0.5, 0, 0, 26), ZIndex = 23})
-local distMinus = mkStepBtn(DIST_Y, "-", -82)
-local distPlus = mkStepBtn(DIST_Y, "+", -14)
-UI.distValLbl = mkLabel(mainScroller, {Text = ST.maxDist .. "m", Font = Enum.Font.GothamBold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -46, 0, DIST_Y), Size = UDim2.fromOffset(38, 26), ZIndex = 23})
+mkLabel(rightPane, {Text = "Khoảng cách ESP", Font = Enum.Font.GothamBold, TextSize = 12, Position = UDim2.fromOffset(6, DIST_Y), Size = UDim2.new(0.52, 0, 0, 24), ZIndex = 25})
+local distMinus = mkStepBtn(DIST_Y, "-", -76)
+local distPlus = mkStepBtn(DIST_Y, "+", -8)
+UI.distValLbl = mkLabel(rightPane, {Text = ST.maxDist .. "m", Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Center, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -42, 0, DIST_Y), Size = UDim2.fromOffset(32, 24), ZIndex = 25})
 distMinus.Activated:Connect(function()
 	ST.maxDist = math.clamp(ST.maxDist - CFG.DIST_STEP, CFG.DIST_MIN, CFG.DIST_MAX)
 	UI.distValLbl.Text = ST.maxDist .. "m"
@@ -1651,8 +1702,8 @@ distPlus.Activated:Connect(function()
 	saveConfig()
 end)
 
-UI.statusLbl = mkLabel(mainScroller, {Text = "tắt", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(14, 466), Size = UDim2.new(1, -28, 0, 14), ZIndex = 23})
-UI.biomeLbl = mkLabel(mainScroller, {Text = "biome: đang dò...", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(14, 484), Size = UDim2.new(1, -28, 0, 14), ZIndex = 23})
+UI.statusLbl = mkLabel(rightPane, {Text = "tắt", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(6, 260), Size = UDim2.new(1, -14, 0, 13), ZIndex = 25})
+UI.biomeLbl = mkLabel(rightPane, {Text = "biome: đang dò...", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(6, 275), Size = UDim2.new(1, -14, 0, 13), ZIndex = 25})
 
 -- ===== Quick Key =====
 local FUNCS = {
@@ -1764,22 +1815,31 @@ local function removePill(id)
 end
 
 local quickScroller = Instance.new("ScrollingFrame")
-quickScroller.Position = UDim2.fromOffset(0, 92)
-quickScroller.Size = UDim2.new(1, 0, 1, -92)
+quickScroller.Position = UDim2.fromOffset(14, 62)
+quickScroller.Size = UDim2.new(1, -28, 1, -68)
 quickScroller.BackgroundTransparency = 1
 quickScroller.BorderSizePixel = 0
-quickScroller.ScrollBarThickness = 4
-quickScroller.CanvasSize = UDim2.new(0, 0, 0, 260)
+quickScroller.ScrollBarThickness = 3
+quickScroller.CanvasSize = UDim2.new(0, 0, 0, 230)
 quickScroller.Visible = false
-quickScroller.ZIndex = 22
+quickScroller.ZIndex = 25
 quickScroller.Parent = UI.expandedGroup
 
 local QUICK_HINT = "bật tối đa " .. CFG.QUICK_MAX .. " nút để hiện ra ngoài"
-local quickMsg = mkLabel(quickScroller, {Text = QUICK_HINT, TextSize = 10, TextColor3 = Color3.fromRGB(130, 130, 140), Position = UDim2.fromOffset(14, 0), Size = UDim2.new(1, -28, 0, 14), ZIndex = 23})
+local quickMsg = mkLabel(quickScroller, {Text = QUICK_HINT, TextSize = 10, TextColor3 = Color3.fromRGB(130, 130, 140), Position = UDim2.fromOffset(4, 0), Size = UDim2.new(1, -8, 0, 14), ZIndex = 25})
 
 local quickToggles = {}
 for i, f in ipairs(FUNCS) do
-	quickToggles[f.id] = makeToggle(quickScroller, 24 + (i - 1) * 40, f.label, false, function(on)
+	local col = (i - 1) % 2
+	local rowIdx = math.floor((i - 1) / 2)
+	local cell = Instance.new("Frame")
+	cell.Position = UDim2.fromOffset(col * 226, 20 + rowIdx * 36)
+	cell.Size = UDim2.fromOffset(218, 30)
+	cell.BackgroundTransparency = 1
+	cell.ZIndex = 25
+	cell.Parent = quickScroller
+
+	quickToggles[f.id] = makeToggle(cell, 0, f.label, false, function(on)
 		if on then
 			if pinnedCount() >= CFG.QUICK_MAX then
 				quickToggles[f.id].set(false, true)
@@ -1792,12 +1852,12 @@ for i, f in ipairs(FUNCS) do
 			removePill(f.id)
 		end
 		saveConfig()
-	end)
+	end, true)
 end
 
 local function selectTab(name)
 	local isMain = name == "main"
-	mainScroller.Visible = isMain
+	mainBody.Visible = isMain
 	quickScroller.Visible = not isMain
 	tabMain.BackgroundColor3 = isMain and Color3.fromRGB(60, 60, 80) or Color3.fromRGB(28, 28, 36)
 	tabQuick.BackgroundColor3 = (not isMain) and Color3.fromRGB(60, 60, 80) or Color3.fromRGB(28, 28, 36)
@@ -1875,6 +1935,17 @@ UI.notifyStatus = function(msg, col)
 end
 
 -- ===== mở/đóng và kéo =====
+-- header ZIndex 21 nằm dưới expandedGroup (22) nên tab/nút luôn nhận chạm trước.
+local header = Instance.new("TextButton")
+header.Name = "HeaderDrag"
+header.Size = UDim2.fromOffset(CFG.ICON_SIZE, CFG.ICON_SIZE)
+header.BackgroundTransparency = 1
+header.Text = ""
+header.AutoButtonColor = false
+header.Active = true
+header.ZIndex = 21
+header.Parent = UI.island
+
 local function setExpanded(v)
 	ST.expanded = v
 	ST.curSize = v and CFG.EXPANDED_VEC or Vector2.new(CFG.ICON_SIZE, CFG.ICON_SIZE)
@@ -1882,16 +1953,10 @@ local function setExpanded(v)
 	local x, y = currentPos()
 	tween(UI.island, TWEEN.BOUNCE, {Size = UDim2.fromOffset(ST.curSize.X, ST.curSize.Y), Position = UDim2.fromOffset(x, y)})
 	UI.expandedGroup.Visible = v
+	-- Khi mở: vùng chạm header chỉ bằng thanh tiêu đề (54px), không phủ thân menu
+	header.Size = v and UDim2.fromOffset(CFG.EXPANDED_VEC.X, 54) or UDim2.fromOffset(CFG.ICON_SIZE, CFG.ICON_SIZE)
 	placeNotif()
 end
-
-local header = Instance.new("TextButton")
-header.Size = UDim2.new(1, 0, 0, CFG.ICON_SIZE)
-header.BackgroundTransparency = 1
-header.Text = ""
-header.AutoButtonColor = false
-header.ZIndex = 25
-header.Parent = UI.island
 
 local dragging, moved, dragStart, startX, startY, dragWasExpanded = false, false, Vector2.new(0, 0), 0, 0, false
 local function isPointer(t) return t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch end
@@ -1922,7 +1987,10 @@ end))
 table.insert(conns, S.UIS.InputEnded:Connect(function(input)
 	if dragging and isPointer(input.UserInputType) then
 		dragging = false
-		if not moved then setExpanded(not ST.expanded) end
+		-- Chạm (không kéo): thu gọn thì mở, đang mở thì đóng
+		if not moved then
+			setExpanded(not dragWasExpanded)
+		end
 	end
 end))
 
@@ -1972,12 +2040,12 @@ saveConfig()
 local function refreshUI()
 	if not ST.uiReady then return end
 	ST.ping = getPing()
-	UI.statsLbl.Text = string.format("FPS %d · PING %s · FRAME %.1fms", math.floor(ST.fps + 0.5), ST.ping and (ST.ping .. "ms") or "--", ST.msValue)
+	UI.statsLbl.Text = string.format("FPS %d · PING %s", math.floor(ST.fps + 0.5), ST.ping and (ST.ping .. "ms") or "--")
 
 	local root = getRoot()
 	if root then
 		local p = root.Position
-		UI.posLbl.Text = string.format("POS X %d · Y %d · Z %d", math.floor(p.X + 0.5), math.floor(p.Y + 0.5), math.floor(p.Z + 0.5))
+		UI.posLbl.Text = string.format("X %d · Y %d · Z %d", math.floor(p.X + 0.5), math.floor(p.Y + 0.5), math.floor(p.Z + 0.5))
 	else
 		UI.posLbl.Text = "POS --"
 	end
