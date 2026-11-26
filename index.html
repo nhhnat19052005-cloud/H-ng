@@ -1,5 +1,5 @@
--- system ore💎
--- ESP ore (highlight + nhãn + line) cho 5 loại quặng, chỉ quét trong biome Cosmic Sanctuary, auto pickaxe, auto farm ore, server ít người, quick key. PC và mobile.
+-- Huongcuto
+-- ESP ore (highlight + nhãn + line) cho 5 loại quặng, chỉ quét trong biome Cosmic Sanctuary, auto pickaxe, auto farm ore, hop server 1 lần, quick key. PC và mobile.
 -- tự lưu config vào file system_ore_config.json (cần executor có writefile/readfile)
 -- rủi ro: Roblox có thể ban nếu bị phát hiện, nên test trên acc phụ.
 
@@ -13,7 +13,7 @@ local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
 
 local LocalPlayer = Players.LocalPlayer
-local SCRIPT_NAME = "system ore💎"
+local SCRIPT_NAME = "Huongcuto"
 
 -- ===== cấu hình =====
 local MAX_TRACKED = 300
@@ -39,16 +39,16 @@ local WAIT_RADIUS = 8
 local WAIT_ANG_SPEED = 0.6
 local QUICK_MAX = 3
 local CFG_FILE = "system_ore_config.json"
+local LOADING_DURATION = 2
 
 -- biome: tên model/folder/part chứa chữ này (bỏ khoảng trắng, không phân biệt hoa thường) là vùng quét
 local BIOME_KEYWORD = "Cosmic Sanctuary"
 local BIOME_SCAN_INTERVAL = 10
 local BIOME_PAD_Y = 50
 
--- server ít người: số người tối đa để chấp nhận (1 = chỉ mình bạn)
+-- hop server: số người tối đa để chấp nhận (1 = chỉ mình bạn)
 local HOP_MAX_PLAYERS = 2
-local HOP_CHECK = 5
-local HOP_COOLDOWN = 20
+local HOP_COOLDOWN = 15
 -- link raw của script, để tự chạy lại sau khi hop nếu executor có queue_on_teleport. Để "" nếu không dùng.
 local REQUEUE_URL = ""
 
@@ -95,9 +95,11 @@ local RAINBOW = ColorSequence.new({
 
 -- ===== helper =====
 local function getContainer()
-	local ok, hui = pcall(gethui)
-	if ok and typeof(hui) == "Instance" then
-		return hui
+	if typeof(gethui) == "function" then
+		local ok, hui = pcall(gethui)
+		if ok and typeof(hui) == "Instance" then
+			return hui
+		end
 	end
 	local ok2, cg = pcall(function()
 		return game:GetService("CoreGui")
@@ -175,7 +177,10 @@ local function getViewport()
 end
 
 local function topInset()
-	return GuiService:GetGuiInset().Y
+	local ok, y = pcall(function()
+		return GuiService:GetGuiInset().Y
+	end)
+	return (ok and typeof(y) == "number") and y or 0
 end
 
 local function getPart(inst)
@@ -300,7 +305,7 @@ local function resolveOre(inst)
 end
 
 -- ===== trạng thái =====
-local ensureRowsRefresh, notify, placeNotif, sizeValLbl, distValLbl
+local ensureRowsRefresh, notify, notifyStatus, placeNotif, sizeValLbl, distValLbl
 local setWaitPos
 local waitLbl = nil
 local biomeLbl = nil
@@ -309,11 +314,11 @@ local FUNC_BY_ID = {}
 local quickBar = nil
 
 local alive = true
+local uiReady = false
 local espOn = false
 local scanDone = false
 local autoEquipOn = true
 local walkOn = false
-local hopOn = false
 local hopping = false
 local lastHopAt = -HOP_COOLDOWN
 local espScale = 1.0
@@ -366,7 +371,6 @@ local function saveConfig()
 		priority = pri,
 		esp = espOn,
 		walk = walkOn,
-		hop = hopOn,
 		auto = autoEquipOn,
 		scale = espScale,
 		dist = maxDist,
@@ -397,7 +401,7 @@ local function loadConfig()
 end
 
 -- đọc config cũ vào biến; bật lại toggle sẽ làm sau khi GUI dựng xong
-local wantEsp, wantWalk, wantHop, wantPins = false, false, false, {}
+local wantEsp, wantWalk, wantPins = false, false, {}
 do
 	local saved = loadConfig()
 	if saved then
@@ -441,7 +445,6 @@ do
 		end
 		wantEsp = saved.esp == true
 		wantWalk = saved.walk == true
-		wantHop = saved.hop == true
 
 		if type(saved.pins) == "table" then
 			for _, id in ipairs(saved.pins) do
@@ -855,10 +858,10 @@ task.spawn(function()
 	end
 end)
 
--- ===== server ít người =====
+-- ===== hop server (bấm 1 lần) =====
 local function httpGet(url)
 	local req = request or http_request or (syn and syn.request)
-	if not req then
+	if typeof(req) ~= "function" then
 		return nil
 	end
 	local ok, res = pcall(req, {Url = url, Method = "GET"})
@@ -869,7 +872,7 @@ local function httpGet(url)
 end
 
 local function findLowServer()
-	local url = "https://games.roblox.com/v1/games/" .. game.PlaceId
+	local url = "https://games.roblox.com/v1/games/" .. tostring(game.PlaceId)
 		.. "/servers/Public?sortOrder=Asc&limit=100"
 	local body = httpGet(url)
 	if not body then
@@ -885,7 +888,7 @@ local function findLowServer()
 	for _, s in ipairs(data.data) do
 		local n = tonumber(s.playing) or math.huge
 		local mx = tonumber(s.maxPlayers) or 0
-		if s.id ~= game.JobId and n <= HOP_MAX_PLAYERS and n < bestCount and n < mx then
+		if tostring(s.id) ~= tostring(game.JobId) and n <= HOP_MAX_PLAYERS and n < bestCount and n < mx then
 			best, bestCount = s.id, n
 		end
 	end
@@ -901,33 +904,44 @@ local function hopServer()
 	end
 	hopping = true
 	lastHopAt = os.clock()
-	statusText = "đang tìm server ít người..."
-	local id, err = findLowServer()
-	if not id then
-		statusText = err
-		hopping = false
-		return
-	end
-	if REQUEUE_URL ~= "" and typeof(queue_on_teleport) == "function" then
-		pcall(queue_on_teleport, 'loadstring(game:HttpGet("' .. REQUEUE_URL .. '"))()')
-	end
-	local ok = pcall(function()
-		TeleportService:TeleportToPlaceInstance(game.PlaceId, id, LocalPlayer)
-	end)
-	if not ok then
-		statusText = "teleport lỗi"
-		hopping = false
-	end
-end
+	local prevStatus = statusText
+	task.spawn(function()
+		statusText = "đang tìm sever…"
+		if notifyStatus then notifyStatus("đang tìm sever…", Color3.fromRGB(160, 210, 255)) end
 
-task.spawn(function()
-	while alive do
-		task.wait(HOP_CHECK)
-		if hopOn and not hopping and #Players:GetPlayers() > HOP_MAX_PLAYERS then
-			hopServer()
+		local id, err = findLowServer()
+		if not id then
+			statusText = err
+			if notifyStatus then notifyStatus(err, Color3.fromRGB(255, 110, 110)) end
+			task.delay(1.5, function()
+				if not hopping then
+					statusText = prevStatus
+				end
+			end)
+			hopping = false
+			return
 		end
-	end
-end)
+
+		statusText = "đã thấy!"
+		if notifyStatus then notifyStatus("đã thấy!", Color3.fromRGB(70, 210, 130)) end
+		task.wait(0.5)
+
+		statusText = "đang chuyển…"
+		if notifyStatus then notifyStatus("đang chuyển…", Color3.fromRGB(255, 195, 70)) end
+
+		if REQUEUE_URL ~= "" and typeof(queue_on_teleport) == "function" then
+			pcall(queue_on_teleport, 'loadstring(game:HttpGet("' .. REQUEUE_URL .. '"))()')
+		end
+		local ok = pcall(function()
+			TeleportService:TeleportToPlaceInstance(game.PlaceId, id, LocalPlayer)
+		end)
+		if not ok then
+			statusText = "teleport lỗi"
+			if notifyStatus then notifyStatus("teleport lỗi", Color3.fromRGB(255, 110, 110)) end
+			hopping = false
+		end
+	end)
+end
 
 -- ===== auto pickaxe (ô 1) =====
 local function isPickaxe(t)
@@ -1189,6 +1203,7 @@ island.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
 island.BackgroundTransparency = 0.04
 island.BorderSizePixel = 0
 island.ClipsDescendants = true
+island.Visible = false
 island.Parent = gui
 
 local islandGrad = Instance.new("UIGradient")
@@ -1547,12 +1562,36 @@ local walkToggle = makeToggle(mainScroller, 244, "Auto farm ore", false, functio
 	saveConfig()
 end)
 
-local hopToggle = makeToggle(mainScroller, 278, "Server ít người", false, function(on)
-	hopOn = on
-	if not on then
-		statusText = espOn and "đang quét" or "tắt"
-	end
-	saveConfig()
+-- nút bấm 1 lần cho hopServer
+mkLabel(mainScroller, {
+	Text = "Hop Server",
+	Font = Enum.Font.GothamBold,
+	TextSize = 13,
+	Position = UDim2.fromOffset(14, 278),
+	Size = UDim2.new(0.55, 0, 0, 30),
+})
+
+local hopBtn = Instance.new("TextButton")
+hopBtn.AnchorPoint = Vector2.new(1, 0)
+hopBtn.Position = UDim2.new(1, -14, 0, 280)
+hopBtn.Size = UDim2.fromOffset(74, 28)
+hopBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+hopBtn.Font = Enum.Font.GothamBold
+hopBtn.TextSize = 11
+hopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+hopBtn.Text = "Hop ngay"
+hopBtn.AutoButtonColor = false
+hopBtn.BorderSizePixel = 0
+hopBtn.Parent = mainScroller
+Instance.new("UICorner", hopBtn).CornerRadius = UDim.new(0, 7)
+rainbowStroke(hopBtn, 1.5, 0.2)
+
+hopBtn.Activated:Connect(function()
+	local t = tween(hopBtn, FAST, {Size = UDim2.fromOffset(68, 25)})
+	t.Completed:Connect(function()
+		tween(hopBtn, FAST, {Size = UDim2.fromOffset(74, 28)})
+	end)
+	hopServer()
 end)
 
 -- ===== chỗ đợi quặng =====
@@ -1718,6 +1757,8 @@ local FUNCS = {
 	{id = "walk", label = "Auto farm ore", order = 3,
 		get = function() return walkOn end,
 		set = function(v) walkToggle.set(v) end},
+	{id = "hop", label = "Hop Server", order = 4,
+		action = function() hopServer() end},
 }
 for _, f in ipairs(FUNCS) do
 	FUNC_BY_ID[f.id] = f
@@ -1739,6 +1780,7 @@ quickBar.Name = "SysOreQuickBar"
 quickBar.BackgroundTransparency = 1
 quickBar.Size = UDim2.fromOffset(174, 0)
 quickBar.AutomaticSize = Enum.AutomaticSize.Y
+quickBar.Visible = false
 quickBar.Parent = gui
 
 local quickLayout = Instance.new("UIListLayout")
@@ -1842,7 +1884,11 @@ local function addPill(f)
 		t.Completed:Connect(function()
 			tween(btn, FAST, {Size = UDim2.new(1, -PILL_RING * 2, 1, -PILL_RING * 2)})
 		end)
-		f.set(not f.get())
+		if f.action then
+			f.action()
+		elseif f.set and f.get then
+			f.set(not f.get())
+		end
 	end)
 end
 
@@ -1918,7 +1964,7 @@ end)
 
 selectTab("main")
 
--- ===== thông báo quặng =====
+-- ===== thông báo quặng & trạng thái hop =====
 local notif = Instance.new("Frame")
 notif.Name = "OreNotif"
 notif.Size = UDim2.fromOffset(NOTIF_WIDTH, 26)
@@ -1991,6 +2037,32 @@ notify = function(ore)
 			if my == notifToken then
 				notif.Visible = false
 				notifVals, notifOrder = {}, {}
+			end
+		end)
+	end)
+end
+
+notifyStatus = function(msg, col)
+	notifVals, notifOrder = {}, {}
+	notifLbl.Text = string.format('<font color="%s">%s</font>', toHex(col or Color3.fromRGB(255, 255, 255)), msg)
+	placeNotif()
+	notif.Visible = true
+	tween(notif, FAST, {BackgroundTransparency = 0.1})
+	tween(notifStroke, FAST, {Transparency = 0})
+	tween(notifLbl, FAST, {TextTransparency = 0})
+
+	notifToken = notifToken + 1
+	local my = notifToken
+	task.delay(NOTIF_DURATION, function()
+		if my ~= notifToken then
+			return
+		end
+		tween(notif, FAST, {BackgroundTransparency = 1})
+		tween(notifStroke, FAST, {Transparency = 1})
+		tween(notifLbl, FAST, {TextTransparency = 1})
+		task.delay(0.22, function()
+			if my == notifToken then
+				notif.Visible = false
 			end
 		end)
 	end)
@@ -2086,6 +2158,59 @@ table.insert(conns, UIS.InputEnded:Connect(function(input)
 	end
 end))
 
+-- ===== hiệu ứng loading trước khi hiện logo & menu =====
+local loadCanvas = Instance.new("CanvasGroup")
+loadCanvas.Name = "SysOreLoading"
+loadCanvas.AnchorPoint = Vector2.new(0.5, 0.5)
+loadCanvas.Position = UDim2.fromScale(0.5, 0.5)
+loadCanvas.Size = UDim2.fromOffset(220, 74)
+loadCanvas.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
+loadCanvas.BackgroundTransparency = 0.05
+loadCanvas.GroupTransparency = 1
+loadCanvas.BorderSizePixel = 0
+loadCanvas.ZIndex = 30
+loadCanvas.Parent = gui
+Instance.new("UICorner", loadCanvas).CornerRadius = UDim.new(0, 16)
+rainbowStroke(loadCanvas, 2, 0)
+
+mkLabel(loadCanvas, {
+	Text = "💎 " .. SCRIPT_NAME,
+	Font = Enum.Font.GothamBold,
+	TextSize = 14,
+	TextXAlignment = Enum.TextXAlignment.Center,
+	Position = UDim2.fromOffset(10, 10),
+	Size = UDim2.new(1, -20, 0, 20),
+	ZIndex = 31,
+})
+
+local loadSub = mkLabel(loadCanvas, {
+	Text = "đang khởi tạo...",
+	TextSize = 11,
+	TextColor3 = Color3.fromRGB(175, 175, 190),
+	TextXAlignment = Enum.TextXAlignment.Center,
+	Position = UDim2.fromOffset(10, 30),
+	Size = UDim2.new(1, -20, 0, 14),
+	ZIndex = 31,
+})
+
+local barBg = Instance.new("Frame")
+barBg.Position = UDim2.fromOffset(16, 52)
+barBg.Size = UDim2.new(1, -32, 0, 8)
+barBg.BackgroundColor3 = Color3.fromRGB(28, 28, 38)
+barBg.BorderSizePixel = 0
+barBg.ZIndex = 31
+barBg.Parent = loadCanvas
+Instance.new("UICorner", barBg).CornerRadius = UDim.new(1, 0)
+
+local barFill = Instance.new("Frame")
+barFill.Size = UDim2.new(0, 0, 1, 0)
+barFill.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+barFill.BorderSizePixel = 0
+barFill.ZIndex = 32
+barFill.Parent = barBg
+Instance.new("UICorner", barFill).CornerRadius = UDim.new(1, 0)
+rainbowFill(barFill)
+
 -- ===== khôi phục config đã lưu =====
 for _, id in ipairs(wantPins) do
 	if quickToggles[id] and pinnedCount() < QUICK_MAX then
@@ -2098,14 +2223,14 @@ end
 if wantWalk then
 	walkToggle.set(true)
 end
-if wantHop then
-	hopToggle.set(true)
-end
 restoring = false
 saveConfig()
 
 -- ===== cập nhật UI, throttle 4 lần/giây =====
 local function refreshUI()
+	if not uiReady then
+		return
+	end
 	ping = getPing()
 	local f = math.floor(fps + 0.5)
 	local pingText = ping and (ping .. "ms") or "--"
@@ -2121,9 +2246,8 @@ local function refreshUI()
 	end
 
 	local walkText = walkOn and (walkTarget and "  ·  đang đi" or "  ·  chờ quặng") or ""
-	local hopText = hopOn and ("  ·  server ≤" .. HOP_MAX_PLAYERS .. " người") or ""
 	statusLbl.Text = statusText .. "  ·  " .. knownTotal .. " quặng · " .. trackedCount .. " highlight"
-		.. walkText .. hopText
+		.. walkText
 
 	if biomeLbl then
 		if biomeCF then
@@ -2139,10 +2263,10 @@ local function refreshUI()
 	for id, p in pairs(pills) do
 		local fn = FUNC_BY_ID[id]
 		if fn then
-			local on = fn.get()
-			p.dot.BackgroundColor3 = on and ON_COLOR or OFF_COLOR
-			p.dotStroke.Transparency = on and 0 or 1
-			local base = on and Color3.fromRGB(14, 40, 28) or Color3.fromRGB(26, 26, 34)
+			local active = fn.action and hopping or (fn.get and fn.get()) or false
+			p.dot.BackgroundColor3 = active and ON_COLOR or OFF_COLOR
+			p.dotStroke.Transparency = active and 0 or 1
+			local base = active and Color3.fromRGB(14, 40, 28) or Color3.fromRGB(26, 26, 34)
 			p.bg.Color = ColorSequence.new(base, Color3.fromRGB(8, 8, 12))
 		end
 	end
@@ -2202,11 +2326,52 @@ end))
 gui.Destroying:Connect(function()
 	alive = false
 	walkOn = false
-	hopOn = false
 	stopESP()
 	for _, c in ipairs(conns) do
 		c:Disconnect()
 	end
 	conns = {}
 	rainbowGrads = {}
+end)
+
+-- chạy trình tự loading 2s rồi mới hiện logo island & quickBar
+task.spawn(function()
+	tween(loadCanvas, FAST, {GroupTransparency = 0})
+	local t0 = os.clock()
+	while alive and (os.clock() - t0) < LOADING_DURATION do
+		local pct = math.clamp((os.clock() - t0) / LOADING_DURATION, 0, 1)
+		barFill.Size = UDim2.new(pct, 0, 1, 0)
+		if pct < 0.4 then
+			loadSub.Text = "đang tải giao diện..."
+		elseif pct < 0.78 then
+			loadSub.Text = "đang quét vùng Cosmic Sanctuary..."
+		else
+			loadSub.Text = "sẵn sàng!"
+		end
+		RunService.RenderStepped:Wait()
+	end
+	if not alive then
+		return
+	end
+	barFill.Size = UDim2.new(1, 0, 1, 0)
+	loadSub.Text = "sẵn sàng!"
+	task.wait(0.15)
+	tween(loadCanvas, FAST, {GroupTransparency = 1})
+	task.delay(0.22, function()
+		pcall(function() loadCanvas:Destroy() end)
+	end)
+
+	uiReady = true
+	island.Visible = true
+	island.Size = UDim2.fromOffset(10, 10)
+	local x, y = currentPos()
+	island.Position = UDim2.fromOffset(x + (ICON_SIZE - 10) / 2, y + (ICON_SIZE - 10) / 2)
+	tween(island, BOUNCE, {
+		Size = UDim2.fromOffset(ICON_SIZE, ICON_SIZE),
+		Position = UDim2.fromOffset(x, y),
+	})
+	if pinnedCount() > 0 then
+		quickBar.Visible = true
+	end
+	refreshUI()
 end)
