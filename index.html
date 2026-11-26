@@ -1,4 +1,4 @@
--- Huongcuto (Delta Mobile Safe + Quick Key + Né/Nhảy vật cản + Auto Steal + Chỉ chạy sau Loading + Line cầu vồng về điểm + Menu ngang + Fix chạm tab)
+-- Huongcuto (Delta Mobile Safe + Quick Key + Né/Nhảy vật cản + Auto Steal + Chỉ chạy sau Loading + Line cầu vồng về điểm + Menu ngang + Fix chạm tab + Auto đánh + Kéo quick bar)
 local S = {
 	Players = game:GetService("Players"),
 	RunService = game:GetService("RunService"),
@@ -21,11 +21,14 @@ local CFG = {
 	RESCAN_INTERVAL = 3,
 	UI_INTERVAL = 0.25,
 	EQUIP_INTERVAL = 0.5,
+	ATTACK_INTERVAL = 0.2,
 	NOTIF_DURATION = 1,
 	DRAG_THRESHOLD = 6,
 	NOTIF_WIDTH = 240,
 	ICON_SIZE = 52,
 	EXPANDED_VEC = Vector2.new(480, 252),
+	QUICK_WIDTH = 174,
+	QUICK_HANDLE_H = 16,
 	SIZE_MIN = 0.1,
 	SIZE_MAX = 2.0,
 	SIZE_STEP = 0.1,
@@ -90,6 +93,7 @@ local ST = {
 	espOn = false,
 	scanDone = false,
 	autoEquipOn = true,
+	attackOn = false,
 	walkOn = false,
 	stealOn = false,
 	returningSteal = false,
@@ -138,6 +142,8 @@ local ST = {
 	curSize = Vector2.new(CFG.ICON_SIZE, CFG.ICON_SIZE),
 	squareX = 0,
 	squareY = 0,
+	quickX = nil,
+	quickY = nil,
 }
 
 local oreOrder = {}
@@ -351,6 +357,7 @@ local function saveConfig()
 		walk = ST.walkOn,
 		steal = ST.stealOn,
 		auto = ST.autoEquipOn,
+		attack = ST.attackOn,
 		scale = ST.espScale,
 		dist = ST.maxDist,
 		pins = pinList,
@@ -360,6 +367,9 @@ local function saveConfig()
 	end
 	if ST.stealReturnPos then
 		data.stealPos = {x = ST.stealReturnPos.X, y = ST.stealReturnPos.Y, z = ST.stealReturnPos.Z}
+	end
+	if ST.quickX and ST.quickY then
+		data.quick = {x = ST.quickX, y = ST.quickY}
 	end
 	pcall(function() writefile(CFG.FILE, S.HttpService:JSONEncode(data)) end)
 end
@@ -373,7 +383,7 @@ local function loadConfig()
 	return (ok and type(res) == "table") and res or nil
 end
 
-local wantEsp, wantWalk, wantSteal, wantPins = false, false, false, {}
+local wantEsp, wantWalk, wantSteal, wantAttack, wantPins = false, false, false, false, {}
 do
 	local saved = loadConfig()
 	if saved then
@@ -403,6 +413,7 @@ do
 		wantEsp = saved.esp == true
 		wantWalk = saved.walk == true
 		wantSteal = saved.steal == true
+		wantAttack = saved.attack == true
 		if type(saved.pins) == "table" then
 			for _, id in ipairs(saved.pins) do
 				if type(id) == "string" then table.insert(wantPins, id) end
@@ -415,6 +426,10 @@ do
 		local sp = saved.stealPos
 		if type(sp) == "table" and type(sp.x) == "number" and type(sp.y) == "number" and type(sp.z) == "number" then
 			ST.stealReturnPos = Vector3.new(sp.x, sp.y, sp.z)
+		end
+		local q = saved.quick
+		if type(q) == "table" and type(q.x) == "number" and type(q.y) == "number" then
+			ST.quickX, ST.quickY = q.x, q.y
 		end
 	end
 end
@@ -853,6 +868,23 @@ task.spawn(function()
 			if hum and hum.Health > 0 and not char:FindFirstChildOfClass("Tool") then
 				local pick = getPickaxe()
 				if pick then pcall(function() hum:EquipTool(pick) end) end
+			end
+		end
+	end
+end)
+
+-- ===== auto đánh khi cầm pickaxe =====
+task.spawn(function()
+	while ST.alive do
+		task.wait(CFG.ATTACK_INTERVAL)
+		if ST.uiReady and ST.attackOn and not ST.returningSteal then
+			local char = LocalPlayer.Character
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+			if hum and hum.Health > 0 then
+				local tool = char:FindFirstChildOfClass("Tool")
+				if tool and isPickaxe(tool) then
+					pcall(function() tool:Activate() end)
+				end
 			end
 		end
 	end
@@ -1702,6 +1734,12 @@ distPlus.Activated:Connect(function()
 	saveConfig()
 end)
 
+-- Công tắc auto đánh khi cầm pickaxe
+UI.attackToggle = makeToggle(rightPane, 292, "Auto đánh (pickaxe)", false, function(on)
+	ST.attackOn = on
+	saveConfig()
+end, true)
+
 UI.statusLbl = mkLabel(rightPane, {Text = "tắt", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(6, 260), Size = UDim2.new(1, -14, 0, 13), ZIndex = 25})
 UI.biomeLbl = mkLabel(rightPane, {Text = "biome: đang dò...", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(6, 275), Size = UDim2.new(1, -14, 0, 13), ZIndex = 25})
 
@@ -1711,7 +1749,8 @@ local FUNCS = {
 	{id = "auto", label = "Auto pickaxe", order = 2, get = function() return ST.autoEquipOn end, set = function(v) UI.autoToggle.set(v) end},
 	{id = "walk", label = "Auto farm ore", order = 3, get = function() return ST.walkOn end, set = function(v) UI.walkToggle.set(v) end},
 	{id = "steal", label = "Auto steal", order = 4, get = function() return ST.stealOn end, set = function(v) UI.stealToggle.set(v) end},
-	{id = "hop", label = "Hop Server", order = 5, action = hopServer},
+	{id = "attack", label = "Auto đánh", order = 5, get = function() return ST.attackOn end, set = function(v) UI.attackToggle.set(v) end},
+	{id = "hop", label = "Hop Server", order = 6, action = hopServer},
 }
 for _, f in ipairs(FUNCS) do FUNC_BY_ID[f.id] = f end
 
@@ -1726,14 +1765,15 @@ local function refreshQuickBarVis()
 	local count = pinnedCount()
 	UI.quickBar.Visible = ST.uiReady and (count > 0)
 	if count > 0 then
-		UI.quickBar.Size = UDim2.fromOffset(174, count * 50 - 8)
+		-- handle (16) + mỗi nút 42 + khoảng cách 8 giữa các phần tử
+		UI.quickBar.Size = UDim2.fromOffset(CFG.QUICK_WIDTH, CFG.QUICK_HANDLE_H + count * 50)
 	end
 end
 
 UI.quickBar = Instance.new("Frame")
 UI.quickBar.Name = "SysOreQuickBar"
 UI.quickBar.BackgroundTransparency = 1
-UI.quickBar.Size = UDim2.fromOffset(174, 42)
+UI.quickBar.Size = UDim2.fromOffset(CFG.QUICK_WIDTH, 42)
 UI.quickBar.Visible = false
 UI.quickBar.ZIndex = 35
 UI.quickBar.Parent = UI.gui
@@ -1743,9 +1783,33 @@ quickLayout.Padding = UDim.new(0, 8)
 quickLayout.SortOrder = Enum.SortOrder.LayoutOrder
 quickLayout.Parent = UI.quickBar
 
+-- Thanh kéo quick bar (nằm trên cùng, LayoutOrder 0)
+UI.quickHandle = Instance.new("TextButton")
+UI.quickHandle.Name = "QuickDragHandle"
+UI.quickHandle.Size = UDim2.new(1, 0, 0, CFG.QUICK_HANDLE_H)
+UI.quickHandle.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+UI.quickHandle.BackgroundTransparency = 0.1
+UI.quickHandle.BorderSizePixel = 0
+UI.quickHandle.AutoButtonColor = false
+UI.quickHandle.Font = Enum.Font.GothamBold
+UI.quickHandle.TextSize = 10
+UI.quickHandle.TextColor3 = Color3.fromRGB(170, 170, 180)
+UI.quickHandle.Text = "⋮⋮ kéo"
+UI.quickHandle.LayoutOrder = 0
+UI.quickHandle.Active = true
+UI.quickHandle.ZIndex = 36
+UI.quickHandle.Parent = UI.quickBar
+Instance.new("UICorner", UI.quickHandle).CornerRadius = UDim.new(0, 8)
+
 local function placeQuickBar()
 	local vp = getViewport()
-	UI.quickBar.Position = UDim2.fromOffset(10, math.floor(vp.Y * 0.32))
+	local h = UI.quickBar.Size.Y.Offset
+	if ST.quickX == nil or ST.quickY == nil then
+		ST.quickX, ST.quickY = 10, math.floor(vp.Y * 0.32)
+	end
+	ST.quickX = math.clamp(ST.quickX, 0, math.max(0, vp.X - CFG.QUICK_WIDTH))
+	ST.quickY = math.clamp(ST.quickY, topInset() + 4, math.max(topInset() + 4, vp.Y - h - 4))
+	UI.quickBar.Position = UDim2.fromOffset(ST.quickX, ST.quickY)
 end
 placeQuickBar()
 
@@ -1753,7 +1817,7 @@ local function addPill(f)
 	if pills[f.id] then refreshQuickBarVis() return end
 	local wrap = Instance.new("Frame")
 	wrap.Name = "SysOrePill"
-	wrap.Size = UDim2.fromOffset(174, 42)
+	wrap.Size = UDim2.fromOffset(CFG.QUICK_WIDTH, 42)
 	wrap.BackgroundTransparency = 1
 	wrap.LayoutOrder = f.order
 	wrap.ZIndex = 35
@@ -1820,7 +1884,7 @@ quickScroller.Size = UDim2.new(1, -28, 1, -68)
 quickScroller.BackgroundTransparency = 1
 quickScroller.BorderSizePixel = 0
 quickScroller.ScrollBarThickness = 3
-quickScroller.CanvasSize = UDim2.new(0, 0, 0, 230)
+quickScroller.CanvasSize = UDim2.new(0, 0, 0, 260)
 quickScroller.Visible = false
 quickScroller.ZIndex = 25
 quickScroller.Parent = UI.expandedGroup
@@ -1979,7 +2043,6 @@ table.insert(conns, S.UIS.InputChanged:Connect(function(input)
 			clampSquare()
 			UI.island.Position = UDim2.fromOffset(ST.squareX, ST.squareY)
 			placeNotif()
-			placeQuickBar()
 		end
 	end
 end))
@@ -1991,6 +2054,34 @@ table.insert(conns, S.UIS.InputEnded:Connect(function(input)
 		if not moved then
 			setExpanded(not dragWasExpanded)
 		end
+	end
+end))
+
+-- ===== kéo quick bar (qua thanh "⋮⋮ kéo") =====
+local qDragging, qDragStart, qStartX, qStartY = false, Vector2.new(0, 0), 0, 0
+
+table.insert(conns, UI.quickHandle.InputBegan:Connect(function(input)
+	if isPointer(input.UserInputType) then
+		qDragging = true
+		qDragStart = Vector2.new(input.Position.X, input.Position.Y)
+		qStartX, qStartY = ST.quickX or 10, ST.quickY or 0
+	end
+end))
+
+table.insert(conns, S.UIS.InputChanged:Connect(function(input)
+	if not qDragging then return end
+	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+		local dx, dy = input.Position.X - qDragStart.X, input.Position.Y - qDragStart.Y
+		ST.quickX = qStartX + dx
+		ST.quickY = qStartY + dy
+		placeQuickBar()
+	end
+end))
+
+table.insert(conns, S.UIS.InputEnded:Connect(function(input)
+	if qDragging and isPointer(input.UserInputType) then
+		qDragging = false
+		saveConfig()
 	end
 end))
 
@@ -2034,6 +2125,7 @@ end
 if wantEsp then UI.espToggle.set(true) end
 if wantWalk then UI.walkToggle.set(true) end
 if wantSteal then UI.stealToggle.set(true) end
+if wantAttack then UI.attackToggle.set(true) end
 ST.restoring = false
 saveConfig()
 
@@ -2128,6 +2220,7 @@ UI.gui.Destroying:Connect(function()
 	ST.alive = false
 	ST.uiReady = false
 	ST.walkOn = false
+	ST.attackOn = false
 	setStealEnabled(false)
 	destroyStealLine()
 	stopESP()
@@ -2157,6 +2250,7 @@ task.spawn(function()
 	if ST.espOn then
 		startESP()
 	end
+	placeQuickBar()
 	refreshQuickBarVis()
 	refreshUI()
 end)
