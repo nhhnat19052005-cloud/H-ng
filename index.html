@@ -1,87 +1,63 @@
--- Huongcuto
--- ESP ore (highlight + nhãn + line) cho 5 loại quặng, chỉ quét trong biome Cosmic Sanctuary, auto pickaxe, auto farm ore, hop server 1 lần, quick key. PC và mobile.
--- tự lưu config vào file system_ore_config.json (cần executor có writefile/readfile)
--- rủi ro: Roblox có thể ban nếu bị phát hiện, nên test trên acc phụ.
-
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
-local UIS = game:GetService("UserInputService")
-local GuiService = game:GetService("GuiService")
-local Stats = game:GetService("Stats")
-local HttpService = game:GetService("HttpService")
-local TeleportService = game:GetService("TeleportService")
-
-local LocalPlayer = Players.LocalPlayer
-local SCRIPT_NAME = "Huongcuto"
-
--- ===== cấu hình =====
-local MAX_TRACKED = 300
-local MAX_PER_KEY = 60
-local QUEUE_BUDGET = 400
-local RESCAN_INTERVAL = 3
-local UI_INTERVAL = 0.25
-local EQUIP_INTERVAL = 0.5
-local NOTIF_DURATION = 1
-local DRAG_THRESHOLD = 6
-local NOTIF_WIDTH = 240
-local ICON_SIZE = 52
-local EXPANDED_VEC = Vector2.new(270, 412)
-local SIZE_MIN, SIZE_MAX, SIZE_STEP = 0.1, 2.0, 0.1
-local DIST_MIN, DIST_MAX, DIST_STEP = 10, 500, 10
-local DIST_DEFAULT = 300
-local LINE_WIDTH = 0.18
-local WALK_REACH = 6
-local WALK_STUCK_TIME = 2
-local WALK_GIVEUP = 12
-local WALK_SKIP_TIME = 10
-local WAIT_RADIUS = 8
-local WAIT_ANG_SPEED = 0.6
-local QUICK_MAX = 3
-local CFG_FILE = "system_ore_config.json"
-local LOADING_DURATION = 2
-
--- biome: tên model/folder/part chứa chữ này (bỏ khoảng trắng, không phân biệt hoa thường) là vùng quét
-local BIOME_KEYWORD = "Cosmic Sanctuary"
-local BIOME_SCAN_INTERVAL = 10
-local BIOME_PAD_Y = 50
-
--- hop server: số người tối đa để chấp nhận (1 = chỉ mình bạn)
-local HOP_MAX_PLAYERS = 2
-local HOP_COOLDOWN = 15
--- link raw của script, để tự chạy lại sau khi hop nếu executor có queue_on_teleport. Để "" nếu không dùng.
-local REQUEUE_URL = ""
-
--- chỉ 5 loại quặng này
-local ORES = {
-	{key = "secret", label = "Secret Ore", color = Color3.fromRGB(192, 194, 200)},
-	{key = "celestial", label = "Celestial Ore", color = Color3.fromRGB(40, 200, 110)},
-	{key = "inferno", label = "Inferno Ore", color = Color3.fromRGB(255, 95, 30)},
-	{key = "void", label = "Void Ore", color = Color3.fromRGB(170, 85, 255)},
-	{key = "cosmic", label = "Cosmic Ore", color = Color3.fromRGB(90, 190, 255)},
+-- Huongcuto (Delta Mobile Safe - gom biến tránh tràn local limit)
+local S = {
+	Players = game:GetService("Players"),
+	RunService = game:GetService("RunService"),
+	TweenService = game:GetService("TweenService"),
+	UIS = game:GetService("UserInputService"),
+	GuiService = game:GetService("GuiService"),
+	Stats = game:GetService("Stats"),
+	HttpService = game:GetService("HttpService"),
+	TeleportService = game:GetService("TeleportService"),
 }
 
--- thứ tự đi quặng: số càng nhỏ đi trước, chỉnh bằng ▲▼ ở tab Main
-local oreOrder = {}
-for i, o in ipairs(ORES) do
-	oreOrder[i] = o.key
-end
+local LocalPlayer = S.Players.LocalPlayer
+local SCRIPT_NAME = "Huongcuto"
 
-local function oreRank(key)
-	for i, k in ipairs(oreOrder) do
-		if k == key then
-			return i
-		end
-	end
-	return #oreOrder + 1
-end
+local CFG = {
+	MAX_TRACKED = 300,
+	MAX_PER_KEY = 60,
+	QUEUE_BUDGET = 400,
+	RESCAN_INTERVAL = 3,
+	UI_INTERVAL = 0.25,
+	EQUIP_INTERVAL = 0.5,
+	NOTIF_DURATION = 1,
+	DRAG_THRESHOLD = 6,
+	NOTIF_WIDTH = 240,
+	ICON_SIZE = 52,
+	EXPANDED_VEC = Vector2.new(270, 412),
+	SIZE_MIN = 0.1,
+	SIZE_MAX = 2.0,
+	SIZE_STEP = 0.1,
+	DIST_MIN = 10,
+	DIST_MAX = 500,
+	DIST_STEP = 10,
+	DIST_DEFAULT = 300,
+	LINE_WIDTH = 0.18,
+	WALK_REACH = 6,
+	WALK_STUCK_TIME = 1.0,
+	WALK_GIVEUP = 12,
+	WALK_SKIP_TIME = 10,
+	WAIT_RADIUS = 8,
+	WAIT_ANG_SPEED = 0.6,
+	WAIT_STUCK_TIME = 1.0,
+	QUICK_MAX = 3,
+	FILE = "huongcuto_config.json",
+	LOADING_DURATION = 2,
+	BIOME_KEYWORD = "Cosmic Sanctuary",
+	BIOME_SCAN_INTERVAL = 10,
+	BIOME_PAD_Y = 50,
+	HOP_MAX_PLAYERS = 2,
+	HOP_COOLDOWN = 15,
+	REQUEUE_URL = "",
+	ON_COLOR = Color3.fromRGB(70, 210, 130),
+	OFF_COLOR = Color3.fromRGB(60, 60, 68),
+}
 
-local ON_COLOR = Color3.fromRGB(70, 210, 130)
-local OFF_COLOR = Color3.fromRGB(60, 60, 68)
-
-local BOUNCE = TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local FAST = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local SMOOTH = TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local TWEEN = {
+	BOUNCE = TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+	FAST = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+	SMOOTH = TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+}
 
 local RAINBOW = ColorSequence.new({
 	ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),
@@ -93,27 +69,105 @@ local RAINBOW = ColorSequence.new({
 	ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 0)),
 })
 
+local ORES = {
+	{key = "secret", label = "Secret Ore", color = Color3.fromRGB(192, 194, 200)},
+	{key = "celestial", label = "Celestial Ore", color = Color3.fromRGB(40, 200, 110)},
+	{key = "inferno", label = "Inferno Ore", color = Color3.fromRGB(255, 95, 30)},
+	{key = "void", label = "Void Ore", color = Color3.fromRGB(170, 85, 255)},
+	{key = "cosmic", label = "Cosmic Ore", color = Color3.fromRGB(90, 190, 255)},
+}
+
+local ST = {
+	alive = true,
+	uiReady = false,
+	espOn = false,
+	scanDone = false,
+	autoEquipOn = true,
+	walkOn = false,
+	hopping = false,
+	lastHopAt = -CFG.HOP_COOLDOWN,
+	espScale = 1.0,
+	maxDist = CFG.DIST_DEFAULT,
+	waitPos = nil,
+	waitAngle = 0,
+	waitDir = 1,
+	restoring = true,
+	rootAtt = nil,
+	statusText = "tắt",
+	fps = 0,
+	msValue = 0,
+	ping = nil,
+	biomeCF = nil,
+	biomeSize = nil,
+	biomeName = nil,
+	knownTotal = 0,
+	trackedCount = 0,
+	qHead = 1,
+	qTail = 0,
+	walkTarget = nil,
+	walkLastPos = nil,
+	walkStuckT = 0,
+	walkAge = 0,
+	walkSidestepUntil = 0,
+	walkSidestepGoal = nil,
+	walkSideSign = 1,
+	waitLastPos = nil,
+	waitStuckT = 0,
+	waitSidestepUntil = 0,
+	waitSidestepGoal = nil,
+	lastJumpAt = 0,
+	expanded = false,
+	curSize = Vector2.new(CFG.ICON_SIZE, CFG.ICON_SIZE),
+	squareX = 0,
+	squareY = 0,
+}
+
+local oreOrder = {}
+local known, knownCount = {}, {}
+local tracked, trackedPerKey = {}, {}
+local priority, rows = {}, {}
+local queue, queued = {}, {}
+local walkSkip = {}
+local conns, rainbowGrads = {}, {}
+local pills, FUNC_BY_ID = {}, {}
+local UI = {}
+
+for i, o in ipairs(ORES) do
+	oreOrder[i] = o.key
+	knownCount[o.key] = 0
+end
+
+local function oreRank(key)
+	for i, k in ipairs(oreOrder) do
+		if k == key then return i end
+	end
+	return #oreOrder + 1
+end
+
+local function allowed(key)
+	if next(priority) == nil then return true end
+	return priority[key] == true
+end
+
 -- ===== helper =====
 local function getContainer()
+	local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 10)
+	if pg then return pg end
 	if typeof(gethui) == "function" then
 		local ok, hui = pcall(gethui)
-		if ok and typeof(hui) == "Instance" then
-			return hui
-		end
+		if ok and typeof(hui) == "Instance" then return hui end
 	end
-	local ok2, cg = pcall(function()
-		return game:GetService("CoreGui")
-	end)
-	if ok2 and cg then
-		return cg
-	end
-	return LocalPlayer:WaitForChild("PlayerGui")
+	local ok2, cg = pcall(function() return game:GetService("CoreGui") end)
+	return (ok2 and cg) or workspace
 end
 
 local function tween(obj, info, props)
-	local t = TweenService:Create(obj, info, props)
-	t:Play()
-	return t
+	local ok, t = pcall(function()
+		local tw = S.TweenService:Create(obj, info, props)
+		tw:Play()
+		return tw
+	end)
+	return ok and t or nil
 end
 
 local function toHex(c)
@@ -131,15 +185,11 @@ local function mkLabel(parent, props)
 	l.TextSize = 13
 	l.TextXAlignment = Enum.TextXAlignment.Left
 	l.TextTruncate = Enum.TextTruncate.AtEnd
-	for k, v in pairs(props) do
-		l[k] = v
-	end
+	for k, v in pairs(props) do l[k] = v end
 	l.Parent = parent
 	return l
 end
 
--- tập các UIGradient cầu vồng, xoay mỗi frame
-local rainbowGrads = {}
 local function rainbowStroke(parent, thickness, transparency)
 	local s = Instance.new("UIStroke")
 	s.Color = Color3.fromRGB(255, 255, 255)
@@ -163,33 +213,24 @@ end
 
 local function getPing()
 	local ok, v = pcall(function()
-		return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+		return S.Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
 	end)
-	if ok and typeof(v) == "number" then
-		return math.floor(v + 0.5)
-	end
-	return nil
+	return (ok and typeof(v) == "number") and math.floor(v + 0.5) or nil
 end
 
 local function getViewport()
 	local cam = workspace.CurrentCamera
-	return (cam and cam.ViewportSize) or Vector2.new(400, 800)
+	return (cam and cam.ViewportSize) or Vector2.new(800, 450)
 end
 
 local function topInset()
-	local ok, y = pcall(function()
-		return GuiService:GetGuiInset().Y
-	end)
+	local ok, y = pcall(function() return S.GuiService:GetGuiInset().Y end)
 	return (ok and typeof(y) == "number") and y or 0
 end
 
 local function getPart(inst)
-	if inst:IsA("BasePart") then
-		return inst
-	end
-	if inst.PrimaryPart then
-		return inst.PrimaryPart
-	end
+	if inst:IsA("BasePart") then return inst end
+	if inst.PrimaryPart then return inst.PrimaryPart end
 	return inst:FindFirstChildWhichIsA("BasePart", true)
 end
 
@@ -200,45 +241,34 @@ end
 
 local function distanceTo(part)
 	local root = getRoot()
-	if not (root and part and part.Parent) then
-		return nil
-	end
+	if not (root and part and part.Parent) then return nil end
 	return (root.Position - part.Position).Magnitude
 end
 
 local function isOwn(inst)
 	local p = inst
 	while p and p ~= workspace do
-		if string.sub(p.Name, 1, 6) == "SysOre" then
-			return true
-		end
+		if string.sub(p.Name, 1, 6) == "SysOre" then return true end
 		p = p.Parent
 	end
 	return false
 end
 
--- kiểm tra tên instance có phải do script tạo không
 local function isOwnName(x)
 	return string.sub(x.Name, 1, 6) == "SysOre"
 end
 
--- ===== nhận diện: chỉ các quặng đã cho =====
+-- ===== nhận diện quặng =====
 local function norm(s)
 	return string.lower((string.gsub(s, "[%s_%-]", "")))
 end
 
 local function matchOre(text)
-	if type(text) ~= "string" then
-		return nil
-	end
+	if type(text) ~= "string" then return nil end
 	local s = norm(text)
-	if not string.find(s, "ore", 1, true) then
-		return nil
-	end
+	if not string.find(s, "ore", 1, true) then return nil end
 	for _, o in ipairs(ORES) do
-		if string.find(s, o.key, 1, true) then
-			return o
-		end
+		if string.find(s, o.key, 1, true) then return o end
 	end
 	return nil
 end
@@ -249,9 +279,7 @@ local function oreTarget(inst)
 	while cur and cur ~= workspace do
 		if cur:IsA("BasePart") or cur:IsA("Model") then
 			local o = matchOre(cur.Name)
-			if o then
-				best, ore = cur, o
-			end
+			if o then best, ore = cur, o end
 		end
 		cur = cur.Parent
 	end
@@ -259,22 +287,14 @@ local function oreTarget(inst)
 end
 
 local function oreFromLabel(bb)
-	if string.sub(bb.Name, 1, 6) == "SysOre" then
-		return nil
-	end
+	if isOwnName(bb) then return nil end
 	local anchor = bb.Adornee
 	if not anchor then
 		local p = bb.Parent
-		if p and p:IsA("Attachment") then
-			p = p.Parent
-		end
-		if p and (p:IsA("BasePart") or p:IsA("Model")) then
-			anchor = p
-		end
+		if p and p:IsA("Attachment") then p = p.Parent end
+		if p and (p:IsA("BasePart") or p:IsA("Model")) then anchor = p end
 	end
-	if not anchor then
-		return nil
-	end
+	if not anchor then return nil end
 	for _, d in ipairs(bb:GetDescendants()) do
 		if d:IsA("TextLabel") or d:IsA("TextButton") then
 			local o = matchOre(d.Text)
@@ -288,128 +308,52 @@ local function oreFromLabel(bb)
 end
 
 local function resolveOre(inst)
-	if isOwn(inst) then
-		return nil
-	end
-	if inst:IsA("BillboardGui") then
-		return oreFromLabel(inst)
-	end
+	if isOwn(inst) then return nil end
+	if inst:IsA("BillboardGui") then return oreFromLabel(inst) end
 	if inst:IsA("TextLabel") or inst:IsA("TextButton") then
 		local bb = inst:FindFirstAncestorWhichIsA("BillboardGui")
-		if bb then
-			return oreFromLabel(bb)
-		end
-		return nil
+		return bb and oreFromLabel(bb) or nil
 	end
 	return oreTarget(inst)
 end
 
--- ===== trạng thái =====
-local ensureRowsRefresh, notify, notifyStatus, placeNotif, sizeValLbl, distValLbl
-local setWaitPos
-local waitLbl = nil
-local biomeLbl = nil
-local pills = {}
-local FUNC_BY_ID = {}
-local quickBar = nil
-
-local alive = true
-local uiReady = false
-local espOn = false
-local scanDone = false
-local autoEquipOn = true
-local walkOn = false
-local hopping = false
-local lastHopAt = -HOP_COOLDOWN
-local espScale = 1.0
-local maxDist = DIST_DEFAULT
-local waitPos = nil -- Vector3: chỗ đứng đợi khi không có quặng
-local waitAngle = 0 -- góc hiện tại khi đi vòng quanh chỗ đợi
-local restoring = true -- chặn ghi config trong lúc khôi phục
-local rootAtt = nil
-local statusText = "tắt"
-local fps, msValue, ping = 0, 0, nil
-local conns = {}
-
--- biome: CFrame tâm và kích thước vùng quét
-local biomeCF, biomeSize, biomeName = nil, nil, nil
-
-local known, knownCount, knownTotal = {}, {}, 0
-for _, o in ipairs(ORES) do
-	knownCount[o.key] = 0
-end
-local tracked, trackedCount = {}, 0
-local trackedPerKey = {}
-local priority = {}
-local rows = {}
-local queue, queued, qHead, qTail = {}, {}, 1, 0
-
-local function allowed(key)
-	if next(priority) == nil then
-		return true
-	end
-	return priority[key] == true
-end
-
--- ===== config tự lưu =====
+-- ===== config =====
 local function saveConfig()
-	if restoring or typeof(writefile) ~= "function" then
-		return
-	end
-	local pinList = {}
-	for id in pairs(pills) do
-		table.insert(pinList, id)
-	end
-	local pri = {}
-	for k, v in pairs(priority) do
-		if v then
-			pri[k] = true
-		end
-	end
+	if ST.restoring or typeof(writefile) ~= "function" then return end
+	local pinList, pri = {}, {}
+	for id in pairs(pills) do table.insert(pinList, id) end
+	for k, v in pairs(priority) do if v then pri[k] = true end end
 	local data = {
 		order = oreOrder,
 		priority = pri,
-		esp = espOn,
-		walk = walkOn,
-		auto = autoEquipOn,
-		scale = espScale,
-		dist = maxDist,
+		esp = ST.espOn,
+		walk = ST.walkOn,
+		auto = ST.autoEquipOn,
+		scale = ST.espScale,
+		dist = ST.maxDist,
 		pins = pinList,
 	}
-	if waitPos then
-		data.wait = {x = waitPos.X, y = waitPos.Y, z = waitPos.Z}
+	if ST.waitPos then
+		data.wait = {x = ST.waitPos.X, y = ST.waitPos.Y, z = ST.waitPos.Z}
 	end
-	pcall(function()
-		writefile(CFG_FILE, HttpService:JSONEncode(data))
-	end)
+	pcall(function() writefile(CFG.FILE, S.HttpService:JSONEncode(data)) end)
 end
 
 local function loadConfig()
-	if typeof(isfile) ~= "function" or typeof(readfile) ~= "function" then
-		return nil
-	end
+	if typeof(isfile) ~= "function" or typeof(readfile) ~= "function" then return nil end
 	local ok, res = pcall(function()
-		if not isfile(CFG_FILE) then
-			return nil
-		end
-		return HttpService:JSONDecode(readfile(CFG_FILE))
+		if not isfile(CFG.FILE) then return nil end
+		return S.HttpService:JSONDecode(readfile(CFG.FILE))
 	end)
-	if ok and type(res) == "table" then
-		return res
-	end
-	return nil
+	return (ok and type(res) == "table") and res or nil
 end
 
--- đọc config cũ vào biến; bật lại toggle sẽ làm sau khi GUI dựng xong
 local wantEsp, wantWalk, wantPins = false, false, {}
 do
 	local saved = loadConfig()
 	if saved then
 		local ORE_KEYS = {}
-		for _, o in ipairs(ORES) do
-			ORE_KEYS[o.key] = true
-		end
-
+		for _, o in ipairs(ORES) do ORE_KEYS[o.key] = true end
 		if type(saved.order) == "table" then
 			local seen, order = {}, {}
 			for _, k in ipairs(saved.order) do
@@ -419,74 +363,50 @@ do
 				end
 			end
 			for _, o in ipairs(ORES) do
-				if not seen[o.key] then
-					table.insert(order, o.key)
-				end
+				if not seen[o.key] then table.insert(order, o.key) end
 			end
 			oreOrder = order
 		end
-
 		if type(saved.priority) == "table" then
 			for k, v in pairs(saved.priority) do
-				if ORE_KEYS[k] and v == true then
-					priority[k] = true
-				end
+				if ORE_KEYS[k] and v == true then priority[k] = true end
 			end
 		end
-
-		if type(saved.scale) == "number" then
-			espScale = math.clamp(saved.scale, SIZE_MIN, SIZE_MAX)
-		end
-		if type(saved.dist) == "number" then
-			maxDist = math.clamp(saved.dist, DIST_MIN, DIST_MAX)
-		end
-		if type(saved.auto) == "boolean" then
-			autoEquipOn = saved.auto
-		end
+		if type(saved.scale) == "number" then ST.espScale = math.clamp(saved.scale, CFG.SIZE_MIN, CFG.SIZE_MAX) end
+		if type(saved.dist) == "number" then ST.maxDist = math.clamp(saved.dist, CFG.DIST_MIN, CFG.DIST_MAX) end
+		if type(saved.auto) == "boolean" then ST.autoEquipOn = saved.auto end
 		wantEsp = saved.esp == true
 		wantWalk = saved.walk == true
-
 		if type(saved.pins) == "table" then
 			for _, id in ipairs(saved.pins) do
-				if type(id) == "string" then
-					table.insert(wantPins, id)
-				end
+				if type(id) == "string" then table.insert(wantPins, id) end
 			end
 		end
-
 		local w = saved.wait
-		if type(w) == "table" and type(w.x) == "number"
-			and type(w.y) == "number" and type(w.z) == "number" then
-			waitPos = Vector3.new(w.x, w.y, w.z)
+		if type(w) == "table" and type(w.x) == "number" and type(w.y) == "number" and type(w.z) == "number" then
+			ST.waitPos = Vector3.new(w.x, w.y, w.z)
 		end
 	end
 end
 
--- ===== biome: tìm vùng Cosmic Sanctuary, chỉ quặng nằm trong vùng này mới được quét =====
+-- ===== biome =====
 local function findBiome()
-	local kw = norm(BIOME_KEYWORD)
+	local kw = norm(CFG.BIOME_KEYWORD)
 	local bestCF, bestSize, bestName, bestVol = nil, nil, nil, -1
 	for _, d in ipairs(workspace:GetDescendants()) do
 		if d:IsA("Model") or d:IsA("Folder") or d:IsA("BasePart") then
 			local n = norm(d.Name)
-			if string.find(n, kw, 1, true) and not string.find(n, "ore", 1, true)
-				and not isOwn(d) then
+			if string.find(n, kw, 1, true) and not string.find(n, "ore", 1, true) and not isOwn(d) then
 				local cf, size
 				if d:IsA("BasePart") then
 					cf, size = d.CFrame, d.Size
 				elseif d:IsA("Model") then
-					local ok, c, s = pcall(function()
-						return d:GetBoundingBox()
-					end)
-					if ok then
-						cf, size = c, s
-					end
+					local ok, c, s = pcall(function() return d:GetBoundingBox() end)
+					if ok then cf, size = c, s end
 				end
 				if cf and size then
 					local vol = size.X * size.Y * size.Z
-					if vol > bestVol then
-						bestCF, bestSize, bestName, bestVol = cf, size, d.Name, vol
-					end
+					if vol > bestVol then bestCF, bestSize, bestName, bestVol = cf, size, d.Name, vol end
 				end
 			end
 		end
@@ -495,58 +415,44 @@ local function findBiome()
 end
 
 local function inBiome(pos)
-	if not (biomeCF and biomeSize and pos) then
-		return false
-	end
-	local rel = biomeCF:PointToObjectSpace(pos)
-	local h = biomeSize / 2
-	return math.abs(rel.X) <= h.X
-		and math.abs(rel.Y) <= h.Y + BIOME_PAD_Y
-		and math.abs(rel.Z) <= h.Z
+	if not (ST.biomeCF and ST.biomeSize and pos) then return false end
+	local rel = ST.biomeCF:PointToObjectSpace(pos)
+	local h = ST.biomeSize / 2
+	return math.abs(rel.X) <= h.X and math.abs(rel.Y) <= h.Y + CFG.BIOME_PAD_Y and math.abs(rel.Z) <= h.Z
 end
 
--- ===== line (đi cùng ESP ore) =====
+-- ===== ESP line & highlight =====
 local function refreshRootAtt()
 	local root = getRoot()
-	if not root then
-		return nil
+	if not root then return nil end
+	if not ST.rootAtt or ST.rootAtt.Parent ~= root then
+		if ST.rootAtt then pcall(function() ST.rootAtt:Destroy() end) end
+		ST.rootAtt = Instance.new("Attachment")
+		ST.rootAtt.Name = "SysOreRootAtt"
+		ST.rootAtt.Parent = root
 	end
-	if not rootAtt or rootAtt.Parent ~= root then
-		if rootAtt then
-			pcall(function() rootAtt:Destroy() end)
-		end
-		rootAtt = Instance.new("Attachment")
-		rootAtt.Name = "SysOreRootAtt"
-		rootAtt.Parent = root
-	end
-	return rootAtt
+	return ST.rootAtt
 end
 
 local function attachLine(e)
-	if e.beam then
-		return
-	end
+	if e.beam then return end
 	local ra = refreshRootAtt()
-	if not ra then
-		return
-	end
+	if not ra then return end
 	local att1 = Instance.new("Attachment")
 	att1.Name = "SysOreAtt"
 	att1.Parent = e.part
-
 	local beam = Instance.new("Beam")
 	beam.Name = "SysOreBeam"
 	beam.Attachment0 = ra
 	beam.Attachment1 = att1
 	beam.Color = ColorSequence.new(e.ore.color)
-	beam.Width0 = LINE_WIDTH
-	beam.Width1 = LINE_WIDTH
+	beam.Width0 = CFG.LINE_WIDTH
+	beam.Width1 = CFG.LINE_WIDTH
 	beam.FaceCamera = true
 	beam.LightEmission = 1
 	beam.Transparency = NumberSequence.new(0.25)
 	beam.Enabled = e.inRange ~= false
 	beam.Parent = e.part
-
 	e.att1 = att1
 	e.beam = beam
 end
@@ -560,24 +466,14 @@ local function detachLine(e)
 	e.att1 = nil
 end
 
--- ===== highlight + nhãn =====
-local function restoreGameTags(e)
-	for _, g in ipairs(e.hidden or {}) do
-		pcall(function() g.Enabled = true end)
-	end
-	e.hidden = {}
-end
-
 local function untrack(inst)
 	local e = tracked[inst]
-	if not e then
-		return
-	end
+	if not e then return end
 	tracked[inst] = nil
-	trackedCount = trackedCount - 1
+	ST.trackedCount = ST.trackedCount - 1
 	trackedPerKey[e.ore.key] = math.max(0, (trackedPerKey[e.ore.key] or 1) - 1)
 	detachLine(e)
-	restoreGameTags(e)
+	for _, g in ipairs(e.hidden or {}) do pcall(function() g.Enabled = true end) end
 	pcall(function()
 		if e.hl then e.hl:Destroy() end
 		if e.bb then e.bb:Destroy() end
@@ -585,30 +481,18 @@ local function untrack(inst)
 end
 
 local function track(target, ore)
-	if tracked[target] or trackedCount >= MAX_TRACKED then
-		return
-	end
-	if (trackedPerKey[ore.key] or 0) >= MAX_PER_KEY then
-		return
-	end
-	-- nếu quặng cha đã được theo dõi thì bỏ qua, tránh 2 mục cho 1 quặng
+	if tracked[target] or ST.trackedCount >= CFG.MAX_TRACKED then return end
+	if (trackedPerKey[ore.key] or 0) >= CFG.MAX_PER_KEY then return end
 	local p = target.Parent
 	while p and p ~= workspace do
-		if tracked[p] then
-			return
-		end
+		if tracked[p] then return end
 		p = p.Parent
 	end
-	-- nếu có mục con đang theo dõi thì gỡ đi, chỉ giữ mục cha
 	for t in pairs(tracked) do
-		if t ~= target and t:IsDescendantOf(target) then
-			untrack(t)
-		end
+		if t ~= target and t:IsDescendantOf(target) then untrack(t) end
 	end
 	local part = getPart(target)
-	if not part then
-		return
-	end
+	if not part then return end
 
 	local hl = Instance.new("Highlight")
 	hl.Name = "SysOreHL"
@@ -623,7 +507,7 @@ local function track(target, ore)
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "SysOreTag"
 	bb.Adornee = part
-	bb.Size = UDim2.fromOffset(140 * espScale, 22 * espScale)
+	bb.Size = UDim2.fromOffset(140 * ST.espScale, 22 * ST.espScale)
 	bb.StudsOffset = Vector3.new(0, 2.5, 0)
 	bb.AlwaysOnTop = true
 	bb.Parent = part
@@ -633,96 +517,41 @@ local function track(target, ore)
 	lbl.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
 	lbl.BackgroundTransparency = 0.25
 	lbl.Font = Enum.Font.GothamBold
-	lbl.TextSize = math.max(6, math.floor(13 * espScale + 0.5))
+	lbl.TextSize = math.max(6, math.floor(13 * ST.espScale + 0.5))
 	lbl.TextColor3 = ore.color
 	lbl.TextStrokeTransparency = 0.5
 	lbl.Text = ore.label
 	lbl.Parent = bb
-	local lc = Instance.new("UICorner")
-	lc.CornerRadius = UDim.new(0, 8)
-	lc.Parent = lbl
+	Instance.new("UICorner", lbl).CornerRadius = UDim.new(0, 8)
 
-	local e = {hl = hl, bb = bb, lbl = lbl, part = part, ore = ore,
-		inRange = true, target = target, hidden = {}}
+	local e = {hl = hl, bb = bb, lbl = lbl, part = part, ore = ore, inRange = true, target = target, hidden = {}}
 	tracked[target] = e
-	trackedCount = trackedCount + 1
+	ST.trackedCount = ST.trackedCount + 1
 	trackedPerKey[ore.key] = (trackedPerKey[ore.key] or 0) + 1
-
-	if espOn then
-		attachLine(e)
-	end
-end
-
-local function applyScale()
-	for _, e in pairs(tracked) do
-		e.bb.Size = UDim2.fromOffset(140 * espScale, 22 * espScale)
-		e.lbl.TextSize = math.max(6, math.floor(13 * espScale + 0.5))
-	end
-end
-
-local function setScale(delta)
-	espScale = math.clamp(math.floor((espScale + delta) * 10 + 0.5) / 10, SIZE_MIN, SIZE_MAX)
-	if sizeValLbl then
-		sizeValLbl.Text = string.format("%.1fx", espScale)
-	end
-	applyScale()
-	saveConfig()
-end
-
-local function setInRange(e, on)
-	if e.inRange == on then
-		return
-	end
-	e.inRange = on
-	if e.hl then e.hl.Enabled = on end
-	if e.bb then e.bb.Enabled = on end
-	if e.beam then e.beam.Enabled = on end
-end
-
-local function setDist(delta)
-	maxDist = math.clamp(maxDist + delta, DIST_MIN, DIST_MAX)
-	if distValLbl then
-		distValLbl.Text = maxDist .. "m"
-	end
-	saveConfig()
+	if ST.espOn then attachLine(e) end
 end
 
 local function syncTracked()
 	for inst, e in pairs(tracked) do
-		if not espOn or not allowed(e.ore.key) then
-			untrack(inst)
-		end
+		if not ST.espOn or not allowed(e.ore.key) then untrack(inst) end
 	end
-	if not espOn then
-		return
-	end
+	if not ST.espOn then return end
 	for inst, ore in pairs(known) do
-		if trackedCount >= MAX_TRACKED then
-			break
-		end
-		if not tracked[inst] and allowed(ore.key) then
-			track(inst, ore)
-		end
+		if ST.trackedCount >= CFG.MAX_TRACKED then break end
+		if not tracked[inst] and allowed(ore.key) then track(inst, ore) end
 	end
 end
 
 local function addKnown(target, ore, announce)
-	if known[target] then
-		return
-	end
-	-- chỉ nhận quặng nằm trong biome
+	if known[target] then return end
 	local p = getPart(target)
-	if not (p and inBiome(p.Position)) then
-		return
-	end
+	if not (p and inBiome(p.Position)) then return end
 	known[target] = ore
 	knownCount[ore.key] = knownCount[ore.key] + 1
-	knownTotal = knownTotal + 1
-	if espOn and allowed(ore.key) then
+	ST.knownTotal = ST.knownTotal + 1
+	if ST.espOn and allowed(ore.key) then
 		track(target, ore)
-		if announce then
-			notify(ore)
-		end
+		if announce and UI.notify then UI.notify(ore) end
 	end
 end
 
@@ -731,48 +560,42 @@ local function removeKnown(inst)
 	if ore then
 		known[inst] = nil
 		knownCount[ore.key] = math.max(0, knownCount[ore.key] - 1)
-		knownTotal = math.max(0, knownTotal - 1)
+		ST.knownTotal = math.max(0, ST.knownTotal - 1)
 	end
 	untrack(inst)
 end
 
 -- ===== hàng đợi quét =====
 local function enqueue(inst, mode)
-	if queued[inst] or isOwn(inst) then
-		return
-	end
+	if queued[inst] or isOwn(inst) then return end
 	queued[inst] = mode
-	qTail = qTail + 1
-	queue[qTail] = inst
+	ST.qTail = ST.qTail + 1
+	queue[ST.qTail] = inst
 end
 
 local function resetQueue()
-	queue = {}
-	queued = {}
-	qHead, qTail = 1, 0
+	queue, queued, ST.qHead, ST.qTail = {}, {}, 1, 0
 end
 
 local function processQueue()
 	local n = 0
-	while qHead <= qTail and n < QUEUE_BUDGET do
-		local inst = queue[qHead]
-		queue[qHead] = nil
-		qHead = qHead + 1
+	while ST.qHead <= ST.qTail and n < CFG.QUEUE_BUDGET do
+		local inst = queue[ST.qHead]
+		queue[ST.qHead] = nil
+		ST.qHead = ST.qHead + 1
 		n = n + 1
 		local mode = queued[inst]
 		queued[inst] = nil
 		if inst and inst:IsDescendantOf(workspace) then
 			local target, ore = resolveOre(inst)
 			if target and ore and not known[target] and target:IsDescendantOf(workspace) then
-				addKnown(target, ore, mode == "live" and scanDone)
+				addKnown(target, ore, mode == "live" and ST.scanDone)
 			end
 		end
 	end
-	if qHead > qTail then
+	if ST.qHead > ST.qTail then
 		resetQueue()
-		if espOn and not scanDone then
-			scanDone = true
-		end
+		if ST.espOn and not ST.scanDone then ST.scanDone = true end
 	end
 end
 
@@ -785,169 +608,123 @@ local function enqueueWorkspace(mode)
 end
 
 local function startESP()
-	espOn = true
-	scanDone = false
-	statusText = "đang quét"
+	ST.espOn = true
+	ST.scanDone = false
+	ST.statusText = "đang quét"
 	resetQueue()
 	enqueueWorkspace("scan")
 end
 
 local function stopESP()
-	espOn = false
-	scanDone = false
-	statusText = "tắt"
+	ST.espOn = false
+	ST.scanDone = false
+	ST.statusText = "tắt"
 	resetQueue()
-	for inst in pairs(tracked) do
-		untrack(inst)
-	end
-	known = {}
-	knownTotal = 0
-	for k in pairs(knownCount) do
-		knownCount[k] = 0
-	end
+	for inst in pairs(tracked) do untrack(inst) end
+	known, ST.knownTotal = {}, 0
+	for k in pairs(knownCount) do knownCount[k] = 0 end
 end
 
 table.insert(conns, workspace.DescendantAdded:Connect(function(inst)
-	if espOn then
-		enqueue(inst, "live")
-	end
+	if ST.espOn then enqueue(inst, "live") end
 end))
 
 table.insert(conns, workspace.DescendantRemoving:Connect(function(inst)
-	if known[inst] or tracked[inst] then
-		removeKnown(inst)
-	end
+	if known[inst] or tracked[inst] then removeKnown(inst) end
 end))
 
-table.insert(conns, RunService.Heartbeat:Connect(function()
-	if espOn then
-		processQueue()
-	end
+table.insert(conns, S.RunService.Heartbeat:Connect(function()
+	if ST.espOn then processQueue() end
 end))
 
 task.spawn(function()
-	while alive do
-		task.wait(RESCAN_INTERVAL)
-		if espOn and qHead > qTail then
-			enqueueWorkspace("scan")
-		end
+	while ST.alive do
+		task.wait(CFG.RESCAN_INTERVAL)
+		if ST.espOn and ST.qHead > ST.qTail then enqueueWorkspace("scan") end
 	end
 end)
 
 task.spawn(function()
-	while alive do
+	while ST.alive do
 		task.wait(2)
 		for inst in pairs(known) do
-			if not inst:IsDescendantOf(workspace) then
-				removeKnown(inst)
-			end
+			if not inst:IsDescendantOf(workspace) then removeKnown(inst) end
 		end
 	end
 end)
 
--- dò biome định kỳ; khi vừa thấy biome thì quét lại toàn bộ
 task.spawn(function()
-	while alive do
+	while ST.alive do
 		local cf, size, name = findBiome()
-		local wasNil = biomeCF == nil
-		biomeCF, biomeSize, biomeName = cf, size, name
-		if wasNil and cf and espOn then
-			enqueueWorkspace("scan")
-		end
-		task.wait(BIOME_SCAN_INTERVAL)
+		local wasNil = ST.biomeCF == nil
+		ST.biomeCF, ST.biomeSize, ST.biomeName = cf, size, name
+		if wasNil and cf and ST.espOn then enqueueWorkspace("scan") end
+		task.wait(CFG.BIOME_SCAN_INTERVAL)
 	end
 end)
 
--- ===== hop server (bấm 1 lần) =====
+-- ===== hop server =====
 local function httpGet(url)
 	local req = request or http_request or (syn and syn.request)
-	if typeof(req) ~= "function" then
-		return nil
-	end
+	if typeof(req) ~= "function" then return nil end
 	local ok, res = pcall(req, {Url = url, Method = "GET"})
-	if ok and type(res) == "table" and res.Body then
-		return res.Body
-	end
-	return nil
+	return (ok and type(res) == "table" and res.Body) or nil
 end
 
 local function findLowServer()
-	local url = "https://games.roblox.com/v1/games/" .. tostring(game.PlaceId)
-		.. "/servers/Public?sortOrder=Asc&limit=100"
+	local url = "https://games.roblox.com/v1/games/" .. tostring(game.PlaceId) .. "/servers/Public?sortOrder=Asc&limit=100"
 	local body = httpGet(url)
-	if not body then
-		return nil, "không gọi được API server"
-	end
-	local ok, data = pcall(function()
-		return HttpService:JSONDecode(body)
-	end)
-	if not ok or type(data) ~= "table" or type(data.data) ~= "table" then
-		return nil, "API server lỗi"
-	end
+	if not body then return nil, "không gọi được API server" end
+	local ok, data = pcall(function() return S.HttpService:JSONDecode(body) end)
+	if not ok or type(data) ~= "table" or type(data.data) ~= "table" then return nil, "API server lỗi" end
 	local best, bestCount = nil, math.huge
 	for _, s in ipairs(data.data) do
 		local n = tonumber(s.playing) or math.huge
 		local mx = tonumber(s.maxPlayers) or 0
-		if tostring(s.id) ~= tostring(game.JobId) and n <= HOP_MAX_PLAYERS and n < bestCount and n < mx then
+		if tostring(s.id) ~= tostring(game.JobId) and n <= CFG.HOP_MAX_PLAYERS and n < bestCount and n < mx then
 			best, bestCount = s.id, n
 		end
 	end
-	if not best then
-		return nil, "không có server nào ≤ " .. HOP_MAX_PLAYERS .. " người"
-	end
+	if not best then return nil, "không có server nào ≤ " .. CFG.HOP_MAX_PLAYERS .. " người" end
 	return best
 end
 
 local function hopServer()
-	if hopping or os.clock() - lastHopAt < HOP_COOLDOWN then
-		return
-	end
-	hopping = true
-	lastHopAt = os.clock()
-	local prevStatus = statusText
+	if ST.hopping or os.clock() - ST.lastHopAt < CFG.HOP_COOLDOWN then return end
+	ST.hopping = true
+	ST.lastHopAt = os.clock()
+	local prevStatus = ST.statusText
 	task.spawn(function()
-		statusText = "đang tìm sever…"
-		if notifyStatus then notifyStatus("đang tìm sever…", Color3.fromRGB(160, 210, 255)) end
-
+		ST.statusText = "đang tìm sever…"
+		if UI.notifyStatus then UI.notifyStatus("đang tìm sever…", Color3.fromRGB(160, 210, 255)) end
 		local id, err = findLowServer()
 		if not id then
-			statusText = err
-			if notifyStatus then notifyStatus(err, Color3.fromRGB(255, 110, 110)) end
-			task.delay(1.5, function()
-				if not hopping then
-					statusText = prevStatus
-				end
-			end)
-			hopping = false
+			ST.statusText = err
+			if UI.notifyStatus then UI.notifyStatus(err, Color3.fromRGB(255, 110, 110)) end
+			task.delay(1.5, function() if not ST.hopping then ST.statusText = prevStatus end end)
+			ST.hopping = false
 			return
 		end
-
-		statusText = "đã thấy!"
-		if notifyStatus then notifyStatus("đã thấy!", Color3.fromRGB(70, 210, 130)) end
+		ST.statusText = "đã thấy!"
+		if UI.notifyStatus then UI.notifyStatus("đã thấy!", Color3.fromRGB(70, 210, 130)) end
 		task.wait(0.5)
-
-		statusText = "đang chuyển…"
-		if notifyStatus then notifyStatus("đang chuyển…", Color3.fromRGB(255, 195, 70)) end
-
-		if REQUEUE_URL ~= "" and typeof(queue_on_teleport) == "function" then
-			pcall(queue_on_teleport, 'loadstring(game:HttpGet("' .. REQUEUE_URL .. '"))()')
+		ST.statusText = "đang chuyển…"
+		if UI.notifyStatus then UI.notifyStatus("đang chuyển…", Color3.fromRGB(255, 195, 70)) end
+		if CFG.REQUEUE_URL ~= "" and typeof(queue_on_teleport) == "function" then
+			pcall(queue_on_teleport, 'loadstring(game:HttpGet("' .. CFG.REQUEUE_URL .. '"))()')
 		end
-		local ok = pcall(function()
-			TeleportService:TeleportToPlaceInstance(game.PlaceId, id, LocalPlayer)
-		end)
+		local ok = pcall(function() S.TeleportService:TeleportToPlaceInstance(game.PlaceId, id, LocalPlayer) end)
 		if not ok then
-			statusText = "teleport lỗi"
-			if notifyStatus then notifyStatus("teleport lỗi", Color3.fromRGB(255, 110, 110)) end
-			hopping = false
+			ST.statusText = "teleport lỗi"
+			if UI.notifyStatus then UI.notifyStatus("teleport lỗi", Color3.fromRGB(255, 110, 110)) end
+			ST.hopping = false
 		end
 	end)
 end
 
--- ===== auto pickaxe (ô 1) =====
+-- ===== auto pickaxe =====
 local function isPickaxe(t)
-	if not t:IsA("Tool") then
-		return false
-	end
+	if not t:IsA("Tool") then return false end
 	local n = string.lower(t.Name)
 	return string.find(n, "pick", 1, true) ~= nil or string.find(n, "cuốc", 1, true) ~= nil
 end
@@ -957,90 +734,102 @@ local function getPickaxe()
 	local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
 	if char then
 		for _, t in ipairs(char:GetChildren()) do
-			if isPickaxe(t) then
-				return t
-			end
+			if isPickaxe(t) then return t end
 		end
 	end
 	if backpack then
 		for _, t in ipairs(backpack:GetChildren()) do
-			if isPickaxe(t) then
-				return t
-			end
+			if isPickaxe(t) then return t end
 		end
 		for _, t in ipairs(backpack:GetChildren()) do
-			if t:IsA("Tool") then
-				return t
-			end
+			if t:IsA("Tool") then return t end
 		end
 	end
 	return nil
 end
 
 task.spawn(function()
-	while alive do
-		task.wait(EQUIP_INTERVAL)
-		if autoEquipOn then
+	while ST.alive do
+		task.wait(CFG.EQUIP_INTERVAL)
+		if ST.autoEquipOn then
 			local char = LocalPlayer.Character
 			local hum = char and char:FindFirstChildOfClass("Humanoid")
 			if hum and hum.Health > 0 and not char:FindFirstChildOfClass("Tool") then
 				local pick = getPickaxe()
-				if pick then
-					pcall(function()
-						hum:EquipTool(pick)
-					end)
-				end
+				if pick then pcall(function() hum:EquipTool(pick) end) end
 			end
 		end
 	end
 end)
 
--- ===== auto farm ore (đi bộ tới quặng trong khoảng cách ESP và có line) =====
-local walkTarget = nil
-local walkLastPos = nil
-local walkStuckT = 0
-local walkAge = 0
-local walkSkip = {}
+-- ===== né / nhảy qua vật cản =====
+local function forceJump(hum)
+	if not hum then return end
+	local now = os.clock()
+	if now - ST.lastJumpAt < 0.45 then return end
+	local state = hum:GetState()
+	if state ~= Enum.HumanoidStateType.Freefall and state ~= Enum.HumanoidStateType.Jumping then
+		ST.lastJumpAt = now
+		hum.Jump = true
+		pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
+	end
+end
 
+local function hasObstacleAhead(root, goalPos)
+	if not root then return false, false end
+	local flatDiff = Vector3.new(goalPos.X - root.Position.X, 0, goalPos.Z - root.Position.Z)
+	if flatDiff.Magnitude < 0.5 then return false, false end
+	local dir = flatDiff.Unit
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local ignoreList = {}
+	if UI.gui then table.insert(ignoreList, UI.gui) end
+	if LocalPlayer.Character then table.insert(ignoreList, LocalPlayer.Character) end
+	for _, p in ipairs(S.Players:GetPlayers()) do
+		if p.Character then table.insert(ignoreList, p.Character) end
+	end
+	params.FilterDescendantsInstances = ignoreList
+
+	local lowHit = workspace:Raycast(root.Position - Vector3.new(0, 1.2, 0), dir * 3.5, params)
+	local midHit = workspace:Raycast(root.Position + Vector3.new(0, 0.5, 0), dir * 3.5, params)
+	if not (lowHit or midHit) then return false, false end
+
+	local highHit = workspace:Raycast(root.Position + Vector3.new(0, 3.6, 0), dir * 3.5, params)
+	return true, highHit == nil
+end
+
+local function sidestepGoal(root, goalPos, dirSign)
+	local flatDiff = Vector3.new(goalPos.X - root.Position.X, 0, goalPos.Z - root.Position.Z)
+	local forward = flatDiff.Magnitude > 0.1 and flatDiff.Unit or Vector3.new(0, 0, -1)
+	local right = Vector3.new(-forward.Z, 0, forward.X) * (dirSign or 1)
+	return root.Position + forward * 4.5 + right * 6
+end
+
+-- ===== auto farm ore + chỗ đợi quặng =====
 local function getHum()
 	local char = LocalPlayer.Character
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
-	if hum and hum.Health > 0 then
-		return hum
-	end
-	return nil
+	return (hum and hum.Health > 0) and hum or nil
 end
 
 local function eligible(e)
-	if not e or not e.part or not e.part.Parent then
-		return false
-	end
-	if e.inRange == false or not e.beam then
-		return false
-	end
-	return true
+	return e and e.part and e.part.Parent and e.inRange ~= false and e.beam ~= nil
 end
 
 local function inEspRange(part)
 	local root = getRoot()
-	if not (root and part) then
-		return false
-	end
-	return (root.Position - part.Position).Magnitude <= maxDist
+	return (root and part) and ((root.Position - part.Position).Magnitude <= ST.maxDist) or false
 end
 
--- chọn quặng: ưu tiên theo thứ tự đã đặt, cùng hạng thì chọn gần nhất
 local function pickBestOre()
 	local root = getRoot()
-	if not root then
-		return nil
-	end
+	if not root then return nil end
 	local now = os.clock()
 	local best, bestRank, bestD = nil, math.huge, math.huge
 	for inst, e in pairs(tracked) do
 		local skipUntil = walkSkip[inst]
-		if inst:IsDescendantOf(workspace) and eligible(e)
-			and inEspRange(e.part) and (not skipUntil or skipUntil < now) then
+		if inst:IsDescendantOf(workspace) and eligible(e) and inEspRange(e.part) and (not skipUntil or skipUntil < now) then
 			local rank = oreRank(e.ore.key)
 			local d = (root.Position - e.part.Position).Magnitude
 			if rank < bestRank or (rank == bestRank and d < bestD) then
@@ -1052,95 +841,112 @@ local function pickBestOre()
 end
 
 local function stopWalking()
-	walkTarget = nil
-	walkLastPos = nil
-	walkStuckT = 0
-	walkAge = 0
+	ST.walkTarget, ST.walkLastPos, ST.walkStuckT, ST.walkAge = nil, nil, 0, 0
+	ST.walkSidestepUntil, ST.walkSidestepGoal = 0, nil
+	ST.waitLastPos, ST.waitStuckT, ST.waitSidestepUntil, ST.waitSidestepGoal = nil, 0, 0, nil
 	local hum, root = getHum(), getRoot()
-	if hum and root then
-		hum:MoveTo(root.Position)
-	end
+	if hum and root then hum:MoveTo(root.Position) end
 end
 
 task.spawn(function()
-	while alive do
+	while ST.alive do
 		task.wait(0.2)
-		if not (walkOn and espOn) then
-			if walkTarget then
-				stopWalking()
-			end
+		if not (ST.walkOn and ST.espOn) then
+			if ST.walkTarget or ST.waitLastPos then stopWalking() end
 		else
 			local hum, root = getHum(), getRoot()
 			if hum and root then
-				if walkTarget then
-					local e = tracked[walkTarget]
-					if not e or not walkTarget:IsDescendantOf(workspace)
-						or not eligible(e) or not inEspRange(e.part) then
-						walkTarget = nil
+				local now = os.clock()
+				if ST.walkTarget then
+					local e = tracked[ST.walkTarget]
+					if not e or not ST.walkTarget:IsDescendantOf(workspace) or not eligible(e) or not inEspRange(e.part) then
+						ST.walkTarget = nil
+						ST.walkSidestepUntil = 0
 						hum:MoveTo(root.Position)
 					end
 				end
 
-				-- nếu có quặng hạng cao hơn trong tầm thì đổi sang quặng đó
-				if walkTarget then
+				if ST.walkTarget then
 					local better = pickBestOre()
-					if better and better ~= walkTarget
-						and oreRank(tracked[better].ore.key) < oreRank(tracked[walkTarget].ore.key) then
-						walkTarget = better
-						walkLastPos = nil
-						walkStuckT = 0
-						walkAge = 0
+					if better and better ~= ST.walkTarget and oreRank(tracked[better].ore.key) < oreRank(tracked[ST.walkTarget].ore.key) then
+						ST.walkTarget = better
+						ST.walkLastPos, ST.walkStuckT, ST.walkAge, ST.walkSidestepUntil = nil, 0, 0, 0
 					end
 				end
 
-				if not walkTarget then
-					walkTarget = pickBestOre()
-					walkLastPos = nil
-					walkStuckT = 0
-					walkAge = 0
+				if not ST.walkTarget then
+					ST.walkTarget = pickBestOre()
+					ST.walkLastPos, ST.walkStuckT, ST.walkAge, ST.walkSidestepUntil = nil, 0, 0, 0
 				end
 
-				if walkTarget then
-					local e = tracked[walkTarget]
+				if ST.walkTarget then
+					ST.waitLastPos, ST.waitStuckT, ST.waitSidestepUntil = nil, 0, 0
+					local e = tracked[ST.walkTarget]
 					local part = e and e.part
 					if part and part.Parent then
 						local d = (root.Position - part.Position).Magnitude
-						if d <= WALK_REACH then
+						if d <= CFG.WALK_REACH then
 							hum:MoveTo(root.Position)
-							walkAge = 0
-							walkStuckT = 0
+							ST.walkAge, ST.walkStuckT, ST.walkSidestepUntil = 0, 0, 0
 						else
-							walkAge = walkAge + 0.2
-							if walkLastPos and (root.Position - walkLastPos).Magnitude < 0.3 then
-								walkStuckT = walkStuckT + 0.2
-							else
-								walkStuckT = 0
-							end
-							walkLastPos = root.Position
+							ST.walkAge = ST.walkAge + 0.2
+							local movedFlat = ST.walkLastPos and Vector3.new(root.Position.X - ST.walkLastPos.X, 0, root.Position.Z - ST.walkLastPos.Z).Magnitude or 999
+							ST.walkStuckT = (movedFlat < 0.4) and (ST.walkStuckT + 0.2) or 0
+							ST.walkLastPos = root.Position
 
-							if walkStuckT >= WALK_STUCK_TIME then
-								hum.Jump = true
-								hum:MoveTo(part.Position)
-								walkStuckT = 0
-							elseif walkAge >= WALK_GIVEUP then
-								walkSkip[walkTarget] = os.clock() + WALK_SKIP_TIME
-								walkTarget = nil
+							local activeGoal = (ST.walkSidestepGoal and now < ST.walkSidestepUntil) and ST.walkSidestepGoal or part.Position
+							local blocked, canJump = hasObstacleAhead(root, activeGoal)
+							if blocked and canJump then forceJump(hum) end
+
+							if ST.walkStuckT >= CFG.WALK_STUCK_TIME then
+								forceJump(hum)
+								ST.walkSideSign = -ST.walkSideSign
+								ST.walkSidestepGoal = sidestepGoal(root, part.Position, ST.walkSideSign)
+								ST.walkSidestepUntil = now + 1.4
+								ST.walkStuckT = 0
+							end
+
+							if ST.walkAge >= CFG.WALK_GIVEUP then
+								walkSkip[ST.walkTarget] = now + CFG.WALK_SKIP_TIME
+								ST.walkTarget = nil
+								ST.walkSidestepUntil = 0
 								hum:MoveTo(root.Position)
+							elseif ST.walkSidestepGoal and now < ST.walkSidestepUntil then
+								hum:MoveTo(ST.walkSidestepGoal)
 							else
+								ST.walkSidestepGoal = nil
 								hum:MoveTo(part.Position)
 							end
 						end
 					else
-						walkTarget = nil
+						ST.walkTarget = nil
 					end
-				end
+				elseif ST.waitPos then
+					ST.waitAngle = (ST.waitAngle + CFG.WAIT_ANG_SPEED * 0.2 * ST.waitDir) % (math.pi * 2)
+					local goal = ST.waitPos + Vector3.new(math.cos(ST.waitAngle) * CFG.WAIT_RADIUS, 0, math.sin(ST.waitAngle) * CFG.WAIT_RADIUS)
 
-				-- không có quặng nào để đi: đi vòng tròn quanh chỗ đợi để né quái
-				if not walkTarget and waitPos then
-					waitAngle = (waitAngle + WAIT_ANG_SPEED * 0.2) % (math.pi * 2)
-					local goal = waitPos + Vector3.new(
-						math.cos(waitAngle) * WAIT_RADIUS, 0, math.sin(waitAngle) * WAIT_RADIUS)
-					hum:MoveTo(goal)
+					local movedFlat = ST.waitLastPos and Vector3.new(root.Position.X - ST.waitLastPos.X, 0, root.Position.Z - ST.waitLastPos.Z).Magnitude or 999
+					ST.waitStuckT = (movedFlat < 0.35) and (ST.waitStuckT + 0.2) or 0
+					ST.waitLastPos = root.Position
+
+					local activeGoal = (ST.waitSidestepGoal and now < ST.waitSidestepUntil) and ST.waitSidestepGoal or goal
+					local blocked, canJump = hasObstacleAhead(root, activeGoal)
+					if blocked and canJump then forceJump(hum) end
+
+					if ST.waitStuckT >= CFG.WAIT_STUCK_TIME then
+						forceJump(hum)
+						ST.waitDir = -ST.waitDir
+						ST.waitSidestepGoal = sidestepGoal(root, goal, ST.waitDir)
+						ST.waitSidestepUntil = now + 1.3
+						ST.waitStuckT = 0
+					end
+
+					if ST.waitSidestepGoal and now < ST.waitSidestepUntil then
+						hum:MoveTo(ST.waitSidestepGoal)
+					else
+						ST.waitSidestepGoal = nil
+						hum:MoveTo(goal)
+					end
 				end
 			end
 		end
@@ -1149,106 +955,91 @@ end)
 
 -- ===== GUI =====
 local container = getContainer()
-local old = container:FindFirstChild(SCRIPT_NAME)
-if old then
-	old:Destroy()
+for _, name in ipairs({"Huongcuto", "system ore💎"}) do
+	local old = container:FindFirstChild(name)
+	if old then pcall(function() old:Destroy() end) end
 end
 
-local gui = Instance.new("ScreenGui")
-gui.Name = SCRIPT_NAME
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
-gui.DisplayOrder = 999
-gui.Parent = container
-
-local curSize = Vector2.new(ICON_SIZE, ICON_SIZE)
-local expanded = false
-
-local squareX, squareY = 0, 0
+UI.gui = Instance.new("ScreenGui")
+UI.gui.Name = SCRIPT_NAME
+UI.gui.ResetOnSpawn = false
+UI.gui.IgnoreGuiInset = true
+UI.gui.DisplayOrder = 999999
+UI.gui.Parent = container
 
 local function clampSquare()
 	local vp = getViewport()
 	local minY = topInset() + 4
-	squareX = math.clamp(squareX, 0, math.max(0, vp.X - ICON_SIZE))
-	squareY = math.clamp(squareY, minY, math.max(minY, vp.Y - ICON_SIZE - 4))
-end
-
-local function centerFor(size)
-	local vp = getViewport()
-	return math.max(0, (vp.X - size.X) / 2), math.max(0, (vp.Y - size.Y) / 2)
+	ST.squareX = math.clamp(ST.squareX, 0, math.max(0, vp.X - CFG.ICON_SIZE))
+	ST.squareY = math.clamp(ST.squareY, minY, math.max(minY, vp.Y - CFG.ICON_SIZE - 4))
 end
 
 local function currentPos()
-	if expanded then
-		return centerFor(curSize)
+	if ST.expanded then
+		local vp = getViewport()
+		return math.max(0, (vp.X - ST.curSize.X) / 2), math.max(0, (vp.Y - ST.curSize.Y) / 2)
 	end
-	return squareX, squareY
+	return ST.squareX, ST.squareY
 end
 
 do
 	local vp = getViewport()
-	squareX = vp.X - ICON_SIZE - 12
-	squareY = topInset() + 60
+	ST.squareX = vp.X - CFG.ICON_SIZE - 12
+	ST.squareY = topInset() + 60
 	clampSquare()
 end
 
-local island = Instance.new("Frame")
-island.Name = "Island"
+UI.island = Instance.new("Frame")
+UI.island.Name = "Island"
 do
 	local x, y = currentPos()
-	island.Position = UDim2.fromOffset(x, y)
+	UI.island.Position = UDim2.fromOffset(x, y)
 end
-island.Size = UDim2.fromOffset(ICON_SIZE, ICON_SIZE)
-island.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
-island.BackgroundTransparency = 0.04
-island.BorderSizePixel = 0
-island.ClipsDescendants = true
-island.Visible = false
-island.Parent = gui
+UI.island.Size = UDim2.fromOffset(CFG.ICON_SIZE, CFG.ICON_SIZE)
+UI.island.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
+UI.island.BackgroundTransparency = 0.04
+UI.island.BorderSizePixel = 0
+UI.island.ClipsDescendants = true
+UI.island.Visible = false
+UI.island.ZIndex = 20
+UI.island.Parent = UI.gui
 
 local islandGrad = Instance.new("UIGradient")
 islandGrad.Rotation = 90
 islandGrad.Color = ColorSequence.new(Color3.fromRGB(22, 22, 28), Color3.fromRGB(6, 6, 9))
-islandGrad.Parent = island
+islandGrad.Parent = UI.island
+Instance.new("UICorner", UI.island).CornerRadius = UDim.new(0, 16)
+rainbowStroke(UI.island, 2, 0)
+rainbowStroke(UI.island, 6, 0.7)
 
-local islandCorner = Instance.new("UICorner")
-islandCorner.CornerRadius = UDim.new(0, 16)
-islandCorner.Parent = island
-
-rainbowStroke(island, 2, 0)
-rainbowStroke(island, 6, 0.7)
-
-mkLabel(island, {
+mkLabel(UI.island, {
 	Text = "💎",
 	Font = Enum.Font.GothamBold,
 	TextSize = 24,
 	TextXAlignment = Enum.TextXAlignment.Center,
-	Size = UDim2.fromOffset(ICON_SIZE, ICON_SIZE),
-	Position = UDim2.fromOffset(0, 0),
-	ZIndex = 3,
+	Size = UDim2.fromOffset(CFG.ICON_SIZE, CFG.ICON_SIZE),
+	ZIndex = 22,
 })
 
-local expandedGroup = Instance.new("CanvasGroup")
-expandedGroup.Name = "Expanded"
-expandedGroup.Size = UDim2.fromScale(1, 1)
-expandedGroup.BackgroundTransparency = 1
-expandedGroup.GroupTransparency = 1
-expandedGroup.Visible = false
-expandedGroup.Parent = island
+UI.expandedGroup = Instance.new("Frame")
+UI.expandedGroup.Name = "Expanded"
+UI.expandedGroup.Size = UDim2.fromScale(1, 1)
+UI.expandedGroup.BackgroundTransparency = 1
+UI.expandedGroup.Visible = false
+UI.expandedGroup.ZIndex = 21
+UI.expandedGroup.Parent = UI.island
 
-mkLabel(expandedGroup, {
+mkLabel(UI.expandedGroup, {
 	Text = SCRIPT_NAME,
 	Font = Enum.Font.GothamBold,
 	TextSize = 15,
-	Position = UDim2.fromOffset(ICON_SIZE + 6, 0),
-	Size = UDim2.new(1, -(ICON_SIZE + 14), 0, ICON_SIZE),
+	Position = UDim2.fromOffset(CFG.ICON_SIZE + 6, 0),
+	Size = UDim2.new(1, -(CFG.ICON_SIZE + 14), 0, CFG.ICON_SIZE),
+	ZIndex = 22,
 })
 
--- ===== nút chuyển tab =====
-local TAB_Y = 60
 local tabMain = Instance.new("TextButton")
-tabMain.Name = "TabMain"
-tabMain.Position = UDim2.fromOffset(14, TAB_Y)
+tabMain.Position = UDim2.fromOffset(14, 60)
 tabMain.Size = UDim2.new(0.5, -18, 0, 24)
 tabMain.Font = Enum.Font.GothamBold
 tabMain.TextSize = 12
@@ -1256,14 +1047,12 @@ tabMain.TextColor3 = Color3.fromRGB(255, 255, 255)
 tabMain.Text = "Main"
 tabMain.AutoButtonColor = false
 tabMain.BorderSizePixel = 0
-tabMain.Parent = expandedGroup
-local tabMainC = Instance.new("UICorner")
-tabMainC.CornerRadius = UDim.new(0, 8)
-tabMainC.Parent = tabMain
+tabMain.ZIndex = 22
+tabMain.Parent = UI.expandedGroup
+Instance.new("UICorner", tabMain).CornerRadius = UDim.new(0, 8)
 
 local tabQuick = Instance.new("TextButton")
-tabQuick.Name = "TabQuick"
-tabQuick.Position = UDim2.new(0.5, 4, 0, TAB_Y)
+tabQuick.Position = UDim2.new(0.5, 4, 0, 60)
 tabQuick.Size = UDim2.new(0.5, -18, 0, 24)
 tabQuick.Font = Enum.Font.GothamBold
 tabQuick.TextSize = 12
@@ -1271,42 +1060,24 @@ tabQuick.TextColor3 = Color3.fromRGB(255, 255, 255)
 tabQuick.Text = "Quick Key"
 tabQuick.AutoButtonColor = false
 tabQuick.BorderSizePixel = 0
-tabQuick.Parent = expandedGroup
-local tabQuickC = Instance.new("UICorner")
-tabQuickC.CornerRadius = UDim.new(0, 8)
-tabQuickC.Parent = tabQuick
+tabQuick.ZIndex = 22
+tabQuick.Parent = UI.expandedGroup
+Instance.new("UICorner", tabQuick).CornerRadius = UDim.new(0, 8)
 
-local CONTENT_Y = 92
-
--- ===== tab Main =====
 local mainScroller = Instance.new("ScrollingFrame")
-mainScroller.Name = "MainScroller"
-mainScroller.Position = UDim2.fromOffset(0, CONTENT_Y)
-mainScroller.Size = UDim2.new(1, 0, 1, -CONTENT_Y)
+mainScroller.Position = UDim2.fromOffset(0, 92)
+mainScroller.Size = UDim2.new(1, 0, 1, -92)
 mainScroller.BackgroundTransparency = 1
 mainScroller.BorderSizePixel = 0
 mainScroller.ScrollBarThickness = 4
 mainScroller.ScrollBarImageColor3 = Color3.fromRGB(200, 200, 210)
 mainScroller.ScrollingDirection = Enum.ScrollingDirection.Y
-mainScroller.ElasticBehavior = Enum.ElasticBehavior.WhenScrollable
 mainScroller.CanvasSize = UDim2.new(0, 0, 0, 480)
-mainScroller.Parent = expandedGroup
+mainScroller.ZIndex = 22
+mainScroller.Parent = UI.expandedGroup
 
-local statsLbl = mkLabel(mainScroller, {
-	Text = "FPS -- · PING -- · FRAME --",
-	TextSize = 11,
-	TextColor3 = Color3.fromRGB(170, 170, 178),
-	Position = UDim2.fromOffset(14, 0),
-	Size = UDim2.new(1, -28, 0, 16),
-})
-
-local posLbl = mkLabel(mainScroller, {
-	Text = "POS --",
-	TextSize = 11,
-	TextColor3 = Color3.fromRGB(170, 170, 178),
-	Position = UDim2.fromOffset(14, 16),
-	Size = UDim2.new(1, -28, 0, 14),
-})
+UI.statsLbl = mkLabel(mainScroller, {Text = "FPS -- · PING -- · FRAME --", TextSize = 11, TextColor3 = Color3.fromRGB(170, 170, 178), Position = UDim2.fromOffset(14, 0), Size = UDim2.new(1, -28, 0, 16), ZIndex = 23})
+UI.posLbl = mkLabel(mainScroller, {Text = "POS --", TextSize = 11, TextColor3 = Color3.fromRGB(170, 170, 178), Position = UDim2.fromOffset(14, 16), Size = UDim2.new(1, -28, 0, 14), ZIndex = 23})
 
 local divider = Instance.new("Frame")
 divider.Size = UDim2.new(1, -28, 0, 1)
@@ -1314,23 +1085,16 @@ divider.Position = UDim2.fromOffset(14, 34)
 divider.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 divider.BackgroundTransparency = 0.85
 divider.BorderSizePixel = 0
+divider.ZIndex = 23
 divider.Parent = mainScroller
 
-mkLabel(mainScroller, {
-	Text = "chạm để ưu tiên · ▲▼ thứ tự đi",
-	TextSize = 10,
-	TextColor3 = Color3.fromRGB(130, 130, 140),
-	Position = UDim2.fromOffset(14, 38),
-	Size = UDim2.new(1, -28, 0, 14),
-})
+mkLabel(mainScroller, {Text = "chạm để ưu tiên · ▲▼ thứ tự đi", TextSize = 10, TextColor3 = Color3.fromRGB(130, 130, 140), Position = UDim2.fromOffset(14, 38), Size = UDim2.new(1, -28, 0, 14), ZIndex = 23})
 
-local ROW_Y0, ROW_H = 56, 22
-
-local function mkArrow(parent, text, anchorX, posX)
+local function mkArrow(parent, text, posX)
 	local b = Instance.new("TextButton")
 	b.AnchorPoint = Vector2.new(1, 0)
 	b.Position = UDim2.new(1, posX, 0, 2)
-	b.Size = UDim2.fromOffset(18, ROW_H - 4)
+	b.Size = UDim2.fromOffset(18, 18)
 	b.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
 	b.Font = Enum.Font.GothamBold
 	b.TextSize = 9
@@ -1338,120 +1102,74 @@ local function mkArrow(parent, text, anchorX, posX)
 	b.Text = text
 	b.AutoButtonColor = false
 	b.BorderSizePixel = 0
-	b.ZIndex = 2
+	b.ZIndex = 24
 	b.Parent = parent
-	local c = Instance.new("UICorner")
-	c.CornerRadius = UDim.new(0, 5)
-	c.Parent = b
+	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
 	return b
 end
 
 for i, ore in ipairs(ORES) do
-	local y = ROW_Y0 + (i - 1) * ROW_H
-
 	local row = Instance.new("TextButton")
-	row.Position = UDim2.fromOffset(10, y)
-	row.Size = UDim2.new(1, -20, 0, ROW_H - 2)
+	row.Position = UDim2.fromOffset(10, 56 + (i - 1) * 22)
+	row.Size = UDim2.new(1, -20, 0, 20)
 	row.BackgroundColor3 = ore.color
 	row.BackgroundTransparency = 1
 	row.AutoButtonColor = false
 	row.Text = ""
+	row.ZIndex = 23
 	row.Parent = mainScroller
-	local rc = Instance.new("UICorner")
-	rc.CornerRadius = UDim.new(0, 7)
-	rc.Parent = row
+	Instance.new("UICorner", row).CornerRadius = UDim.new(0, 7)
 
 	local dot = Instance.new("Frame")
 	dot.Size = UDim2.fromOffset(9, 9)
 	dot.Position = UDim2.fromOffset(8, 7)
 	dot.BackgroundColor3 = ore.color
 	dot.BorderSizePixel = 0
+	dot.ZIndex = 24
 	dot.Parent = row
-	local dc = Instance.new("UICorner")
-	dc.CornerRadius = UDim.new(1, 0)
-	dc.Parent = dot
+	Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
 
-	local nameLbl = mkLabel(row, {
-		Text = ore.label,
-		TextSize = 12,
-		Position = UDim2.fromOffset(24, 0),
-		Size = UDim2.new(1, -100, 1, 0),
-	})
-
-	local countLbl = mkLabel(row, {
-		Text = "0",
-		Font = Enum.Font.GothamBold,
-		TextSize = 12,
-		TextXAlignment = Enum.TextXAlignment.Right,
-		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -66, 0, 0),
-		Size = UDim2.fromOffset(34, ROW_H - 2),
-	})
-
-	local upBtn = mkArrow(row, "▲", true, -26)
-	local downBtn = mkArrow(row, "▼", true, -4)
+	local nameLbl = mkLabel(row, {Text = ore.label, TextSize = 12, Position = UDim2.fromOffset(24, 0), Size = UDim2.new(1, -100, 1, 0), ZIndex = 24})
+	local countLbl = mkLabel(row, {Text = "0", Font = Enum.Font.GothamBold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Right, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -66, 0, 0), Size = UDim2.fromOffset(34, 20), ZIndex = 24})
+	local upBtn = mkArrow(row, "▲", -26)
+	local downBtn = mkArrow(row, "▼", -4)
 
 	rows[ore.key] = {
-		row = row,
 		refresh = function()
 			local rank = oreRank(ore.key)
 			local sel = priority[ore.key] == true
 			nameLbl.Text = rank .. ". " .. (sel and "★ " or "") .. ore.label
 			row.BackgroundTransparency = sel and 0.75 or 1
 			countLbl.Text = tostring(knownCount[ore.key] or 0)
-			row.Position = UDim2.fromOffset(10, ROW_Y0 + (rank - 1) * ROW_H)
+			row.Position = UDim2.fromOffset(10, 56 + (rank - 1) * 22)
 		end,
 	}
 
 	upBtn.Activated:Connect(function()
 		local idx = oreRank(ore.key)
-		if idx > 1 then
-			oreOrder[idx], oreOrder[idx - 1] = oreOrder[idx - 1], oreOrder[idx]
-		end
-		ensureRowsRefresh()
+		if idx > 1 then oreOrder[idx], oreOrder[idx - 1] = oreOrder[idx - 1], oreOrder[idx] end
+		for _, r in pairs(rows) do r.refresh() end
 		saveConfig()
 	end)
 
 	downBtn.Activated:Connect(function()
 		local idx = oreRank(ore.key)
-		if idx < #oreOrder then
-			oreOrder[idx], oreOrder[idx + 1] = oreOrder[idx + 1], oreOrder[idx]
-		end
-		ensureRowsRefresh()
+		if idx < #oreOrder then oreOrder[idx], oreOrder[idx + 1] = oreOrder[idx + 1], oreOrder[idx] end
+		for _, r in pairs(rows) do r.refresh() end
 		saveConfig()
 	end)
 
 	row.Activated:Connect(function()
-		if priority[ore.key] then
-			priority[ore.key] = nil
-		else
-			priority[ore.key] = true
-		end
+		priority[ore.key] = not priority[ore.key] and true or nil
 		rows[ore.key].refresh()
 		syncTracked()
 		saveConfig()
 	end)
 end
 
-ensureRowsRefresh = function()
-	for _, r in pairs(rows) do
-		r.refresh()
-	end
-end
-
--- ===== toggle: viền RGB, nền gradient, knob có bóng và co giãn khi bấm =====
-local KNOB_OFF_X, KNOB_ON_X, KNOB_Y = 14, 42, 14
-
 local function makeToggle(parent, y, text, initial, onChange)
 	local state = initial
-
-	mkLabel(parent, {
-		Text = text,
-		Font = Enum.Font.GothamBold,
-		TextSize = 13,
-		Position = UDim2.fromOffset(14, y),
-		Size = UDim2.new(0.6, 0, 0, 30),
-	})
+	mkLabel(parent, {Text = text, Font = Enum.Font.GothamBold, TextSize = 13, Position = UDim2.fromOffset(14, y), Size = UDim2.new(0.6, 0, 0, 30), ZIndex = 23})
 
 	local btn = Instance.new("TextButton")
 	btn.AnchorPoint = Vector2.new(1, 0)
@@ -1460,101 +1178,73 @@ local function makeToggle(parent, y, text, initial, onChange)
 	btn.Text = ""
 	btn.AutoButtonColor = false
 	btn.BorderSizePixel = 0
-	btn.BackgroundColor3 = OFF_COLOR
+	btn.BackgroundColor3 = CFG.OFF_COLOR
+	btn.ZIndex = 23
 	btn.Parent = parent
-
-	local bc = Instance.new("UICorner")
-	bc.CornerRadius = UDim.new(1, 0)
-	bc.Parent = btn
-
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(1, 0)
 	local bg = Instance.new("UIGradient")
 	bg.Rotation = 90
 	bg.Parent = btn
-
-	local _, borderGrad = rainbowStroke(btn, 1.5, 0.2)
+	rainbowStroke(btn, 1.5, 0.2)
 
 	local knob = Instance.new("Frame")
 	knob.AnchorPoint = Vector2.new(0.5, 0.5)
 	knob.Size = UDim2.fromOffset(22, 22)
 	knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 	knob.BorderSizePixel = 0
+	knob.ZIndex = 24
 	knob.Parent = btn
-	local kc = Instance.new("UICorner")
-	kc.CornerRadius = UDim.new(1, 0)
-	kc.Parent = knob
-	local kg = Instance.new("UIGradient")
-	kg.Rotation = 90
-	kg.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(205, 205, 215))
-	kg.Parent = knob
-	local ks = Instance.new("UIStroke")
-	ks.Color = Color3.fromRGB(0, 0, 0)
-	ks.Transparency = 0.7
-	ks.Thickness = 1
-	ks.Parent = knob
+	Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
 
 	local function render(animate)
-		local color = state and ON_COLOR or OFF_COLOR
-		local pos = UDim2.fromOffset(state and KNOB_ON_X or KNOB_OFF_X, KNOB_Y)
-		bg.Color = ColorSequence.new(
-			color:Lerp(Color3.new(1, 1, 1), 0.25),
-			color:Lerp(Color3.new(0, 0, 0), 0.25)
-		)
+		local color = state and CFG.ON_COLOR or CFG.OFF_COLOR
+		local pos = UDim2.fromOffset(state and 42 or 14, 14)
+		bg.Color = ColorSequence.new(color:Lerp(Color3.new(1, 1, 1), 0.25), color:Lerp(Color3.new(0, 0, 0), 0.25))
 		if animate then
-			tween(btn, SMOOTH, {BackgroundColor3 = color})
-			tween(knob, BOUNCE, {Position = pos})
-			local t = tween(knob, FAST, {Size = UDim2.fromOffset(28, 22)})
-			t.Completed:Connect(function()
-				tween(knob, FAST, {Size = UDim2.fromOffset(22, 22)})
-			end)
+			tween(btn, TWEEN.SMOOTH, {BackgroundColor3 = color})
+			tween(knob, TWEEN.BOUNCE, {Position = pos})
 		else
 			btn.BackgroundColor3 = color
 			knob.Position = pos
 		end
 	end
 
-	local api = {borderGrad = borderGrad}
-	function api.get()
-		return state
-	end
+	local api = {}
+	function api.get() return state end
 	function api.set(v, silent)
 		state = v
 		render(not silent)
-		if not silent and onChange then
-			onChange(v)
-		end
+		if not silent and onChange then onChange(v) end
 	end
-
-	btn.Activated:Connect(function()
-		api.set(not state)
-	end)
-
+	btn.Activated:Connect(function() api.set(not state) end)
 	render(false)
 	return api
 end
 
-local espToggle = makeToggle(mainScroller, 176, "ESP ore", false, function(on)
-	if on then
-		startESP()
-	else
-		stopESP()
-	end
+UI.espToggle = makeToggle(mainScroller, 176, "ESP ore", false, function(on)
+	if on then startESP() else stopESP() end
 	saveConfig()
 end)
 
-local autoToggle = makeToggle(mainScroller, 210, "Auto pickaxe", autoEquipOn, function(on)
-	autoEquipOn = on
+UI.autoToggle = makeToggle(mainScroller, 210, "Auto pickaxe", ST.autoEquipOn, function(on)
+	ST.autoEquipOn = on
 	saveConfig()
 end)
 
-local walkToggle = makeToggle(mainScroller, 244, "Auto farm ore", false, function(on)
-	walkOn = on
+UI.waitLbl = mkLabel(mainScroller, {Text = "chưa đặt", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(14, 338), Size = UDim2.new(1, -28, 0, 12), ZIndex = 23})
+local function setWaitPos(v)
+	ST.waitPos = v
+	UI.waitLbl.Text = v and string.format("X %d · Y %d · Z %d", math.floor(v.X + 0.5), math.floor(v.Y + 0.5), math.floor(v.Z + 0.5)) or "chưa đặt"
+	saveConfig()
+end
+setWaitPos(ST.waitPos)
+
+UI.walkToggle = makeToggle(mainScroller, 244, "Auto farm ore", false, function(on)
+	ST.walkOn = on
 	if on then
-		-- lần đầu bật mà chưa có chỗ đợi thì lấy vị trí hiện tại
-		if not waitPos then
+		if not ST.waitPos then
 			local root = getRoot()
-			if root then
-				setWaitPos(root.Position)
-			end
+			if root then setWaitPos(root.Position) end
 		end
 	else
 		stopWalking()
@@ -1562,15 +1252,7 @@ local walkToggle = makeToggle(mainScroller, 244, "Auto farm ore", false, functio
 	saveConfig()
 end)
 
--- nút bấm 1 lần cho hopServer
-mkLabel(mainScroller, {
-	Text = "Hop Server",
-	Font = Enum.Font.GothamBold,
-	TextSize = 13,
-	Position = UDim2.fromOffset(14, 278),
-	Size = UDim2.new(0.55, 0, 0, 30),
-})
-
+mkLabel(mainScroller, {Text = "Hop Server", Font = Enum.Font.GothamBold, TextSize = 13, Position = UDim2.fromOffset(14, 278), Size = UDim2.new(0.55, 0, 0, 30), ZIndex = 23})
 local hopBtn = Instance.new("TextButton")
 hopBtn.AnchorPoint = Vector2.new(1, 0)
 hopBtn.Position = UDim2.new(1, -14, 0, 280)
@@ -1582,39 +1264,16 @@ hopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 hopBtn.Text = "Hop ngay"
 hopBtn.AutoButtonColor = false
 hopBtn.BorderSizePixel = 0
+hopBtn.ZIndex = 23
 hopBtn.Parent = mainScroller
 Instance.new("UICorner", hopBtn).CornerRadius = UDim.new(0, 7)
 rainbowStroke(hopBtn, 1.5, 0.2)
+hopBtn.Activated:Connect(hopServer)
 
-hopBtn.Activated:Connect(function()
-	local t = tween(hopBtn, FAST, {Size = UDim2.fromOffset(68, 25)})
-	t.Completed:Connect(function()
-		tween(hopBtn, FAST, {Size = UDim2.fromOffset(74, 28)})
-	end)
-	hopServer()
-end)
-
--- ===== chỗ đợi quặng =====
-local WAIT_Y = 312
-mkLabel(mainScroller, {
-	Text = "Chỗ đợi quặng",
-	Font = Enum.Font.GothamBold,
-	TextSize = 13,
-	Position = UDim2.fromOffset(14, WAIT_Y),
-	Size = UDim2.new(0.5, 0, 0, 26),
-})
-
-waitLbl = mkLabel(mainScroller, {
-	Text = "chưa đặt",
-	TextSize = 10,
-	TextColor3 = Color3.fromRGB(150, 150, 160),
-	Position = UDim2.fromOffset(14, WAIT_Y + 26),
-	Size = UDim2.new(1, -28, 0, 12),
-})
-
+mkLabel(mainScroller, {Text = "Chỗ đợi quặng", Font = Enum.Font.GothamBold, TextSize = 13, Position = UDim2.fromOffset(14, 312), Size = UDim2.new(0.5, 0, 0, 26), ZIndex = 23})
 local waitBtn = Instance.new("TextButton")
 waitBtn.AnchorPoint = Vector2.new(1, 0)
-waitBtn.Position = UDim2.new(1, -14, 0, WAIT_Y)
+waitBtn.Position = UDim2.new(1, -14, 0, 312)
 waitBtn.Size = UDim2.fromOffset(74, 26)
 waitBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
 waitBtn.Font = Enum.Font.GothamBold
@@ -1623,37 +1282,15 @@ waitBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 waitBtn.Text = "Đặt đây"
 waitBtn.AutoButtonColor = false
 waitBtn.BorderSizePixel = 0
+waitBtn.ZIndex = 23
 waitBtn.Parent = mainScroller
-local waitBtnC = Instance.new("UICorner")
-waitBtnC.CornerRadius = UDim.new(0, 7)
-waitBtnC.Parent = waitBtn
-
-setWaitPos = function(v)
-	waitPos = v
-	if waitLbl then
-		if v then
-			waitLbl.Text = string.format("X %d · Y %d · Z %d",
-				math.floor(v.X + 0.5), math.floor(v.Y + 0.5), math.floor(v.Z + 0.5))
-		else
-			waitLbl.Text = "chưa đặt"
-		end
-	end
-	saveConfig()
-end
-setWaitPos(waitPos)
-
+Instance.new("UICorner", waitBtn).CornerRadius = UDim.new(0, 7)
 waitBtn.Activated:Connect(function()
 	local root = getRoot()
-	if root then
-		setWaitPos(root.Position)
-	end
+	if root then setWaitPos(root.Position) end
 end)
 
--- ===== chỉnh kích thước và khoảng cách ESP =====
-local SIZE_Y = 362
-local DIST_Y = 396
-
-local function mkStepBtn(parent, y, text, xOff)
+local function mkStepBtn(y, text, xOff)
 	local b = Instance.new("TextButton")
 	b.AnchorPoint = Vector2.new(1, 0)
 	b.Position = UDim2.new(1, xOff, 0, y)
@@ -1665,276 +1302,183 @@ local function mkStepBtn(parent, y, text, xOff)
 	b.Text = text
 	b.AutoButtonColor = false
 	b.BorderSizePixel = 0
-	b.Parent = parent
-	local c = Instance.new("UICorner")
-	c.CornerRadius = UDim.new(0, 7)
-	c.Parent = b
+	b.ZIndex = 23
+	b.Parent = mainScroller
+	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 7)
 	return b
 end
 
-mkLabel(mainScroller, {
-	Text = "Kích thước ESP",
-	Font = Enum.Font.GothamBold,
-	TextSize = 13,
-	Position = UDim2.fromOffset(14, SIZE_Y),
-	Size = UDim2.new(0.5, 0, 0, 26),
-})
-
-local sizeMinus = mkStepBtn(mainScroller, SIZE_Y, "-", -82)
-local sizePlus = mkStepBtn(mainScroller, SIZE_Y, "+", -14)
-
-sizeValLbl = mkLabel(mainScroller, {
-	Text = string.format("%.1fx", espScale),
-	Font = Enum.Font.GothamBold,
-	TextSize = 12,
-	TextXAlignment = Enum.TextXAlignment.Center,
-	AnchorPoint = Vector2.new(1, 0),
-	Position = UDim2.new(1, -46, 0, SIZE_Y),
-	Size = UDim2.fromOffset(30, 26),
-})
-
+mkLabel(mainScroller, {Text = "Kích thước ESP", Font = Enum.Font.GothamBold, TextSize = 13, Position = UDim2.fromOffset(14, 362), Size = UDim2.new(0.5, 0, 0, 26), ZIndex = 23})
+local sizeMinus = mkStepBtn(362, "-", -82)
+local sizePlus = mkStepBtn(362, "+", -14)
+UI.sizeValLbl = mkLabel(mainScroller, {Text = string.format("%.1fx", ST.espScale), Font = Enum.Font.GothamBold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -46, 0, 362), Size = UDim2.fromOffset(30, 26), ZIndex = 23})
 sizeMinus.Activated:Connect(function()
-	setScale(-SIZE_STEP)
+	ST.espScale = math.clamp(math.floor((ST.espScale - CFG.SIZE_STEP) * 10 + 0.5) / 10, CFG.SIZE_MIN, CFG.SIZE_MAX)
+	UI.sizeValLbl.Text = string.format("%.1fx", ST.espScale)
+	for _, e in pairs(tracked) do
+		e.bb.Size = UDim2.fromOffset(140 * ST.espScale, 22 * ST.espScale)
+		e.lbl.TextSize = math.max(6, math.floor(13 * ST.espScale + 0.5))
+	end
+	saveConfig()
 end)
-
 sizePlus.Activated:Connect(function()
-	setScale(SIZE_STEP)
+	ST.espScale = math.clamp(math.floor((ST.espScale + CFG.SIZE_STEP) * 10 + 0.5) / 10, CFG.SIZE_MIN, CFG.SIZE_MAX)
+	UI.sizeValLbl.Text = string.format("%.1fx", ST.espScale)
+	for _, e in pairs(tracked) do
+		e.bb.Size = UDim2.fromOffset(140 * ST.espScale, 22 * ST.espScale)
+		e.lbl.TextSize = math.max(6, math.floor(13 * ST.espScale + 0.5))
+	end
+	saveConfig()
 end)
 
-mkLabel(mainScroller, {
-	Text = "Khoảng cách ESP",
-	Font = Enum.Font.GothamBold,
-	TextSize = 13,
-	Position = UDim2.fromOffset(14, DIST_Y),
-	Size = UDim2.new(0.5, 0, 0, 26),
-})
-
-local distMinus = mkStepBtn(mainScroller, DIST_Y, "-", -82)
-local distPlus = mkStepBtn(mainScroller, DIST_Y, "+", -14)
-
-distValLbl = mkLabel(mainScroller, {
-	Text = maxDist .. "m",
-	Font = Enum.Font.GothamBold,
-	TextSize = 12,
-	TextXAlignment = Enum.TextXAlignment.Center,
-	AnchorPoint = Vector2.new(1, 0),
-	Position = UDim2.new(1, -46, 0, DIST_Y),
-	Size = UDim2.fromOffset(38, 26),
-})
-
+mkLabel(mainScroller, {Text = "Khoảng cách ESP", Font = Enum.Font.GothamBold, TextSize = 13, Position = UDim2.fromOffset(14, 396), Size = UDim2.new(0.5, 0, 0, 26), ZIndex = 23})
+local distMinus = mkStepBtn(396, "-", -82)
+local distPlus = mkStepBtn(396, "+", -14)
+UI.distValLbl = mkLabel(mainScroller, {Text = ST.maxDist .. "m", Font = Enum.Font.GothamBold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Center, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -46, 0, 396), Size = UDim2.fromOffset(38, 26), ZIndex = 23})
 distMinus.Activated:Connect(function()
-	setDist(-DIST_STEP)
+	ST.maxDist = math.clamp(ST.maxDist - CFG.DIST_STEP, CFG.DIST_MIN, CFG.DIST_MAX)
+	UI.distValLbl.Text = ST.maxDist .. "m"
+	saveConfig()
 end)
-
 distPlus.Activated:Connect(function()
-	setDist(DIST_STEP)
+	ST.maxDist = math.clamp(ST.maxDist + CFG.DIST_STEP, CFG.DIST_MIN, CFG.DIST_MAX)
+	UI.distValLbl.Text = ST.maxDist .. "m"
+	saveConfig()
 end)
 
-local statusLbl = mkLabel(mainScroller, {
-	Text = "tắt",
-	TextSize = 10,
-	TextColor3 = Color3.fromRGB(150, 150, 160),
-	Position = UDim2.fromOffset(14, 430),
-	Size = UDim2.new(1, -28, 0, 14),
-})
+UI.statusLbl = mkLabel(mainScroller, {Text = "tắt", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(14, 430), Size = UDim2.new(1, -28, 0, 14), ZIndex = 23})
+UI.biomeLbl = mkLabel(mainScroller, {Text = "biome: đang dò...", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(14, 448), Size = UDim2.new(1, -28, 0, 14), ZIndex = 23})
 
-biomeLbl = mkLabel(mainScroller, {
-	Text = "biome: đang dò...",
-	TextSize = 10,
-	TextColor3 = Color3.fromRGB(150, 150, 160),
-	Position = UDim2.fromOffset(14, 448),
-	Size = UDim2.new(1, -28, 0, 14),
-})
-
--- ===== danh sách chức năng cho Quick Key =====
+-- ===== Quick Key =====
 local FUNCS = {
-	{id = "esp", label = "ESP ore", order = 1,
-		get = function() return espOn end,
-		set = function(v) espToggle.set(v) end},
-	{id = "auto", label = "Auto pickaxe", order = 2,
-		get = function() return autoEquipOn end,
-		set = function(v) autoToggle.set(v) end},
-	{id = "walk", label = "Auto farm ore", order = 3,
-		get = function() return walkOn end,
-		set = function(v) walkToggle.set(v) end},
-	{id = "hop", label = "Hop Server", order = 4,
-		action = function() hopServer() end},
+	{id = "esp", label = "ESP ore", order = 1, get = function() return ST.espOn end, set = function(v) UI.espToggle.set(v) end},
+	{id = "auto", label = "Auto pickaxe", order = 2, get = function() return ST.autoEquipOn end, set = function(v) UI.autoToggle.set(v) end},
+	{id = "walk", label = "Auto farm ore", order = 3, get = function() return ST.walkOn end, set = function(v) UI.walkToggle.set(v) end},
+	{id = "hop", label = "Hop Server", order = 4, action = hopServer},
 }
-for _, f in ipairs(FUNCS) do
-	FUNC_BY_ID[f.id] = f
-end
+for _, f in ipairs(FUNCS) do FUNC_BY_ID[f.id] = f end
 
 local function pinnedCount()
 	local n = 0
-	for _, p in pairs(pills) do
-		if p then
-			n = n + 1
-		end
-	end
+	for _, p in pairs(pills) do if p then n = n + 1 end end
 	return n
 end
 
--- thanh nút ngoài màn hình, nằm bên trái
-quickBar = Instance.new("Frame")
-quickBar.Name = "SysOreQuickBar"
-quickBar.BackgroundTransparency = 1
-quickBar.Size = UDim2.fromOffset(174, 0)
-quickBar.AutomaticSize = Enum.AutomaticSize.Y
-quickBar.Visible = false
-quickBar.Parent = gui
+local function refreshQuickBarVis()
+	if not UI.quickBar then return end
+	local count = pinnedCount()
+	UI.quickBar.Visible = ST.uiReady and (count > 0)
+	if count > 0 then
+		UI.quickBar.Size = UDim2.fromOffset(174, count * 50 - 8)
+	end
+end
+
+UI.quickBar = Instance.new("Frame")
+UI.quickBar.Name = "SysOreQuickBar"
+UI.quickBar.BackgroundTransparency = 1
+UI.quickBar.Size = UDim2.fromOffset(174, 42)
+UI.quickBar.Visible = false
+UI.quickBar.ZIndex = 35
+UI.quickBar.Parent = UI.gui
 
 local quickLayout = Instance.new("UIListLayout")
 quickLayout.Padding = UDim.new(0, 8)
 quickLayout.SortOrder = Enum.SortOrder.LayoutOrder
-quickLayout.Parent = quickBar
+quickLayout.Parent = UI.quickBar
 
 local function placeQuickBar()
 	local vp = getViewport()
-	quickBar.Position = UDim2.fromOffset(10, math.floor(vp.Y * 0.32))
+	UI.quickBar.Position = UDim2.fromOffset(10, math.floor(vp.Y * 0.32))
 end
 placeQuickBar()
 
--- nút Quick Key: viền LED cầu vồng bao quanh toàn bộ nút, glow mờ bên ngoài
-local PILL_W, PILL_H, PILL_RING = 174, 42, 2
-
 local function addPill(f)
-	if pills[f.id] then
-		return
-	end
-
+	if pills[f.id] then refreshQuickBarVis() return end
 	local wrap = Instance.new("Frame")
 	wrap.Name = "SysOrePill"
-	wrap.Size = UDim2.fromOffset(PILL_W, PILL_H)
+	wrap.Size = UDim2.fromOffset(174, 42)
 	wrap.BackgroundTransparency = 1
 	wrap.LayoutOrder = f.order
-	wrap.Parent = quickBar
-
-	local glow = Instance.new("Frame")
-	glow.AnchorPoint = Vector2.new(0.5, 0.5)
-	glow.Position = UDim2.fromScale(0.5, 0.5)
-	glow.Size = UDim2.new(1, 8, 1, 8)
-	glow.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	glow.BackgroundTransparency = 0.7
-	glow.BorderSizePixel = 0
-	glow.ZIndex = 1
-	glow.Parent = wrap
-	local glowC = Instance.new("UICorner")
-	glowC.CornerRadius = UDim.new(0, 24)
-	glowC.Parent = glow
-	rainbowFill(glow)
+	wrap.ZIndex = 35
+	wrap.Parent = UI.quickBar
 
 	local ring = Instance.new("Frame")
 	ring.Size = UDim2.fromScale(1, 1)
 	ring.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 	ring.BorderSizePixel = 0
-	ring.ZIndex = 2
+	ring.ZIndex = 36
 	ring.Parent = wrap
-	local ringC = Instance.new("UICorner")
-	ringC.CornerRadius = UDim.new(0, 21)
-	ringC.Parent = ring
+	Instance.new("UICorner", ring).CornerRadius = UDim.new(0, 21)
 	rainbowFill(ring)
 
 	local btn = Instance.new("TextButton")
-	btn.Name = "Btn"
-	btn.Position = UDim2.fromOffset(PILL_RING, PILL_RING)
-	btn.Size = UDim2.new(1, -PILL_RING * 2, 1, -PILL_RING * 2)
+	btn.Position = UDim2.fromOffset(2, 2)
+	btn.Size = UDim2.new(1, -4, 1, -4)
 	btn.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
 	btn.BorderSizePixel = 0
 	btn.AutoButtonColor = false
 	btn.Text = ""
-	btn.ZIndex = 3
+	btn.ZIndex = 37
 	btn.Parent = wrap
-	local bc = Instance.new("UICorner")
-	bc.CornerRadius = UDim.new(0, 19)
-	bc.Parent = btn
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 19)
 
 	local bg = Instance.new("UIGradient")
 	bg.Rotation = 90
 	bg.Color = ColorSequence.new(Color3.fromRGB(26, 26, 34), Color3.fromRGB(8, 8, 12))
 	bg.Parent = btn
 
-	mkLabel(btn, {
-		Text = f.label,
-		Font = Enum.Font.GothamBold,
-		TextSize = 12,
-		Position = UDim2.fromOffset(14, 0),
-		Size = UDim2.new(1, -52, 1, 0),
-		ZIndex = 4,
-	})
+	mkLabel(btn, {Text = f.label, Font = Enum.Font.GothamBold, TextSize = 12, Position = UDim2.fromOffset(14, 0), Size = UDim2.new(1, -52, 1, 0), ZIndex = 38})
 
 	local dot = Instance.new("Frame")
 	dot.AnchorPoint = Vector2.new(1, 0.5)
 	dot.Position = UDim2.new(1, -12, 0.5, 0)
 	dot.Size = UDim2.fromOffset(12, 12)
-	dot.BackgroundColor3 = OFF_COLOR
+	dot.BackgroundColor3 = CFG.OFF_COLOR
 	dot.BorderSizePixel = 0
-	dot.ZIndex = 4
+	dot.ZIndex = 38
 	dot.Parent = btn
-	local dc = Instance.new("UICorner")
-	dc.CornerRadius = UDim.new(1, 0)
-	dc.Parent = dot
+	Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
 	local dotStroke = rainbowStroke(dot, 1.5, 1)
 
-	pills[f.id] = {
-		wrap = wrap, btn = btn, dot = dot, bg = bg, dotStroke = dotStroke,
-	}
+	pills[f.id] = {wrap = wrap, dot = dot, bg = bg, dotStroke = dotStroke}
+	refreshQuickBarVis()
 
 	btn.Activated:Connect(function()
-		local t = tween(btn, FAST, {Size = UDim2.new(1, -PILL_RING * 2 - 6, 1, -PILL_RING * 2 - 4)})
-		t.Completed:Connect(function()
-			tween(btn, FAST, {Size = UDim2.new(1, -PILL_RING * 2, 1, -PILL_RING * 2)})
-		end)
-		if f.action then
-			f.action()
-		elseif f.set and f.get then
-			f.set(not f.get())
-		end
+		if f.action then f.action() elseif f.set and f.get then f.set(not f.get()) end
 	end)
 end
 
 local function removePill(id)
 	local p = pills[id]
-	if not p then
-		return
+	if p then
+		pcall(function() p.wrap:Destroy() end)
+		pills[id] = nil
 	end
-	pcall(function() p.wrap:Destroy() end)
-	pills[id] = nil
+	refreshQuickBarVis()
 end
 
--- ===== tab Quick Key =====
 local quickScroller = Instance.new("ScrollingFrame")
-quickScroller.Name = "QuickScroller"
-quickScroller.Position = UDim2.fromOffset(0, CONTENT_Y)
-quickScroller.Size = UDim2.new(1, 0, 1, -CONTENT_Y)
+quickScroller.Position = UDim2.fromOffset(0, 92)
+quickScroller.Size = UDim2.new(1, 0, 1, -92)
 quickScroller.BackgroundTransparency = 1
 quickScroller.BorderSizePixel = 0
 quickScroller.ScrollBarThickness = 4
-quickScroller.ScrollBarImageColor3 = Color3.fromRGB(200, 200, 210)
-quickScroller.ScrollingDirection = Enum.ScrollingDirection.Y
-quickScroller.ElasticBehavior = Enum.ElasticBehavior.WhenScrollable
 quickScroller.CanvasSize = UDim2.new(0, 0, 0, 240)
 quickScroller.Visible = false
-quickScroller.Parent = expandedGroup
+quickScroller.ZIndex = 22
+quickScroller.Parent = UI.expandedGroup
 
-local QUICK_HINT = "bật tối đa " .. QUICK_MAX .. " nút để hiện ra ngoài"
-local quickMsg = mkLabel(quickScroller, {
-	Text = QUICK_HINT,
-	TextSize = 10,
-	TextColor3 = Color3.fromRGB(130, 130, 140),
-	Position = UDim2.fromOffset(14, 0),
-	Size = UDim2.new(1, -28, 0, 14),
-})
+local QUICK_HINT = "bật tối đa " .. CFG.QUICK_MAX .. " nút để hiện ra ngoài"
+local quickMsg = mkLabel(quickScroller, {Text = QUICK_HINT, TextSize = 10, TextColor3 = Color3.fromRGB(130, 130, 140), Position = UDim2.fromOffset(14, 0), Size = UDim2.new(1, -28, 0, 14), ZIndex = 23})
 
 local quickToggles = {}
 for i, f in ipairs(FUNCS) do
 	quickToggles[f.id] = makeToggle(quickScroller, 24 + (i - 1) * 40, f.label, false, function(on)
 		if on then
-			if pinnedCount() >= QUICK_MAX then
+			if pinnedCount() >= CFG.QUICK_MAX then
 				quickToggles[f.id].set(false, true)
-				quickMsg.Text = "tối đa " .. QUICK_MAX .. " nút, tắt bớt trước"
-				task.delay(1.5, function()
-					quickMsg.Text = QUICK_HINT
-				end)
+				quickMsg.Text = "tối đa " .. CFG.QUICK_MAX .. " nút, tắt bớt trước"
+				task.delay(1.5, function() quickMsg.Text = QUICK_HINT end)
 				return
 			end
 			addPill(f)
@@ -1945,7 +1489,6 @@ for i, f in ipairs(FUNCS) do
 	end)
 end
 
--- ===== chuyển tab =====
 local function selectTab(name)
 	local isMain = name == "main"
 	mainScroller.Visible = isMain
@@ -1953,342 +1496,223 @@ local function selectTab(name)
 	tabMain.BackgroundColor3 = isMain and Color3.fromRGB(60, 60, 80) or Color3.fromRGB(28, 28, 36)
 	tabQuick.BackgroundColor3 = (not isMain) and Color3.fromRGB(60, 60, 80) or Color3.fromRGB(28, 28, 36)
 end
-
-tabMain.Activated:Connect(function()
-	selectTab("main")
-end)
-
-tabQuick.Activated:Connect(function()
-	selectTab("quick")
-end)
-
+tabMain.Activated:Connect(function() selectTab("main") end)
+tabQuick.Activated:Connect(function() selectTab("quick") end)
 selectTab("main")
 
--- ===== thông báo quặng & trạng thái hop =====
-local notif = Instance.new("Frame")
-notif.Name = "OreNotif"
-notif.Size = UDim2.fromOffset(NOTIF_WIDTH, 26)
-notif.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
-notif.BackgroundTransparency = 1
-notif.BorderSizePixel = 0
-notif.Visible = false
-notif.ZIndex = 10
-notif.Parent = gui
+-- ===== thông báo =====
+UI.notif = Instance.new("Frame")
+UI.notif.Size = UDim2.fromOffset(CFG.NOTIF_WIDTH, 26)
+UI.notif.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
+UI.notif.BackgroundTransparency = 0.1
+UI.notif.BorderSizePixel = 0
+UI.notif.Visible = false
+UI.notif.ZIndex = 30
+UI.notif.Parent = UI.gui
+Instance.new("UICorner", UI.notif).CornerRadius = UDim.new(0, 13)
+rainbowStroke(UI.notif, 2, 0)
 
-local notifCorner = Instance.new("UICorner")
-notifCorner.CornerRadius = UDim.new(0, 13)
-notifCorner.Parent = notif
+UI.notifLbl = Instance.new("TextLabel")
+UI.notifLbl.Size = UDim2.fromScale(1, 1)
+UI.notifLbl.BackgroundTransparency = 1
+UI.notifLbl.Font = Enum.Font.GothamBold
+UI.notifLbl.TextSize = 12
+UI.notifLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+UI.notifLbl.RichText = true
+UI.notifLbl.Text = ""
+UI.notifLbl.ZIndex = 31
+UI.notifLbl.Parent = UI.notif
 
-local notifStroke = rainbowStroke(notif, 2, 1)
-
-local notifLbl = Instance.new("TextLabel")
-notifLbl.Size = UDim2.fromScale(1, 1)
-notifLbl.BackgroundTransparency = 1
-notifLbl.Font = Enum.Font.GothamBold
-notifLbl.TextSize = 12
-notifLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
-notifLbl.TextTransparency = 1
-notifLbl.RichText = true
-notifLbl.Text = ""
-notifLbl.ZIndex = 11
-notifLbl.Parent = notif
-
-placeNotif = function()
+local function placeNotif()
 	local vp = getViewport()
 	local x, y = currentPos()
-	local nx = math.clamp(x + curSize.X / 2 - NOTIF_WIDTH / 2, 0, math.max(0, vp.X - NOTIF_WIDTH))
-	local ny = math.min(y + curSize.Y + 6, vp.Y - 30)
-	notif.Position = UDim2.fromOffset(nx, ny)
+	UI.notif.Position = UDim2.fromOffset(
+		math.clamp(x + ST.curSize.X / 2 - CFG.NOTIF_WIDTH / 2, 0, math.max(0, vp.X - CFG.NOTIF_WIDTH)),
+		math.min(y + ST.curSize.Y + 6, vp.Y - 30)
+	)
 end
 
-local notifVals, notifOrder = {}, {}
-local notifToken = 0
-
-notify = function(ore)
+local notifVals, notifOrder, notifToken = {}, {}, 0
+UI.notify = function(ore)
 	if not notifVals[ore.key] then
 		notifVals[ore.key] = 0
 		table.insert(notifOrder, ore)
 	end
 	notifVals[ore.key] = notifVals[ore.key] + 1
-
 	local parts = {}
 	for _, o in ipairs(notifOrder) do
-		table.insert(parts, string.format('<font color="%s">+%d %s</font>',
-			toHex(o.color), notifVals[o.key], o.label))
+		table.insert(parts, string.format('<font color="%s">+%d %s</font>', toHex(o.color), notifVals[o.key], o.label))
 	end
-	notifLbl.Text = table.concat(parts, "  •  ")
-
+	UI.notifLbl.Text = table.concat(parts, "  •  ")
 	placeNotif()
-	notif.Visible = true
-	tween(notif, FAST, {BackgroundTransparency = 0.1})
-	tween(notifStroke, FAST, {Transparency = 0})
-	tween(notifLbl, FAST, {TextTransparency = 0})
-
+	UI.notif.Visible = true
 	notifToken = notifToken + 1
 	local my = notifToken
-	task.delay(NOTIF_DURATION, function()
-		if my ~= notifToken then
-			return
+	task.delay(CFG.NOTIF_DURATION, function()
+		if my == notifToken then
+			UI.notif.Visible = false
+			notifVals, notifOrder = {}, {}
 		end
-		tween(notif, FAST, {BackgroundTransparency = 1})
-		tween(notifStroke, FAST, {Transparency = 1})
-		tween(notifLbl, FAST, {TextTransparency = 1})
-		task.delay(0.22, function()
-			if my == notifToken then
-				notif.Visible = false
-				notifVals, notifOrder = {}, {}
-			end
-		end)
 	end)
 end
 
-notifyStatus = function(msg, col)
+UI.notifyStatus = function(msg, col)
 	notifVals, notifOrder = {}, {}
-	notifLbl.Text = string.format('<font color="%s">%s</font>', toHex(col or Color3.fromRGB(255, 255, 255)), msg)
+	UI.notifLbl.Text = string.format('<font color="%s">%s</font>', toHex(col or Color3.fromRGB(255, 255, 255)), msg)
 	placeNotif()
-	notif.Visible = true
-	tween(notif, FAST, {BackgroundTransparency = 0.1})
-	tween(notifStroke, FAST, {Transparency = 0})
-	tween(notifLbl, FAST, {TextTransparency = 0})
-
+	UI.notif.Visible = true
 	notifToken = notifToken + 1
 	local my = notifToken
-	task.delay(NOTIF_DURATION, function()
-		if my ~= notifToken then
-			return
-		end
-		tween(notif, FAST, {BackgroundTransparency = 1})
-		tween(notifStroke, FAST, {Transparency = 1})
-		tween(notifLbl, FAST, {TextTransparency = 1})
-		task.delay(0.22, function()
-			if my == notifToken then
-				notif.Visible = false
-			end
-		end)
+	task.delay(CFG.NOTIF_DURATION, function()
+		if my == notifToken then UI.notif.Visible = false end
 	end)
 end
 
 -- ===== mở/đóng và kéo =====
 local function setExpanded(v)
-	expanded = v
-	curSize = v and EXPANDED_VEC or Vector2.new(ICON_SIZE, ICON_SIZE)
+	ST.expanded = v
+	ST.curSize = v and CFG.EXPANDED_VEC or Vector2.new(CFG.ICON_SIZE, CFG.ICON_SIZE)
 	clampSquare()
 	local x, y = currentPos()
-	tween(island, BOUNCE, {
-		Size = UDim2.fromOffset(curSize.X, curSize.Y),
-		Position = UDim2.fromOffset(x, y),
-	})
-	tween(islandCorner, BOUNCE, {CornerRadius = UDim.new(0, v and 22 or 16)})
-	if v then
-		expandedGroup.Visible = true
-		tween(expandedGroup, FAST, {GroupTransparency = 0})
-	else
-		tween(expandedGroup, FAST, {GroupTransparency = 1})
-		task.delay(0.2, function()
-			if not expanded then
-				expandedGroup.Visible = false
-			end
-		end)
-	end
+	tween(UI.island, TWEEN.BOUNCE, {Size = UDim2.fromOffset(ST.curSize.X, ST.curSize.Y), Position = UDim2.fromOffset(x, y)})
+	UI.expandedGroup.Visible = v
 	placeNotif()
-end
-
-local function applyDrag()
-	clampSquare()
-	island.Position = UDim2.fromOffset(squareX, squareY)
-	placeNotif()
-	placeQuickBar()
 end
 
 local header = Instance.new("TextButton")
-header.Name = "Header"
-header.Size = UDim2.new(1, 0, 0, ICON_SIZE)
+header.Size = UDim2.new(1, 0, 0, CFG.ICON_SIZE)
 header.BackgroundTransparency = 1
 header.Text = ""
 header.AutoButtonColor = false
-header.ZIndex = 20
-header.Parent = island
+header.ZIndex = 25
+header.Parent = UI.island
 
-local dragging, moved = false, false
-local dragStart = Vector2.new(0, 0)
-local startX, startY = 0, 0
-local dragWasExpanded = false
-
-local function isPointer(t)
-	return t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch
-end
+local dragging, moved, dragStart, startX, startY, dragWasExpanded = false, false, Vector2.new(0, 0), 0, 0, false
+local function isPointer(t) return t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch end
 
 table.insert(conns, header.InputBegan:Connect(function(input)
 	if isPointer(input.UserInputType) then
-		dragging = true
-		moved = false
-		dragWasExpanded = expanded
+		dragging, moved, dragWasExpanded = true, false, ST.expanded
 		dragStart = Vector2.new(input.Position.X, input.Position.Y)
-		startX, startY = squareX, squareY
+		startX, startY = ST.squareX, ST.squareY
 	end
 end))
 
-table.insert(conns, UIS.InputChanged:Connect(function(input)
-	if not dragging then
-		return
-	end
+table.insert(conns, S.UIS.InputChanged:Connect(function(input)
+	if not dragging then return end
 	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-		local dx = input.Position.X - dragStart.X
-		local dy = input.Position.Y - dragStart.Y
-		if not moved and math.sqrt(dx * dx + dy * dy) > DRAG_THRESHOLD then
-			moved = true
-		end
+		local dx, dy = input.Position.X - dragStart.X, input.Position.Y - dragStart.Y
+		if not moved and math.sqrt(dx * dx + dy * dy) > CFG.DRAG_THRESHOLD then moved = true end
 		if moved and not dragWasExpanded then
-			squareX = startX + dx
-			squareY = startY + dy
-			applyDrag()
+			ST.squareX, ST.squareY = startX + dx, startY + dy
+			clampSquare()
+			UI.island.Position = UDim2.fromOffset(ST.squareX, ST.squareY)
+			placeNotif()
+			placeQuickBar()
 		end
 	end
 end))
 
-table.insert(conns, UIS.InputEnded:Connect(function(input)
-	if not dragging then
-		return
-	end
-	if isPointer(input.UserInputType) then
+table.insert(conns, S.UIS.InputEnded:Connect(function(input)
+	if dragging and isPointer(input.UserInputType) then
 		dragging = false
-		if not moved then
-			setExpanded(not expanded)
-		end
+		if not moved then setExpanded(not ST.expanded) end
 	end
 end))
 
--- ===== hiệu ứng loading trước khi hiện logo & menu =====
-local loadCanvas = Instance.new("CanvasGroup")
-loadCanvas.Name = "SysOreLoading"
-loadCanvas.AnchorPoint = Vector2.new(0.5, 0.5)
-loadCanvas.Position = UDim2.fromScale(0.5, 0.5)
-loadCanvas.Size = UDim2.fromOffset(220, 74)
-loadCanvas.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
-loadCanvas.BackgroundTransparency = 0.05
-loadCanvas.GroupTransparency = 1
-loadCanvas.BorderSizePixel = 0
-loadCanvas.ZIndex = 30
-loadCanvas.Parent = gui
-Instance.new("UICorner", loadCanvas).CornerRadius = UDim.new(0, 16)
-rainbowStroke(loadCanvas, 2, 0)
+-- ===== loading 2s =====
+local loadFrame = Instance.new("Frame")
+loadFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+loadFrame.Position = UDim2.fromScale(0.5, 0.5)
+loadFrame.Size = UDim2.fromOffset(224, 76)
+loadFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
+loadFrame.BackgroundTransparency = 0.05
+loadFrame.BorderSizePixel = 0
+loadFrame.ZIndex = 50
+loadFrame.Parent = UI.gui
+Instance.new("UICorner", loadFrame).CornerRadius = UDim.new(0, 16)
+rainbowStroke(loadFrame, 2, 0)
 
-mkLabel(loadCanvas, {
-	Text = "💎 " .. SCRIPT_NAME,
-	Font = Enum.Font.GothamBold,
-	TextSize = 14,
-	TextXAlignment = Enum.TextXAlignment.Center,
-	Position = UDim2.fromOffset(10, 10),
-	Size = UDim2.new(1, -20, 0, 20),
-	ZIndex = 31,
-})
-
-local loadSub = mkLabel(loadCanvas, {
-	Text = "đang khởi tạo...",
-	TextSize = 11,
-	TextColor3 = Color3.fromRGB(175, 175, 190),
-	TextXAlignment = Enum.TextXAlignment.Center,
-	Position = UDim2.fromOffset(10, 30),
-	Size = UDim2.new(1, -20, 0, 14),
-	ZIndex = 31,
-})
+mkLabel(loadFrame, {Text = "💎 " .. SCRIPT_NAME, Font = Enum.Font.GothamBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Center, Position = UDim2.fromOffset(10, 10), Size = UDim2.new(1, -20, 0, 20), ZIndex = 51})
+local loadSub = mkLabel(loadFrame, {Text = "đang khởi tạo...", TextSize = 11, TextColor3 = Color3.fromRGB(175, 175, 190), TextXAlignment = Enum.TextXAlignment.Center, Position = UDim2.fromOffset(10, 30), Size = UDim2.new(1, -20, 0, 14), ZIndex = 51})
 
 local barBg = Instance.new("Frame")
 barBg.Position = UDim2.fromOffset(16, 52)
 barBg.Size = UDim2.new(1, -32, 0, 8)
 barBg.BackgroundColor3 = Color3.fromRGB(28, 28, 38)
 barBg.BorderSizePixel = 0
-barBg.ZIndex = 31
-barBg.Parent = loadCanvas
+barBg.ZIndex = 51
+barBg.Parent = loadFrame
 Instance.new("UICorner", barBg).CornerRadius = UDim.new(1, 0)
 
 local barFill = Instance.new("Frame")
 barFill.Size = UDim2.new(0, 0, 1, 0)
 barFill.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 barFill.BorderSizePixel = 0
-barFill.ZIndex = 32
+barFill.ZIndex = 52
 barFill.Parent = barBg
 Instance.new("UICorner", barFill).CornerRadius = UDim.new(1, 0)
 rainbowFill(barFill)
 
--- ===== khôi phục config đã lưu =====
 for _, id in ipairs(wantPins) do
-	if quickToggles[id] and pinnedCount() < QUICK_MAX then
-		quickToggles[id].set(true)
-	end
+	if quickToggles[id] and pinnedCount() < CFG.QUICK_MAX then quickToggles[id].set(true) end
 end
-if wantEsp then
-	espToggle.set(true)
-end
-if wantWalk then
-	walkToggle.set(true)
-end
-restoring = false
+if wantEsp then UI.espToggle.set(true) end
+if wantWalk then UI.walkToggle.set(true) end
+ST.restoring = false
 saveConfig()
 
--- ===== cập nhật UI, throttle 4 lần/giây =====
 local function refreshUI()
-	if not uiReady then
-		return
-	end
-	ping = getPing()
-	local f = math.floor(fps + 0.5)
-	local pingText = ping and (ping .. "ms") or "--"
-	statsLbl.Text = string.format("FPS %d · PING %s · FRAME %.1fms", f, pingText, msValue)
+	if not ST.uiReady then return end
+	ST.ping = getPing()
+	UI.statsLbl.Text = string.format("FPS %d · PING %s · FRAME %.1fms", math.floor(ST.fps + 0.5), ST.ping and (ST.ping .. "ms") or "--", ST.msValue)
 
 	local root = getRoot()
 	if root then
 		local p = root.Position
-		posLbl.Text = string.format("POS X %d · Y %d · Z %d",
-			math.floor(p.X + 0.5), math.floor(p.Y + 0.5), math.floor(p.Z + 0.5))
+		UI.posLbl.Text = string.format("POS X %d · Y %d · Z %d", math.floor(p.X + 0.5), math.floor(p.Y + 0.5), math.floor(p.Z + 0.5))
 	else
-		posLbl.Text = "POS --"
+		UI.posLbl.Text = "POS --"
 	end
 
-	local walkText = walkOn and (walkTarget and "  ·  đang đi" or "  ·  chờ quặng") or ""
-	statusLbl.Text = statusText .. "  ·  " .. knownTotal .. " quặng · " .. trackedCount .. " highlight"
-		.. walkText
+	local walkText = ST.walkOn and (ST.walkTarget and "  ·  đang đi" or "  ·  chờ quặng") or ""
+	UI.statusLbl.Text = ST.statusText .. "  ·  " .. ST.knownTotal .. " quặng · " .. ST.trackedCount .. " highlight" .. walkText
+	UI.biomeLbl.Text = ST.biomeCF and ("biome: " .. tostring(ST.biomeName)) or ("biome: chưa thấy '" .. CFG.BIOME_KEYWORD .. "' — không quét")
 
-	if biomeLbl then
-		if biomeCF then
-			biomeLbl.Text = "biome: " .. tostring(biomeName)
-		else
-			biomeLbl.Text = "biome: chưa thấy '" .. BIOME_KEYWORD .. "' — không quét"
-		end
-	end
-
-	ensureRowsRefresh()
+	for _, r in pairs(rows) do r.refresh() end
 	syncTracked()
+	refreshQuickBarVis()
 
 	for id, p in pairs(pills) do
 		local fn = FUNC_BY_ID[id]
 		if fn then
-			local active = fn.action and hopping or (fn.get and fn.get()) or false
-			p.dot.BackgroundColor3 = active and ON_COLOR or OFF_COLOR
+			local active = fn.action and ST.hopping or (fn.get and fn.get()) or false
+			p.dot.BackgroundColor3 = active and CFG.ON_COLOR or CFG.OFF_COLOR
 			p.dotStroke.Transparency = active and 0 or 1
 			local base = active and Color3.fromRGB(14, 40, 28) or Color3.fromRGB(26, 26, 34)
 			p.bg.Color = ColorSequence.new(base, Color3.fromRGB(8, 8, 12))
 		end
 	end
 
-	if espOn then
+	if ST.espOn then
 		local ra = refreshRootAtt()
 		if ra then
 			for _, e in pairs(tracked) do
-				if not e.beam then
-					attachLine(e)
-				elseif e.beam.Attachment0 ~= ra then
-					e.beam.Attachment0 = ra
-				end
+				if not e.beam then attachLine(e) elseif e.beam.Attachment0 ~= ra then e.beam.Attachment0 = ra end
 			end
 		end
 	end
 
 	for _, e in pairs(tracked) do
 		local d = distanceTo(e.part)
-		setInRange(e, d == nil or d <= maxDist)
+		local inR = (d == nil or d <= ST.maxDist)
+		if e.inRange ~= inR then
+			e.inRange = inR
+			if e.hl then e.hl.Enabled = inR end
+			if e.bb then e.bb.Enabled = inR end
+			if e.beam then e.beam.Enabled = inR end
+		end
 		e.lbl.Text = e.ore.label .. (d and ("  " .. math.floor(d) .. "m") or "")
-		-- ẩn nhãn gốc của game trên quặng này, chỉ giữ nhãn của script
 		if e.target and e.target.Parent then
 			for _, g in ipairs(e.target:GetDescendants()) do
 				if g:IsA("BillboardGui") and g.Enabled and not isOwnName(g) then
@@ -2301,77 +1725,47 @@ local function refreshUI()
 end
 
 local sampleStart, frames, acc = os.clock(), 0, 0
-table.insert(conns, RunService.RenderStepped:Connect(function(dt)
+table.insert(conns, S.RunService.RenderStepped:Connect(function(dt)
 	local rot = (os.clock() * 120) % 360
-	for g in pairs(rainbowGrads) do
-		g.Rotation = rot
-	end
-
-	msValue = dt * 1000
+	for g in pairs(rainbowGrads) do pcall(function() g.Rotation = rot end) end
+	ST.msValue = dt * 1000
 	frames = frames + 1
 	local now = os.clock()
-	local elapsed = now - sampleStart
-	if elapsed >= 0.5 then
-		fps = frames / elapsed
+	if now - sampleStart >= 0.5 then
+		ST.fps = frames / (now - sampleStart)
 		frames = 0
 		sampleStart = now
 	end
 	acc = acc + dt
-	if acc >= UI_INTERVAL then
+	if acc >= CFG.UI_INTERVAL then
 		acc = 0
 		refreshUI()
 	end
 end))
 
-gui.Destroying:Connect(function()
-	alive = false
-	walkOn = false
+UI.gui.Destroying:Connect(function()
+	ST.alive = false
+	ST.walkOn = false
 	stopESP()
-	for _, c in ipairs(conns) do
-		c:Disconnect()
-	end
-	conns = {}
-	rainbowGrads = {}
+	for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+	conns, rainbowGrads = {}, {}
 end)
 
--- chạy trình tự loading 2s rồi mới hiện logo island & quickBar
 task.spawn(function()
-	tween(loadCanvas, FAST, {GroupTransparency = 0})
 	local t0 = os.clock()
-	while alive and (os.clock() - t0) < LOADING_DURATION do
-		local pct = math.clamp((os.clock() - t0) / LOADING_DURATION, 0, 1)
+	while ST.alive and (os.clock() - t0) < CFG.LOADING_DURATION do
+		local pct = math.clamp((os.clock() - t0) / CFG.LOADING_DURATION, 0, 1)
 		barFill.Size = UDim2.new(pct, 0, 1, 0)
-		if pct < 0.4 then
-			loadSub.Text = "đang tải giao diện..."
-		elseif pct < 0.78 then
-			loadSub.Text = "đang quét vùng Cosmic Sanctuary..."
-		else
-			loadSub.Text = "sẵn sàng!"
-		end
-		RunService.RenderStepped:Wait()
+		loadSub.Text = pct < 0.4 and "đang tải giao diện..." or (pct < 0.78 and "đang quét vùng Cosmic Sanctuary..." or "sẵn sàng!")
+		task.wait(0.03)
 	end
-	if not alive then
-		return
-	end
+	if not ST.alive then return end
 	barFill.Size = UDim2.new(1, 0, 1, 0)
 	loadSub.Text = "sẵn sàng!"
 	task.wait(0.15)
-	tween(loadCanvas, FAST, {GroupTransparency = 1})
-	task.delay(0.22, function()
-		pcall(function() loadCanvas:Destroy() end)
-	end)
-
-	uiReady = true
-	island.Visible = true
-	island.Size = UDim2.fromOffset(10, 10)
-	local x, y = currentPos()
-	island.Position = UDim2.fromOffset(x + (ICON_SIZE - 10) / 2, y + (ICON_SIZE - 10) / 2)
-	tween(island, BOUNCE, {
-		Size = UDim2.fromOffset(ICON_SIZE, ICON_SIZE),
-		Position = UDim2.fromOffset(x, y),
-	})
-	if pinnedCount() > 0 then
-		quickBar.Visible = true
-	end
+	pcall(function() loadFrame:Destroy() end)
+	ST.uiReady = true
+	UI.island.Visible = true
+	refreshQuickBarVis()
 	refreshUI()
 end)
