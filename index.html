@@ -1,4 +1,4 @@
--- Huongcuo (Delta Mobile Safe + Quick Key + Né/Nhảy/Đi vòng vật cản + Auto Steal + Chỉ chạy sau Loading + Line cầu vồng về điểm + Menu ngang + Auto Swing + Anti AFK + Auto Reconnect + Auto biome 10 + HP quặng)
+-- Huongcuo (Delta Mobile Safe + Quick Key + Đi thẳng + Auto Steal + Chỉ chạy sau Loading + Line cầu vồng về điểm + Menu ngang + Auto Swing + Anti AFK + Auto Reconnect + Auto biome 10 + HP quặng + Chuyển tab animation + Loading thu về island)
 local S = {
 	Players = game:GetService("Players"),
 	RunService = game:GetService("RunService"),
@@ -37,16 +37,13 @@ local CFG = {
 	LINE_WIDTH = 0.18,
 	STEAL_LINE_WIDTH = 0.32,
 	WALK_REACH = 6,
-	WALK_STUCK_TIME = 1.0,
 	WALK_GIVEUP = 12,
 	WALK_SKIP_TIME = 10,
 	WAIT_RADIUS = 8,
 	WAIT_ANG_SPEED = 0.6,
-	WAIT_STUCK_TIME = 1.0,
 	STEAL_RETURN_POS = Vector3.new(-740, 63, -640),
 	STEAL_REACH = 7,
 	STEAL_MAX_TIME = 45,
-	STEAL_STUCK_TIME = 0.9,
 	STEAL_COOLDOWN = 1.2,
 	QUICK_MAX = 3,
 	FILE = "huongcuo_config.json",
@@ -66,9 +63,6 @@ local CFG = {
 	AFK_INTERVAL = 90,
 	RECON_FIRST_DELAY = 3,
 	RECON_RETRY_DELAY = 8,
-	DETOUR_LENGTH = 12,
-	DETOUR_DIST = 10,
-	DETOUR_HOLD = 1.5,
 	B10_WAYPOINT = Vector3.new(-827, 64, -666),
 	B10_ZONE_RADIUS = 666,
 	B10_REACH = 4,
@@ -82,6 +76,7 @@ local TWEEN = {
 	BOUNCE = TweenInfo.new(0.55, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
 	FAST = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 	SMOOTH = TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+	COLLAPSE = TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
 }
 
 local RAINBOW = ColorSequence.new({
@@ -114,12 +109,6 @@ local ST = {
 	returningSteal = false,
 	stealStartedAt = 0,
 	lastStealTriggerAt = -CFG.STEAL_COOLDOWN,
-	stealLastPos = nil,
-	stealStuckT = 0,
-	stealSidestepUntil = 0,
-	stealSidestepGoal = nil,
-	stealSideSign = 1,
-	stealStreak = 0,
 	stealReturnPos = CFG.STEAL_RETURN_POS,
 	hopping = false,
 	lastHopAt = -CFG.HOP_COOLDOWN,
@@ -160,9 +149,10 @@ local ST = {
 	b10Run = false,
 	b10Inside = false,
 	b10Move = {stuckT = 0, lastPos = nil},
-	-- di chuyển thẳng cho đi quặng và chỗ đợi
+	-- di chuyển thẳng cho đi quặng, chỗ đợi và chạy về khi steal
 	walkMove = {stuckT = 0, lastPos = nil},
 	waitMove = {stuckT = 0, lastPos = nil},
+	stealMove = {stuckT = 0, lastPos = nil},
 	-- reconnect
 	reconnectedRun = false,
 }
@@ -375,41 +365,43 @@ local function resolveOre(inst)
 end
 
 -- ===== đọc HP quặng =====
--- Thử lần lượt: attribute -> NumberValue cùng tên -> text dạng "cur/max" hoặc "HP cur" trên BillboardGui.
--- Trả về cur, max (max có thể nil). Không đọc được thì trả nil.
-local HP_NAMES = {"Health", "HP", "Hp", "health", "Durability", "Durab"}
-local MAX_NAMES = {"MaxHealth", "MaxHP", "MaxHp", "maxHealth", "MaxDurability"}
+-- Thử lần lượt: attribute -> NumberValue/IntValue -> text "cur/max" hoặc "HP cur" trên mọi GUI của quặng.
+local HP_NAMES = {"Health", "HP", "Hp", "health", "hp", "Durability", "Durab", "Ore", "Value"}
+local MAX_NAMES = {"MaxHealth", "MaxHP", "MaxHp", "maxHealth", "MaxDurability", "MaxValue"}
+
+local function scanAttrs(o)
+	for _, n in ipairs(HP_NAMES) do
+		local v = o:GetAttribute(n)
+		if type(v) == "number" then
+			local mx
+			for _, mn in ipairs(MAX_NAMES) do
+				local m = o:GetAttribute(mn)
+				if type(m) == "number" then mx = m break end
+			end
+			return v, mx
+		end
+	end
+	return nil
+end
 
 local function readOreHp(target)
 	if not target or not target.Parent then return nil end
 
-	local function fromAttributes(o)
-		for _, n in ipairs(HP_NAMES) do
-			local v = o:GetAttribute(n)
-			if type(v) == "number" then
-				local mx
-				for _, mn in ipairs(MAX_NAMES) do
-					local m = o:GetAttribute(mn)
-					if type(m) == "number" then mx = m break end
-				end
-				return v, mx
-			end
-		end
-		return nil
-	end
-
-	local cur, mx = fromAttributes(target)
+	local cur, mx = scanAttrs(target)
 	if cur then return cur, mx end
+	for _, d in ipairs(target:GetDescendants()) do
+		cur, mx = scanAttrs(d)
+		if cur then return cur, mx end
+	end
 
 	local hpVal, maxVal
 	for _, d in ipairs(target:GetDescendants()) do
 		if d:IsA("NumberValue") or d:IsA("IntValue") then
-			local n = d.Name
 			for _, hn in ipairs(HP_NAMES) do
-				if n == hn and not hpVal then hpVal = d end
+				if d.Name == hn and not hpVal then hpVal = d end
 			end
 			for _, mn in ipairs(MAX_NAMES) do
-				if n == mn and not maxVal then maxVal = d end
+				if d.Name == mn and not maxVal then maxVal = d end
 			end
 		end
 	end
@@ -418,17 +410,13 @@ local function readOreHp(target)
 	end
 
 	for _, d in ipairs(target:GetDescendants()) do
-		if d:IsA("BillboardGui") and not isOwnName(d) then
-			for _, t in ipairs(d:GetDescendants()) do
-				if (t:IsA("TextLabel") or t:IsA("TextButton")) and not isOwnName(t) then
-					local txt = t.Text
-					if type(txt) == "string" then
-						local a, b = string.match(txt, "(%d+)%s*/%s*(%d+)")
-						if a and b then return tonumber(a), tonumber(b) end
-						local c = string.match(txt, "[Hh][Pp]%s*:?%s*(%d+)")
-						if c then return tonumber(c), nil end
-					end
-				end
+		if (d:IsA("TextLabel") or d:IsA("TextButton")) and not isOwnName(d) then
+			local txt = d.Text
+			if type(txt) == "string" and txt ~= "" then
+				local a, b = string.match(txt, "(%d+)%s*/%s*(%d+)")
+				if a and b then return tonumber(a), tonumber(b) end
+				local c = string.match(txt, "[Hh][Pp]%s*:?%s*(%d+)")
+				if c then return tonumber(c), nil end
 			end
 		end
 	end
@@ -486,7 +474,6 @@ local function loadConfig()
 	return (ok and type(res) == "table") and res or nil
 end
 
--- kiểm tra lần chạy này có phải do reconnect/requeue không
 local function checkReconnectRun()
 	if _G.HUONGCUTO_RECONNECT == true then
 		_G.HUONGCUTO_RECONNECT = nil
@@ -898,8 +885,7 @@ task.spawn(function()
 	end
 end)
 
--- ===== requeue: tự chạy lại script sau khi teleport / reconnect =====
--- Lưu config và đánh dấu cờ reconnect trước khi queue, để lần chạy sau tự bật lại các toggle.
+-- ===== requeue =====
 local function queueRejoin()
 	if CFG.REQUEUE_URL == "" then return end
 	if typeof(queue_on_teleport) ~= "function" then return end
@@ -1008,7 +994,6 @@ task.spawn(function()
 end)
 
 -- ===== anti AFK =====
--- Roblox kick sau ~20 phút không thao tác. Xử lý 2 lớp: sự kiện Idled + nhảy nhẹ định kỳ khi đang đứng yên.
 table.insert(conns, LocalPlayer.Idled:Connect(function()
 	if not (ST.alive and antiAfkOn) then return end
 	pcall(function()
@@ -1034,7 +1019,7 @@ task.spawn(function()
 	end
 end)
 
--- ===== né / nhảy / đi vòng qua vật cản (dùng cho auto steal) =====
+-- ===== nhảy qua vật thấp =====
 local function forceJump(hum)
 	if not hum then return end
 	local now = os.clock()
@@ -1044,77 +1029,7 @@ local function forceJump(hum)
 	pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
 end
 
-local function avoidParams()
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	local ignoreList = {}
-	if UI.gui then table.insert(ignoreList, UI.gui) end
-	if stealLine.part then table.insert(ignoreList, stealLine.part) end
-	if LocalPlayer.Character then table.insert(ignoreList, LocalPlayer.Character) end
-	if ST.walkTarget then table.insert(ignoreList, ST.walkTarget) end
-	for _, p in ipairs(S.Players:GetPlayers()) do
-		if p.Character then table.insert(ignoreList, p.Character) end
-	end
-	params.FilterDescendantsInstances = ignoreList
-	return params
-end
-
-local function hasObstacleAhead(root, goalPos)
-	if not root then return false, false end
-	local flatDiff = Vector3.new(goalPos.X - root.Position.X, 0, goalPos.Z - root.Position.Z)
-	if flatDiff.Magnitude < 0.5 then return false, false end
-	local dir = flatDiff.Unit
-	local params = avoidParams()
-
-	local lowHit = workspace:Raycast(root.Position - Vector3.new(0, 1.4, 0), dir * 4.2, params)
-	local midHit = workspace:Raycast(root.Position + Vector3.new(0, 0.4, 0), dir * 4.2, params)
-	local chestHit = workspace:Raycast(root.Position + Vector3.new(0, 1.8, 0), dir * 4.2, params)
-	if not (lowHit or midHit or chestHit) then return false, false end
-
-	local highHit = workspace:Raycast(root.Position + Vector3.new(0, 4.0, 0), dir * 4.2, params)
-	return true, highHit == nil
-end
-
-local DETOUR_ANGLES = {20, -20, 40, -40, 60, -60, 80, -80, 100, -100, 125, -125, 150, -150}
-
-local function findClearPoint(root, goalPos)
-	if not root then return nil end
-	local flat = Vector3.new(goalPos.X - root.Position.X, 0, goalPos.Z - root.Position.Z)
-	if flat.Magnitude < 0.5 then return nil end
-	local fwd = flat.Unit
-	local params = avoidParams()
-	local pos = root.Position
-
-	for _, deg in ipairs(DETOUR_ANGLES) do
-		local rad = math.rad(deg)
-		local dir = Vector3.new(
-			fwd.X * math.cos(rad) - fwd.Z * math.sin(rad),
-			0,
-			fwd.X * math.sin(rad) + fwd.Z * math.cos(rad)
-		)
-		local clear = true
-		for _, h in ipairs({-1.4, 0.4, 1.8}) do
-			if workspace:Raycast(pos + Vector3.new(0, h, 0), dir * CFG.DETOUR_LENGTH, params) then
-				clear = false
-				break
-			end
-		end
-		if clear then
-			return pos + dir * CFG.DETOUR_DIST
-		end
-	end
-	return nil
-end
-
-local function sidestepGoal(root, goalPos, dirSign, stepDist)
-	local flatDiff = Vector3.new(goalPos.X - root.Position.X, 0, goalPos.Z - root.Position.Z)
-	local forward = flatDiff.Magnitude > 0.1 and flatDiff.Unit or Vector3.new(0, 0, -1)
-	local right = Vector3.new(-forward.Z, 0, forward.X) * (dirSign or 1)
-	local lat = stepDist or 8.5
-	return root.Position + forward * 6.5 + right * lat
-end
-
--- ===== auto steal + instant prompt (chỉ chạy về khi Pick Up thành công + line cầu vồng) =====
+-- ===== auto steal + instant prompt =====
 local function applyInstantPrompt(prompt)
 	if not (prompt and prompt:IsA("ProximityPrompt")) then return end
 	if ST.uiReady and ST.stealOn then
@@ -1166,11 +1081,7 @@ local function triggerStealReturn(reason)
 	ST.lastStealTriggerAt = now
 	ST.returningSteal = true
 	ST.stealStartedAt = now
-	ST.stealLastPos = root.Position
-	ST.stealStuckT = 0
-	ST.stealSidestepUntil = 0
-	ST.stealSidestepGoal = nil
-	ST.stealStreak = 0
+	ST.stealMove = {stuckT = 0, lastPos = nil}
 	ST.walkTarget = nil
 	ST.walkSidestepUntil = 0
 	ST.walkSidestepGoal = nil
@@ -1208,11 +1119,6 @@ end
 
 local function stopStealReturn(finished)
 	ST.returningSteal = false
-	ST.stealLastPos = nil
-	ST.stealStuckT = 0
-	ST.stealSidestepUntil = 0
-	ST.stealSidestepGoal = nil
-	ST.stealStreak = 0
 	destroyStealLine()
 	if finished and UI.notifyStatus then
 		UI.notifyStatus("Đã về vị trí — tiếp tục farm/chờ quặng", Color3.fromRGB(160, 210, 255))
@@ -1269,6 +1175,21 @@ task.spawn(function()
 	end
 end)
 
+-- ===== đi thẳng tới đích =====
+local function directMove(hum, root, goal, mv)
+	if mv.lastPos and (root.Position - mv.lastPos).Magnitude < 0.4 then
+		mv.stuckT = mv.stuckT + 0.2
+	else
+		mv.stuckT = 0
+	end
+	mv.lastPos = root.Position
+	if mv.stuckT >= CFG.DIRECT_STUCK_TIME then
+		forceJump(hum)
+		mv.stuckT = 0
+	end
+	hum:MoveTo(goal)
+end
+
 -- ===== auto farm ore + chỗ đợi quặng =====
 local function eligible(e)
 	return e and e.part and e.part.Parent and e.inRange ~= false and e.beam ~= nil
@@ -1306,76 +1227,7 @@ local function stopWalking()
 	if hum and root then hum:MoveTo(root.Position) end
 end
 
--- Đi thẳng tới đích, không né. Chỉ nhảy khi đứng yên quá lâu.
-local function directMove(hum, root, goal, mv)
-	if mv.lastPos and (root.Position - mv.lastPos).Magnitude < 0.4 then
-		mv.stuckT = mv.stuckT + 0.2
-	else
-		mv.stuckT = 0
-	end
-	mv.lastPos = root.Position
-	if mv.stuckT >= CFG.DIRECT_STUCK_TIME then
-		forceJump(hum)
-		mv.stuckT = 0
-	end
-	hum:MoveTo(goal)
-end
-
--- Đi có né, chỉ dùng cho auto steal
-local function moveWithAvoidance(hum, root, goal, now, stuckT, lastPos, sidestepGoalRef, sidestepUntilRef, sideSign, stuckLimit, sidestepDur, streakRef)
-	sideSign = sideSign or 1
-	if hum.WalkSpeed <= 0 then hum.WalkSpeed = 16 end
-	local movedFlat = lastPos and Vector3.new(root.Position.X - lastPos.X, 0, root.Position.Z - lastPos.Z).Magnitude or 999
-	local moved3D = lastPos and (root.Position - lastPos).Magnitude or 999
-	if movedFlat < 0.45 and moved3D < 0.55 then
-		stuckT = stuckT + 0.2
-	else
-		stuckT = 0
-		if streakRef then streakRef = 0 end
-	end
-	lastPos = root.Position
-
-	local detourActive = sidestepGoalRef and now < sidestepUntilRef
-	local activeGoal = detourActive and sidestepGoalRef or goal
-	local blocked, canJump = hasObstacleAhead(root, activeGoal)
-
-	if blocked and canJump then
-		forceJump(hum)
-	elseif blocked and not canJump and not detourActive then
-		local clear = findClearPoint(root, goal)
-		if clear then
-			sidestepGoalRef = clear
-			sidestepUntilRef = now + CFG.DETOUR_HOLD
-		end
-	end
-
-	if stuckT >= stuckLimit then
-		forceJump(hum)
-		local streak = (streakRef or 0) + 1
-		if streak >= 2 then
-			sideSign = -sideSign
-			streak = 0
-		end
-		if streakRef ~= nil then streakRef = streak end
-		local latBoost = 8.5 + math.min(streak * 3, 6)
-		sidestepGoalRef = sidestepGoal(root, goal, sideSign, latBoost)
-		sidestepUntilRef = now + sidestepDur
-		stuckT = 0
-	end
-
-	if sidestepGoalRef and now < sidestepUntilRef then
-		hum:MoveTo(sidestepGoalRef)
-	else
-		sidestepGoalRef = nil
-		hum:MoveTo(goal)
-	end
-
-	return stuckT, lastPos, sidestepGoalRef, sidestepUntilRef, sideSign, streakRef
-end
-
 -- ===== auto biome 10 =====
--- Khi bước vào vùng bán kính B10_ZONE_RADIUS (666m) quanh điểm hồi sinh thì chạy thẳng tới waypoint.
--- Tới waypoint là kết thúc biome 10, farm ore chạy tiếp (không đi tới chỗ đợi).
 local function resetB10Movement()
 	ST.b10Move = {stuckT = 0, lastPos = nil}
 	ST.b10Run = false
@@ -1392,7 +1244,6 @@ end
 local function runBiome10(hum, root)
 	local flat = Vector3.new(CFG.B10_WAYPOINT.X - root.Position.X, 0, CFG.B10_WAYPOINT.Z - root.Position.Z).Magnitude
 	if flat <= CFG.B10_REACH then
-		-- tới waypoint là kết thúc biome 10, farm ore sẽ chạy tiếp
 		ST.b10Phase = nil
 		resetB10Movement()
 		hum:MoveTo(root.Position)
@@ -1404,7 +1255,6 @@ local function runBiome10(hum, root)
 	directMove(hum, root, CFG.B10_WAYPOINT, ST.b10Move)
 end
 
--- Theo dõi vào vùng 666m quanh điểm hồi sinh. Chỉ kích hoạt khi bước vào vùng.
 task.spawn(function()
 	while ST.alive do
 		task.wait(CFG.B10_CHECK_INTERVAL)
@@ -1447,23 +1297,16 @@ task.spawn(function()
 					elseif (now - ST.stealStartedAt) >= CFG.STEAL_MAX_TIME then
 						ST.stealStartedAt = now
 						forceJump(hum)
+						ST.stealMove = {stuckT = 0, lastPos = nil}
 						hum:MoveTo(ST.stealReturnPos)
 					else
-						ST.stealStuckT, ST.stealLastPos, ST.stealSidestepGoal, ST.stealSidestepUntil, ST.stealSideSign, ST.stealStreak =
-							moveWithAvoidance(
-								hum, root, ST.stealReturnPos, now,
-								ST.stealStuckT, ST.stealLastPos, ST.stealSidestepGoal, ST.stealSidestepUntil,
-								ST.stealSideSign, CFG.STEAL_STUCK_TIME, 1.6, ST.stealStreak
-							)
+						directMove(hum, root, ST.stealReturnPos, ST.stealMove)
 					end
 				else
 					if stealLine.beam then destroyStealLine() end
 
-					-- ưu tiên 1: biome 10
 					if ST.b10Phase then
 						runBiome10(hum, root)
-
-					-- ưu tiên 2: farm ore (đi thẳng, không né)
 					elseif not (ST.walkOn and ST.espOn) then
 						if ST.walkTarget then stopWalking() end
 					else
@@ -1513,7 +1356,6 @@ task.spawn(function()
 								ST.walkTarget = nil
 							end
 
-						-- chỗ đợi quặng: đi vòng tròn, đi thẳng
 						elseif ST.waitPos then
 							ST.waitAngle = (ST.waitAngle + CFG.WAIT_ANG_SPEED * 0.2 * ST.waitDir) % (math.pi * 2)
 							local goal = ST.waitPos + Vector3.new(math.cos(ST.waitAngle) * CFG.WAIT_RADIUS, 0, math.sin(ST.waitAngle) * CFG.WAIT_RADIUS)
@@ -1526,7 +1368,7 @@ task.spawn(function()
 	end
 end)
 
--- ===== auto swing: đập liên tục khi đang cầm cuốc, không cần quặng hay ESP =====
+-- ===== auto swing =====
 local lastSwingAt = 0
 local lastSwingEquipAt = 0
 
@@ -1539,7 +1381,6 @@ task.spawn(function()
 			if char and hum then
 				local tool = char:FindFirstChildOfClass("Tool")
 
-				-- chưa cầm cuốc thì tự cầm (giới hạn tần suất)
 				if not (tool and isPickaxe(tool)) then
 					local now = os.clock()
 					if now - lastSwingEquipAt >= 0.5 then
@@ -1551,7 +1392,6 @@ task.spawn(function()
 					end
 				end
 
-				-- đang cầm cuốc thì đập theo nhịp SWING_INTERVAL
 				tool = char:FindFirstChildOfClass("Tool")
 				if tool and isPickaxe(tool) then
 					local now = os.clock()
@@ -1565,7 +1405,7 @@ task.spawn(function()
 	end
 end)
 
--- ===== auto reconnect: bị kick / văng / mất mạng / rời game thì queue lại script và vào lại =====
+-- ===== auto reconnect =====
 local reconnecting = false
 
 local function rejoinLoop()
@@ -1590,7 +1430,6 @@ local function rejoinLoop()
 	end)
 end
 
--- bị kick / lỗi kết nối
 table.insert(conns, S.GuiService.ErrorMessageChanged:Connect(function(msg)
 	if ST.alive and reconnectOn and type(msg) == "string" and msg ~= "" then
 		queueRejoin()
@@ -1598,7 +1437,6 @@ table.insert(conns, S.GuiService.ErrorMessageChanged:Connect(function(msg)
 	end
 end))
 
--- người chơi bị rời game (mất kết nối, thoát ngoài ý muốn). Bỏ qua khi tự hop.
 table.insert(conns, S.Players.PlayerRemoving:Connect(function(p)
 	if p ~= LocalPlayer then return end
 	if ST.alive and reconnectOn and not ST.hopping then
@@ -1606,9 +1444,9 @@ table.insert(conns, S.Players.PlayerRemoving:Connect(function(p)
 	end
 end))
 
--- ===== GUI (Menu ngang hình chữ nhật + Fix chạm tab) =====
+-- ===== GUI =====
 local container = getContainer()
-for _, name in ipairs({"Huongcuto", "system ore💎"}) do
+for _, name in ipairs({"Huongcuo", "system ore💎"}) do
 	local old = container:FindFirstChild(name)
 	if old then pcall(function() old:Destroy() end) end
 end
@@ -2289,16 +2127,113 @@ for i, f in ipairs(FUNCS) do
 	end, true)
 end
 
+-- ===== chuyển tab có animation (đã sửa lệch) =====
+-- Lưu vị trí và độ trong suốt gốc của từng phần tử một lần duy nhất,
+-- mọi animation đều đưa về đúng giá trị gốc này nên không bị lệch khi chuyển nhiều lần.
+local tabBusy = false
+local baseState = {}
+
+local function captureBase(root)
+	if baseState[root] then return end
+	local list = {}
+	for _, d in ipairs(root:GetDescendants()) do
+		local rec = {obj = d}
+		if d:IsA("TextLabel") or d:IsA("TextButton") then
+			rec.text = d.TextTransparency
+			rec.bg = d.BackgroundTransparency
+		elseif d:IsA("Frame") or d:IsA("ImageLabel") then
+			rec.bg = d.BackgroundTransparency
+		elseif d:IsA("UIStroke") then
+			rec.stroke = d.Transparency
+		end
+		table.insert(list, rec)
+	end
+	baseState[root] = {pos = root.Position, items = list}
+end
+
+local function restoreBase(root)
+	local b = baseState[root]
+	if not b then return end
+	root.Position = b.pos
+	for _, rec in ipairs(b.items) do
+		local d = rec.obj
+		if d and d.Parent then
+			if rec.text ~= nil then d.TextTransparency = rec.text end
+			if rec.bg ~= nil then d.BackgroundTransparency = rec.bg end
+			if rec.stroke ~= nil then d.Transparency = rec.stroke end
+		end
+	end
+end
+
+local function fadeTree(root, alpha)
+	-- alpha 0 = gốc (hiện rõ), 1 = ẩn hết. Luôn tính từ giá trị gốc đã lưu.
+	local b = baseState[root]
+	if not b then return end
+	for _, rec in ipairs(b.items) do
+		local d = rec.obj
+		if d and d.Parent then
+			if rec.text ~= nil then
+				tween(d, TWEEN.SMOOTH, {TextTransparency = rec.text + (1 - rec.text) * alpha})
+			end
+			if rec.bg ~= nil then
+				tween(d, TWEEN.SMOOTH, {BackgroundTransparency = rec.bg + (1 - rec.bg) * alpha})
+			end
+			if rec.stroke ~= nil then
+				tween(d, TWEEN.SMOOTH, {Transparency = rec.stroke + (1 - rec.stroke) * alpha})
+			end
+		end
+	end
+end
+
+captureBase(mainBody)
+captureBase(quickScroller)
+
+local function tabColor(isOn)
+	return isOn and Color3.fromRGB(60, 60, 80) or Color3.fromRGB(28, 28, 36)
+end
+
 local function selectTab(name)
+	if tabBusy then return end
 	local isMain = name == "main"
-	mainBody.Visible = isMain
-	quickScroller.Visible = not isMain
-	tabMain.BackgroundColor3 = isMain and Color3.fromRGB(60, 60, 80) or Color3.fromRGB(28, 28, 36)
-	tabQuick.BackgroundColor3 = (not isMain) and Color3.fromRGB(60, 60, 80) or Color3.fromRGB(28, 28, 36)
+	local fromBody = mainBody.Visible and mainBody or quickScroller
+	local toBody = isMain and mainBody or quickScroller
+
+	tween(tabMain, TWEEN.SMOOTH, {BackgroundColor3 = tabColor(isMain)})
+	tween(tabQuick, TWEEN.SMOOTH, {BackgroundColor3 = tabColor(not isMain)})
+
+	if fromBody == toBody then return end
+	tabBusy = true
+
+	local base = baseState[fromBody].pos
+	tween(fromBody, TWEEN.FAST, {Position = base + UDim2.fromOffset(-40, 0)})
+	fadeTree(fromBody, 1)
+
+	task.delay(0.18, function()
+		fromBody.Visible = false
+		restoreBase(fromBody)
+
+		toBody.Visible = true
+		local target = baseState[toBody].pos
+		toBody.Position = target + UDim2.fromOffset(40, 0)
+		fadeTree(toBody, 1)
+		task.wait()
+		restoreBase(toBody)
+		toBody.Position = target + UDim2.fromOffset(40, 0)
+		fadeTree(toBody, 1)
+		task.wait()
+		fadeTree(toBody, 0)
+		tween(toBody, TWEEN.SMOOTH, {Position = target})
+
+		task.delay(0.28, function()
+			restoreBase(toBody)
+			tabBusy = false
+		end)
+	end)
 end
 tabMain.Activated:Connect(function() selectTab("main") end)
 tabQuick.Activated:Connect(function() selectTab("quick") end)
-selectTab("main")
+mainBody.Visible = true
+quickScroller.Visible = false
 
 -- ===== thông báo =====
 UI.notif = Instance.new("Frame")
@@ -2369,7 +2304,6 @@ UI.notifyStatus = function(msg, col)
 end
 
 -- ===== mở/đóng và kéo =====
--- header ZIndex 21 nằm dưới expandedGroup (22) nên tab/nút luôn nhận chạm trước.
 local header = Instance.new("TextButton")
 header.Name = "HeaderDrag"
 header.Size = UDim2.fromOffset(CFG.ICON_SIZE, CFG.ICON_SIZE)
@@ -2426,7 +2360,7 @@ table.insert(conns, S.UIS.InputEnded:Connect(function(input)
 	end
 end))
 
--- ===== loading 2s =====
+-- ===== loading: thu về đúng vị trí island rồi biến mất =====
 local loadFrame = Instance.new("Frame")
 loadFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 loadFrame.Position = UDim2.fromScale(0.5, 0.5)
@@ -2435,11 +2369,13 @@ loadFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
 loadFrame.BackgroundTransparency = 0.05
 loadFrame.BorderSizePixel = 0
 loadFrame.ZIndex = 50
+loadFrame.ClipsDescendants = true
 loadFrame.Parent = UI.gui
-Instance.new("UICorner", loadFrame).CornerRadius = UDim.new(0, 16)
-rainbowStroke(loadFrame, 2, 0)
+local loadCorner = Instance.new("UICorner", loadFrame)
+loadCorner.CornerRadius = UDim.new(0, 16)
+local loadStroke = rainbowStroke(loadFrame, 2, 0)
 
-mkLabel(loadFrame, {Text = "💎 " .. SCRIPT_NAME, Font = Enum.Font.GothamBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Center, Position = UDim2.fromOffset(10, 10), Size = UDim2.new(1, -20, 0, 20), ZIndex = 51})
+local loadTitle = mkLabel(loadFrame, {Text = "💎 " .. SCRIPT_NAME, Font = Enum.Font.GothamBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Center, Position = UDim2.fromOffset(10, 10), Size = UDim2.new(1, -20, 0, 20), ZIndex = 51})
 local loadSub = mkLabel(loadFrame, {Text = "đang khởi tạo...", TextSize = 11, TextColor3 = Color3.fromRGB(175, 175, 190), TextXAlignment = Enum.TextXAlignment.Center, Position = UDim2.fromOffset(10, 30), Size = UDim2.new(1, -20, 0, 14), ZIndex = 51})
 
 local barBg = Instance.new("Frame")
@@ -2459,6 +2395,30 @@ barFill.ZIndex = 52
 barFill.Parent = barBg
 Instance.new("UICorner", barFill).CornerRadius = UDim.new(1, 0)
 rainbowFill(barFill)
+
+local function collapseLoadingIntoIsland()
+	-- thu khung loading về đúng vị trí island rồi ẩn
+	local ix, iy = currentPos()
+	local target = UDim2.fromOffset(ix + CFG.ICON_SIZE / 2, iy + CFG.ICON_SIZE / 2)
+	local tw1 = tween(loadFrame, TWEEN.COLLAPSE, {
+		Position = target,
+		Size = UDim2.fromOffset(CFG.ICON_SIZE, CFG.ICON_SIZE),
+		BackgroundTransparency = 0,
+	})
+	tween(loadCorner, TWEEN.COLLAPSE, {CornerRadius = UDim.new(0, 14)})
+	tween(loadTitle, TWEEN.FAST, {TextTransparency = 1})
+	tween(loadSub, TWEEN.FAST, {TextTransparency = 1})
+	tween(barBg, TWEEN.FAST, {BackgroundTransparency = 1})
+	tween(barFill, TWEEN.FAST, {BackgroundTransparency = 1})
+	tween(loadStroke, TWEEN.FAST, {Transparency = 1})
+	if tw1 then
+		tw1.Completed:Connect(function()
+			pcall(function() loadFrame:Destroy() end)
+		end)
+	else
+		task.delay(0.5, function() pcall(function() loadFrame:Destroy() end) end)
+	end
+end
 
 for _, id in ipairs(wantPins) do
 	if quickToggles[id] and pinnedCount() < CFG.QUICK_MAX then quickToggles[id].set(true) end
@@ -2529,16 +2489,14 @@ local function refreshUI()
 			if e.beam then e.beam.Enabled = inR end
 		end
 
-		-- HP đọc theo chu kỳ HP_REFRESH để đỡ tốn tài nguyên
 		if now - (e.hpAt or 0) >= CFG.HP_REFRESH then
 			e.hpAt = now
 			local cur, mx = readOreHp(e.target)
 			e.hpText = formatHp(cur, mx)
 		end
 
-		e.lbl.Text = e.ore.label
-			.. "  " .. (e.hpText or "HP ?")
-			.. (d and ("  " .. math.floor(d) .. "m") or "")
+		local hpLine = e.hpText or "HP ?"
+		e.lbl.Text = e.ore.label .. "  " .. hpLine .. (d and ("  " .. math.floor(d) .. "m") or "")
 
 		if e.target and e.target.Parent then
 			for _, g in ipairs(e.target:GetDescendants()) do
@@ -2594,9 +2552,11 @@ task.spawn(function()
 	barFill.Size = UDim2.new(1, 0, 1, 0)
 	loadSub.Text = ST.reconnectedRun and "đã vào lại · bật lại script..." or "sẵn sàng!"
 	task.wait(0.15)
-	pcall(function() loadFrame:Destroy() end)
+
 	ST.uiReady = true
 	UI.island.Visible = true
+	collapseLoadingIntoIsland()
+
 	if ST.stealOn then
 		snapshotExistingTools()
 		refreshAllPrompts()
