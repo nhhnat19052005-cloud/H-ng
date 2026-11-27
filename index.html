@@ -1,4 +1,4 @@
--- Huongcuo (Delta Mobile Safe + Quick Key + Né/Nhảy/Đi vòng vật cản + Auto Steal + Chỉ chạy sau Loading + Line cầu vồng về điểm + Menu ngang + Auto Swing + Anti AFK + Auto Reconnect + Auto biome 10)
+-- Huongcuo (Delta Mobile Safe + Quick Key + Né/Nhảy/Đi vòng vật cản + Auto Steal + Chỉ chạy sau Loading + Line cầu vồng về điểm + Menu ngang + Auto Swing + Anti AFK + Auto Reconnect + Auto biome 10 + HP quặng)
 local S = {
 	Players = game:GetService("Players"),
 	RunService = game:GetService("RunService"),
@@ -50,12 +50,14 @@ local CFG = {
 	STEAL_COOLDOWN = 1.2,
 	QUICK_MAX = 3,
 	FILE = "huongcuo_config.json",
+	RECON_FLAG = "huongcuo_reconnect.flag",
 	LOADING_DURATION = 2,
 	BIOME_KEYWORD = "Cosmic Sanctuary",
 	BIOME_SCAN_INTERVAL = 10,
 	BIOME_PAD_Y = 50,
 	HOP_MAX_PLAYERS = 2,
 	HOP_COOLDOWN = 15,
+	-- link raw của chính script (GitHub raw / Pastebin raw). Cần điền để tự chạy lại khi disconnect.
 	REQUEUE_URL = "",
 	ON_COLOR = Color3.fromRGB(70, 210, 130),
 	OFF_COLOR = Color3.fromRGB(60, 60, 68),
@@ -72,6 +74,8 @@ local CFG = {
 	B10_REACH = 4,
 	B10_CHECK_INTERVAL = 0.25,
 	DIRECT_STUCK_TIME = 0.8,
+	HP_REFRESH = 0.5,
+	TAG_WIDTH = 190,
 }
 
 local TWEEN = {
@@ -159,6 +163,8 @@ local ST = {
 	-- di chuyển thẳng cho đi quặng và chỗ đợi
 	walkMove = {stuckT = 0, lastPos = nil},
 	waitMove = {stuckT = 0, lastPos = nil},
+	-- reconnect
+	reconnectedRun = false,
 }
 
 local oreOrder = {}
@@ -368,6 +374,76 @@ local function resolveOre(inst)
 	return oreTarget(inst)
 end
 
+-- ===== đọc HP quặng =====
+-- Thử lần lượt: attribute -> NumberValue cùng tên -> text dạng "cur/max" hoặc "HP cur" trên BillboardGui.
+-- Trả về cur, max (max có thể nil). Không đọc được thì trả nil.
+local HP_NAMES = {"Health", "HP", "Hp", "health", "Durability", "Durab"}
+local MAX_NAMES = {"MaxHealth", "MaxHP", "MaxHp", "maxHealth", "MaxDurability"}
+
+local function readOreHp(target)
+	if not target or not target.Parent then return nil end
+
+	local function fromAttributes(o)
+		for _, n in ipairs(HP_NAMES) do
+			local v = o:GetAttribute(n)
+			if type(v) == "number" then
+				local mx
+				for _, mn in ipairs(MAX_NAMES) do
+					local m = o:GetAttribute(mn)
+					if type(m) == "number" then mx = m break end
+				end
+				return v, mx
+			end
+		end
+		return nil
+	end
+
+	local cur, mx = fromAttributes(target)
+	if cur then return cur, mx end
+
+	local hpVal, maxVal
+	for _, d in ipairs(target:GetDescendants()) do
+		if d:IsA("NumberValue") or d:IsA("IntValue") then
+			local n = d.Name
+			for _, hn in ipairs(HP_NAMES) do
+				if n == hn and not hpVal then hpVal = d end
+			end
+			for _, mn in ipairs(MAX_NAMES) do
+				if n == mn and not maxVal then maxVal = d end
+			end
+		end
+	end
+	if hpVal then
+		return hpVal.Value, maxVal and maxVal.Value or nil
+	end
+
+	for _, d in ipairs(target:GetDescendants()) do
+		if d:IsA("BillboardGui") and not isOwnName(d) then
+			for _, t in ipairs(d:GetDescendants()) do
+				if (t:IsA("TextLabel") or t:IsA("TextButton")) and not isOwnName(t) then
+					local txt = t.Text
+					if type(txt) == "string" then
+						local a, b = string.match(txt, "(%d+)%s*/%s*(%d+)")
+						if a and b then return tonumber(a), tonumber(b) end
+						local c = string.match(txt, "[Hh][Pp]%s*:?%s*(%d+)")
+						if c then return tonumber(c), nil end
+					end
+				end
+			end
+		end
+	end
+
+	return nil
+end
+
+local function formatHp(cur, mx)
+	if cur == nil then return "HP ?" end
+	if mx and mx > 0 then
+		return string.format("%d/%d", math.floor(cur + 0.5), math.floor(mx + 0.5))
+	end
+	return string.format("HP %d", math.floor(cur + 0.5))
+end
+
 -- ===== config =====
 local function saveConfig()
 	if ST.restoring or typeof(writefile) ~= "function" then return end
@@ -410,8 +486,26 @@ local function loadConfig()
 	return (ok and type(res) == "table") and res or nil
 end
 
+-- kiểm tra lần chạy này có phải do reconnect/requeue không
+local function checkReconnectRun()
+	if _G.HUONGCUTO_RECONNECT == true then
+		_G.HUONGCUTO_RECONNECT = nil
+		return true
+	end
+	if typeof(isfile) == "function" and typeof(delfile) == "function" then
+		local ok, has = pcall(isfile, CFG.RECON_FLAG)
+		if ok and has then
+			pcall(delfile, CFG.RECON_FLAG)
+			return true
+		end
+	end
+	return false
+end
+
 local wantEsp, wantWalk, wantSteal, wantPins = false, false, false, {}
 do
+	ST.reconnectedRun = checkReconnectRun()
+
 	local saved = loadConfig()
 	if saved then
 		local ORE_KEYS = {}
@@ -644,7 +738,7 @@ local function track(target, ore)
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "SysOreTag"
 	bb.Adornee = part
-	bb.Size = UDim2.fromOffset(140 * ST.espScale, 22 * ST.espScale)
+	bb.Size = UDim2.fromOffset(CFG.TAG_WIDTH * ST.espScale, 22 * ST.espScale)
 	bb.StudsOffset = Vector3.new(0, 2.5, 0)
 	bb.AlwaysOnTop = true
 	bb.Parent = part
@@ -661,7 +755,7 @@ local function track(target, ore)
 	lbl.Parent = bb
 	Instance.new("UICorner", lbl).CornerRadius = UDim.new(0, 8)
 
-	local e = {hl = hl, bb = bb, lbl = lbl, part = part, ore = ore, inRange = true, target = target, hidden = {}}
+	local e = {hl = hl, bb = bb, lbl = lbl, part = part, ore = ore, inRange = true, target = target, hidden = {}, hpText = "HP ?", hpAt = 0}
 	tracked[target] = e
 	ST.trackedCount = ST.trackedCount + 1
 	trackedPerKey[ore.key] = (trackedPerKey[ore.key] or 0) + 1
@@ -804,6 +898,18 @@ task.spawn(function()
 	end
 end)
 
+-- ===== requeue: tự chạy lại script sau khi teleport / reconnect =====
+-- Lưu config và đánh dấu cờ reconnect trước khi queue, để lần chạy sau tự bật lại các toggle.
+local function queueRejoin()
+	if CFG.REQUEUE_URL == "" then return end
+	if typeof(queue_on_teleport) ~= "function" then return end
+	saveConfig()
+	pcall(function()
+		if typeof(writefile) == "function" then writefile(CFG.RECON_FLAG, "1") end
+	end)
+	pcall(queue_on_teleport, '_G.HUONGCUTO_RECONNECT = true\nloadstring(game:HttpGet("' .. CFG.REQUEUE_URL .. '"))()')
+end
+
 -- ===== hop server =====
 local function httpGet(url)
 	local req = request or http_request or (syn and syn.request)
@@ -851,9 +957,7 @@ local function hopServer()
 		task.wait(0.5)
 		ST.statusText = "đang chuyển…"
 		if UI.notifyStatus then UI.notifyStatus("đang chuyển…", Color3.fromRGB(255, 195, 70)) end
-		if CFG.REQUEUE_URL ~= "" and typeof(queue_on_teleport) == "function" then
-			pcall(queue_on_teleport, 'loadstring(game:HttpGet("' .. CFG.REQUEUE_URL .. '"))()')
-		end
+		queueRejoin()
 		local ok = pcall(function() S.TeleportService:TeleportToPlaceInstance(game.PlaceId, id, LocalPlayer) end)
 		if not ok then
 			ST.statusText = "teleport lỗi"
@@ -1461,14 +1565,8 @@ task.spawn(function()
 	end
 end)
 
--- ===== auto reconnect: bị kick / văng / mất mạng thì tự vào lại =====
+-- ===== auto reconnect: bị kick / văng / mất mạng / rời game thì queue lại script và vào lại =====
 local reconnecting = false
-
-local function queueRejoin()
-	if CFG.REQUEUE_URL ~= "" and typeof(queue_on_teleport) == "function" then
-		pcall(queue_on_teleport, 'loadstring(game:HttpGet("' .. CFG.REQUEUE_URL .. '"))()')
-	end
-end
 
 local function rejoinLoop()
 	if reconnecting then return end
@@ -1492,9 +1590,19 @@ local function rejoinLoop()
 	end)
 end
 
+-- bị kick / lỗi kết nối
 table.insert(conns, S.GuiService.ErrorMessageChanged:Connect(function(msg)
 	if ST.alive and reconnectOn and type(msg) == "string" and msg ~= "" then
+		queueRejoin()
 		rejoinLoop()
+	end
+end))
+
+-- người chơi bị rời game (mất kết nối, thoát ngoài ý muốn). Bỏ qua khi tự hop.
+table.insert(conns, S.Players.PlayerRemoving:Connect(function(p)
+	if p ~= LocalPlayer then return end
+	if ST.alive and reconnectOn and not ST.hopping then
+		queueRejoin()
 	end
 end))
 
@@ -1933,6 +2041,13 @@ local function mkStepBtn(y, text, xOff)
 	return b
 end
 
+local function applyTagScale()
+	for _, e in pairs(tracked) do
+		e.bb.Size = UDim2.fromOffset(CFG.TAG_WIDTH * ST.espScale, 22 * ST.espScale)
+		e.lbl.TextSize = math.max(6, math.floor(13 * ST.espScale + 0.5))
+	end
+end
+
 mkLabel(rightPane, {Text = "Kích thước ESP", Font = Enum.Font.GothamBold, TextSize = 12, Position = UDim2.fromOffset(6, SIZE_Y), Size = UDim2.new(0.52, 0, 0, 24), ZIndex = 25})
 local sizeMinus = mkStepBtn(SIZE_Y, "-", -76)
 local sizePlus = mkStepBtn(SIZE_Y, "+", -8)
@@ -1940,19 +2055,13 @@ UI.sizeValLbl = mkLabel(rightPane, {Text = string.format("%.1fx", ST.espScale), 
 sizeMinus.Activated:Connect(function()
 	ST.espScale = math.clamp(math.floor((ST.espScale - CFG.SIZE_STEP) * 10 + 0.5) / 10, CFG.SIZE_MIN, CFG.SIZE_MAX)
 	UI.sizeValLbl.Text = string.format("%.1fx", ST.espScale)
-	for _, e in pairs(tracked) do
-		e.bb.Size = UDim2.fromOffset(140 * ST.espScale, 22 * ST.espScale)
-		e.lbl.TextSize = math.max(6, math.floor(13 * ST.espScale + 0.5))
-	end
+	applyTagScale()
 	saveConfig()
 end)
 sizePlus.Activated:Connect(function()
 	ST.espScale = math.clamp(math.floor((ST.espScale + CFG.SIZE_STEP) * 10 + 0.5) / 10, CFG.SIZE_MIN, CFG.SIZE_MAX)
 	UI.sizeValLbl.Text = string.format("%.1fx", ST.espScale)
-	for _, e in pairs(tracked) do
-		e.bb.Size = UDim2.fromOffset(140 * ST.espScale, 22 * ST.espScale)
-		e.lbl.TextSize = math.max(6, math.floor(13 * ST.espScale + 0.5))
-	end
+	applyTagScale()
 	saveConfig()
 end)
 
@@ -2409,6 +2518,7 @@ local function refreshUI()
 		end
 	end
 
+	local now = os.clock()
 	for _, e in pairs(tracked) do
 		local d = distanceTo(e.part)
 		local inR = (d == nil or d <= ST.maxDist)
@@ -2418,7 +2528,18 @@ local function refreshUI()
 			if e.bb then e.bb.Enabled = inR end
 			if e.beam then e.beam.Enabled = inR end
 		end
-		e.lbl.Text = e.ore.label .. (d and ("  " .. math.floor(d) .. "m") or "")
+
+		-- HP đọc theo chu kỳ HP_REFRESH để đỡ tốn tài nguyên
+		if now - (e.hpAt or 0) >= CFG.HP_REFRESH then
+			e.hpAt = now
+			local cur, mx = readOreHp(e.target)
+			e.hpText = formatHp(cur, mx)
+		end
+
+		e.lbl.Text = e.ore.label
+			.. "  " .. (e.hpText or "HP ?")
+			.. (d and ("  " .. math.floor(d) .. "m") or "")
+
 		if e.target and e.target.Parent then
 			for _, g in ipairs(e.target:GetDescendants()) do
 				if g:IsA("BillboardGui") and g.Enabled and not isOwnName(g) then
@@ -2471,7 +2592,7 @@ task.spawn(function()
 	end
 	if not ST.alive then return end
 	barFill.Size = UDim2.new(1, 0, 1, 0)
-	loadSub.Text = "sẵn sàng!"
+	loadSub.Text = ST.reconnectedRun and "đã vào lại · bật lại script..." or "sẵn sàng!"
 	task.wait(0.15)
 	pcall(function() loadFrame:Destroy() end)
 	ST.uiReady = true
@@ -2482,6 +2603,9 @@ task.spawn(function()
 	end
 	if ST.espOn then
 		startESP()
+	end
+	if ST.reconnectedRun and UI.notifyStatus then
+		UI.notifyStatus("auto reconnect: đã bật lại script", Color3.fromRGB(70, 210, 130))
 	end
 	refreshQuickBarVis()
 	refreshUI()
