@@ -1,4 +1,4 @@
--- Huongcuto (Delta Mobile Safe + Quick Key + Né/Nhảy vật cản + Auto Steal + Chỉ chạy sau Loading + Line cầu vồng về điểm + Menu ngang + Fix chạm tab + Auto đánh + Kéo quick bar)
+-- Huongcuo (Delta Mobile Safe + Quick Key + Né/Nhảy/Đi vòng vật cản + Auto Steal + Chỉ chạy sau Loading + Line cầu vồng về điểm + Menu ngang + Auto Swing + Anti AFK + Auto Reconnect + Auto biome 10)
 local S = {
 	Players = game:GetService("Players"),
 	RunService = game:GetService("RunService"),
@@ -9,10 +9,11 @@ local S = {
 	HttpService = game:GetService("HttpService"),
 	TeleportService = game:GetService("TeleportService"),
 	ProximityPromptService = game:GetService("ProximityPromptService"),
+	VirtualUser = game:GetService("VirtualUser"),
 }
 
 local LocalPlayer = S.Players.LocalPlayer
-local SCRIPT_NAME = "Huongcuto"
+local SCRIPT_NAME = "Huongcuo"
 
 local CFG = {
 	MAX_TRACKED = 300,
@@ -21,14 +22,11 @@ local CFG = {
 	RESCAN_INTERVAL = 3,
 	UI_INTERVAL = 0.25,
 	EQUIP_INTERVAL = 0.5,
-	ATTACK_INTERVAL = 0.2,
 	NOTIF_DURATION = 1,
 	DRAG_THRESHOLD = 6,
 	NOTIF_WIDTH = 240,
 	ICON_SIZE = 52,
 	EXPANDED_VEC = Vector2.new(480, 252),
-	QUICK_WIDTH = 174,
-	QUICK_HANDLE_H = 16,
 	SIZE_MIN = 0.1,
 	SIZE_MAX = 2.0,
 	SIZE_STEP = 0.1,
@@ -51,7 +49,7 @@ local CFG = {
 	STEAL_STUCK_TIME = 0.9,
 	STEAL_COOLDOWN = 1.2,
 	QUICK_MAX = 3,
-	FILE = "huongcuto_config.json",
+	FILE = "huongcuo_config.json",
 	LOADING_DURATION = 2,
 	BIOME_KEYWORD = "Cosmic Sanctuary",
 	BIOME_SCAN_INTERVAL = 10,
@@ -61,6 +59,19 @@ local CFG = {
 	REQUEUE_URL = "",
 	ON_COLOR = Color3.fromRGB(70, 210, 130),
 	OFF_COLOR = Color3.fromRGB(60, 60, 68),
+	SWING_INTERVAL = 0.25,
+	SWING_LOOP_WAIT = 0.05,
+	AFK_INTERVAL = 90,
+	RECON_FIRST_DELAY = 3,
+	RECON_RETRY_DELAY = 8,
+	DETOUR_LENGTH = 12,
+	DETOUR_DIST = 10,
+	DETOUR_HOLD = 1.5,
+	B10_WAYPOINT = Vector3.new(-827, 64, -666),
+	B10_ZONE_RADIUS = 666,
+	B10_REACH = 4,
+	B10_CHECK_INTERVAL = 0.25,
+	DIRECT_STUCK_TIME = 0.8,
 }
 
 local TWEEN = {
@@ -93,7 +104,7 @@ local ST = {
 	espOn = false,
 	scanDone = false,
 	autoEquipOn = true,
-	attackOn = false,
+	swingOn = true,
 	walkOn = false,
 	stealOn = false,
 	returningSteal = false,
@@ -127,23 +138,27 @@ local ST = {
 	qHead = 1,
 	qTail = 0,
 	walkTarget = nil,
-	walkLastPos = nil,
-	walkStuckT = 0,
 	walkAge = 0,
 	walkSidestepUntil = 0,
 	walkSidestepGoal = nil,
 	walkSideSign = 1,
-	waitLastPos = nil,
-	waitStuckT = 0,
-	waitSidestepUntil = 0,
-	waitSidestepGoal = nil,
+	walkStuckT = 0,
+	walkLastPos = nil,
 	lastJumpAt = 0,
 	expanded = false,
 	curSize = Vector2.new(CFG.ICON_SIZE, CFG.ICON_SIZE),
 	squareX = 0,
 	squareY = 0,
-	quickX = nil,
-	quickY = nil,
+	-- auto biome 10
+	b10On = false,
+	b10SpawnPos = nil,
+	b10Phase = nil,
+	b10Run = false,
+	b10Inside = false,
+	b10Move = {stuckT = 0, lastPos = nil},
+	-- di chuyển thẳng cho đi quặng và chỗ đợi
+	walkMove = {stuckT = 0, lastPos = nil},
+	waitMove = {stuckT = 0, lastPos = nil},
 }
 
 local oreOrder = {}
@@ -157,7 +172,10 @@ local stealLine = {part = nil, att1 = nil, beam = nil, grad = nil}
 local conns, rainbowGrads = {}, {}
 local pills, FUNC_BY_ID = {}, {}
 local UI = {}
+local antiAfkOn, reconnectOn = true, true
 local setWaitPos -- khai báo trước để các callback GUI gọi được
+local setB10Spawn
+local cancelBiome10
 
 for i, o in ipairs(ORES) do
 	oreOrder[i] = o.key
@@ -266,6 +284,12 @@ local function getRoot()
 	return char and char:FindFirstChild("HumanoidRootPart")
 end
 
+local function getHum()
+	local char = LocalPlayer.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	return (hum and hum.Health > 0) and hum or nil
+end
+
 local function distanceTo(part)
 	local root = getRoot()
 	if not (root and part and part.Parent) then return nil end
@@ -357,7 +381,10 @@ local function saveConfig()
 		walk = ST.walkOn,
 		steal = ST.stealOn,
 		auto = ST.autoEquipOn,
-		attack = ST.attackOn,
+		swing = ST.swingOn,
+		biome10 = ST.b10On,
+		afk = antiAfkOn,
+		reconnect = reconnectOn,
 		scale = ST.espScale,
 		dist = ST.maxDist,
 		pins = pinList,
@@ -368,8 +395,8 @@ local function saveConfig()
 	if ST.stealReturnPos then
 		data.stealPos = {x = ST.stealReturnPos.X, y = ST.stealReturnPos.Y, z = ST.stealReturnPos.Z}
 	end
-	if ST.quickX and ST.quickY then
-		data.quick = {x = ST.quickX, y = ST.quickY}
+	if ST.b10SpawnPos then
+		data.b10Spawn = {x = ST.b10SpawnPos.X, y = ST.b10SpawnPos.Y, z = ST.b10SpawnPos.Z}
 	end
 	pcall(function() writefile(CFG.FILE, S.HttpService:JSONEncode(data)) end)
 end
@@ -383,7 +410,7 @@ local function loadConfig()
 	return (ok and type(res) == "table") and res or nil
 end
 
-local wantEsp, wantWalk, wantSteal, wantAttack, wantPins = false, false, false, false, {}
+local wantEsp, wantWalk, wantSteal, wantPins = false, false, false, {}
 do
 	local saved = loadConfig()
 	if saved then
@@ -410,10 +437,13 @@ do
 		if type(saved.scale) == "number" then ST.espScale = math.clamp(saved.scale, CFG.SIZE_MIN, CFG.SIZE_MAX) end
 		if type(saved.dist) == "number" then ST.maxDist = math.clamp(saved.dist, CFG.DIST_MIN, CFG.DIST_MAX) end
 		if type(saved.auto) == "boolean" then ST.autoEquipOn = saved.auto end
+		if type(saved.swing) == "boolean" then ST.swingOn = saved.swing end
+		if type(saved.biome10) == "boolean" then ST.b10On = saved.biome10 end
+		if type(saved.afk) == "boolean" then antiAfkOn = saved.afk end
+		if type(saved.reconnect) == "boolean" then reconnectOn = saved.reconnect end
 		wantEsp = saved.esp == true
 		wantWalk = saved.walk == true
 		wantSteal = saved.steal == true
-		wantAttack = saved.attack == true
 		if type(saved.pins) == "table" then
 			for _, id in ipairs(saved.pins) do
 				if type(id) == "string" then table.insert(wantPins, id) end
@@ -427,9 +457,9 @@ do
 		if type(sp) == "table" and type(sp.x) == "number" and type(sp.y) == "number" and type(sp.z) == "number" then
 			ST.stealReturnPos = Vector3.new(sp.x, sp.y, sp.z)
 		end
-		local q = saved.quick
-		if type(q) == "table" and type(q.x) == "number" and type(q.y) == "number" then
-			ST.quickX, ST.quickY = q.x, q.y
+		local bs = saved.b10Spawn
+		if type(bs) == "table" and type(bs.x) == "number" and type(bs.y) == "number" and type(bs.z) == "number" then
+			ST.b10SpawnPos = Vector3.new(bs.x, bs.y, bs.z)
 		end
 	end
 end
@@ -873,24 +903,34 @@ task.spawn(function()
 	end
 end)
 
--- ===== auto đánh khi cầm pickaxe =====
+-- ===== anti AFK =====
+-- Roblox kick sau ~20 phút không thao tác. Xử lý 2 lớp: sự kiện Idled + nhảy nhẹ định kỳ khi đang đứng yên.
+table.insert(conns, LocalPlayer.Idled:Connect(function()
+	if not (ST.alive and antiAfkOn) then return end
+	pcall(function()
+		S.VirtualUser:CaptureController()
+		S.VirtualUser:ClickButton2(Vector2.new())
+	end)
+end))
+
 task.spawn(function()
 	while ST.alive do
-		task.wait(CFG.ATTACK_INTERVAL)
-		if ST.uiReady and ST.attackOn and not ST.returningSteal then
+		task.wait(CFG.AFK_INTERVAL)
+		if ST.uiReady and antiAfkOn and not ST.returningSteal and not ST.walkOn and not ST.b10Phase then
 			local char = LocalPlayer.Character
 			local hum = char and char:FindFirstChildOfClass("Humanoid")
 			if hum and hum.Health > 0 then
-				local tool = char:FindFirstChildOfClass("Tool")
-				if tool and isPickaxe(tool) then
-					pcall(function() tool:Activate() end)
-				end
+				pcall(function() hum.Jump = true end)
 			end
+			pcall(function()
+				S.VirtualUser:CaptureController()
+				S.VirtualUser:ClickButton2(Vector2.new())
+			end)
 		end
 	end
 end)
 
--- ===== né / nhảy qua vật cản =====
+-- ===== né / nhảy / đi vòng qua vật cản (dùng cho auto steal) =====
 local function forceJump(hum)
 	if not hum then return end
 	local now = os.clock()
@@ -900,22 +940,27 @@ local function forceJump(hum)
 	pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
 end
 
-local function hasObstacleAhead(root, goalPos)
-	if not root then return false, false end
-	local flatDiff = Vector3.new(goalPos.X - root.Position.X, 0, goalPos.Z - root.Position.Z)
-	if flatDiff.Magnitude < 0.5 then return false, false end
-	local dir = flatDiff.Unit
-
+local function avoidParams()
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	local ignoreList = {}
 	if UI.gui then table.insert(ignoreList, UI.gui) end
 	if stealLine.part then table.insert(ignoreList, stealLine.part) end
 	if LocalPlayer.Character then table.insert(ignoreList, LocalPlayer.Character) end
+	if ST.walkTarget then table.insert(ignoreList, ST.walkTarget) end
 	for _, p in ipairs(S.Players:GetPlayers()) do
 		if p.Character then table.insert(ignoreList, p.Character) end
 	end
 	params.FilterDescendantsInstances = ignoreList
+	return params
+end
+
+local function hasObstacleAhead(root, goalPos)
+	if not root then return false, false end
+	local flatDiff = Vector3.new(goalPos.X - root.Position.X, 0, goalPos.Z - root.Position.Z)
+	if flatDiff.Magnitude < 0.5 then return false, false end
+	local dir = flatDiff.Unit
+	local params = avoidParams()
 
 	local lowHit = workspace:Raycast(root.Position - Vector3.new(0, 1.4, 0), dir * 4.2, params)
 	local midHit = workspace:Raycast(root.Position + Vector3.new(0, 0.4, 0), dir * 4.2, params)
@@ -924,6 +969,37 @@ local function hasObstacleAhead(root, goalPos)
 
 	local highHit = workspace:Raycast(root.Position + Vector3.new(0, 4.0, 0), dir * 4.2, params)
 	return true, highHit == nil
+end
+
+local DETOUR_ANGLES = {20, -20, 40, -40, 60, -60, 80, -80, 100, -100, 125, -125, 150, -150}
+
+local function findClearPoint(root, goalPos)
+	if not root then return nil end
+	local flat = Vector3.new(goalPos.X - root.Position.X, 0, goalPos.Z - root.Position.Z)
+	if flat.Magnitude < 0.5 then return nil end
+	local fwd = flat.Unit
+	local params = avoidParams()
+	local pos = root.Position
+
+	for _, deg in ipairs(DETOUR_ANGLES) do
+		local rad = math.rad(deg)
+		local dir = Vector3.new(
+			fwd.X * math.cos(rad) - fwd.Z * math.sin(rad),
+			0,
+			fwd.X * math.sin(rad) + fwd.Z * math.cos(rad)
+		)
+		local clear = true
+		for _, h in ipairs({-1.4, 0.4, 1.8}) do
+			if workspace:Raycast(pos + Vector3.new(0, h, 0), dir * CFG.DETOUR_LENGTH, params) then
+				clear = false
+				break
+			end
+		end
+		if clear then
+			return pos + dir * CFG.DETOUR_DIST
+		end
+	end
+	return nil
 end
 
 local function sidestepGoal(root, goalPos, dirSign, stepDist)
@@ -1089,13 +1165,7 @@ task.spawn(function()
 	end
 end)
 
--- ===== auto farm ore + chỗ đợi quặng + chạy về khi steal =====
-local function getHum()
-	local char = LocalPlayer.Character
-	local hum = char and char:FindFirstChildOfClass("Humanoid")
-	return (hum and hum.Health > 0) and hum or nil
-end
-
+-- ===== auto farm ore + chỗ đợi quặng =====
 local function eligible(e)
 	return e and e.part and e.part.Parent and e.inRange ~= false and e.beam ~= nil
 end
@@ -1124,14 +1194,32 @@ local function pickBestOre()
 end
 
 local function stopWalking()
-	ST.walkTarget, ST.walkLastPos, ST.walkStuckT, ST.walkAge = nil, nil, 0, 0
+	ST.walkTarget, ST.walkAge = nil, 0
 	ST.walkSidestepUntil, ST.walkSidestepGoal = 0, nil
-	ST.waitLastPos, ST.waitStuckT, ST.waitSidestepUntil, ST.waitSidestepGoal = nil, 0, 0, nil
+	ST.walkMove = {stuckT = 0, lastPos = nil}
+	ST.waitMove = {stuckT = 0, lastPos = nil}
 	local hum, root = getHum(), getRoot()
 	if hum and root then hum:MoveTo(root.Position) end
 end
 
+-- Đi thẳng tới đích, không né. Chỉ nhảy khi đứng yên quá lâu.
+local function directMove(hum, root, goal, mv)
+	if mv.lastPos and (root.Position - mv.lastPos).Magnitude < 0.4 then
+		mv.stuckT = mv.stuckT + 0.2
+	else
+		mv.stuckT = 0
+	end
+	mv.lastPos = root.Position
+	if mv.stuckT >= CFG.DIRECT_STUCK_TIME then
+		forceJump(hum)
+		mv.stuckT = 0
+	end
+	hum:MoveTo(goal)
+end
+
+-- Đi có né, chỉ dùng cho auto steal
 local function moveWithAvoidance(hum, root, goal, now, stuckT, lastPos, sidestepGoalRef, sidestepUntilRef, sideSign, stuckLimit, sidestepDur, streakRef)
+	sideSign = sideSign or 1
 	if hum.WalkSpeed <= 0 then hum.WalkSpeed = 16 end
 	local movedFlat = lastPos and Vector3.new(root.Position.X - lastPos.X, 0, root.Position.Z - lastPos.Z).Magnitude or 999
 	local moved3D = lastPos and (root.Position - lastPos).Magnitude or 999
@@ -1143,9 +1231,19 @@ local function moveWithAvoidance(hum, root, goal, now, stuckT, lastPos, sidestep
 	end
 	lastPos = root.Position
 
-	local activeGoal = (sidestepGoalRef and now < sidestepUntilRef) and sidestepGoalRef or goal
+	local detourActive = sidestepGoalRef and now < sidestepUntilRef
+	local activeGoal = detourActive and sidestepGoalRef or goal
 	local blocked, canJump = hasObstacleAhead(root, activeGoal)
-	if blocked and canJump then forceJump(hum) end
+
+	if blocked and canJump then
+		forceJump(hum)
+	elseif blocked and not canJump and not detourActive then
+		local clear = findClearPoint(root, goal)
+		if clear then
+			sidestepGoalRef = clear
+			sidestepUntilRef = now + CFG.DETOUR_HOLD
+		end
+	end
 
 	if stuckT >= stuckLimit then
 		forceJump(hum)
@@ -1171,6 +1269,63 @@ local function moveWithAvoidance(hum, root, goal, now, stuckT, lastPos, sidestep
 	return stuckT, lastPos, sidestepGoalRef, sidestepUntilRef, sideSign, streakRef
 end
 
+-- ===== auto biome 10 =====
+-- Khi bước vào vùng bán kính B10_ZONE_RADIUS (666m) quanh điểm hồi sinh thì chạy thẳng tới waypoint.
+-- Tới waypoint là kết thúc biome 10, farm ore chạy tiếp (không đi tới chỗ đợi).
+local function resetB10Movement()
+	ST.b10Move = {stuckT = 0, lastPos = nil}
+	ST.b10Run = false
+end
+
+cancelBiome10 = function(msg)
+	ST.b10Phase = nil
+	resetB10Movement()
+	local hum, root = getHum(), getRoot()
+	if hum and root then hum:MoveTo(root.Position) end
+	if msg and UI.notifyStatus then UI.notifyStatus(msg, Color3.fromRGB(255, 195, 70)) end
+end
+
+local function runBiome10(hum, root)
+	local flat = Vector3.new(CFG.B10_WAYPOINT.X - root.Position.X, 0, CFG.B10_WAYPOINT.Z - root.Position.Z).Magnitude
+	if flat <= CFG.B10_REACH then
+		-- tới waypoint là kết thúc biome 10, farm ore sẽ chạy tiếp
+		ST.b10Phase = nil
+		resetB10Movement()
+		hum:MoveTo(root.Position)
+		if UI.notifyStatus then
+			UI.notifyStatus("auto biome 10: xong, chuyển sang farm ore", Color3.fromRGB(160, 210, 255))
+		end
+		return
+	end
+	directMove(hum, root, CFG.B10_WAYPOINT, ST.b10Move)
+end
+
+-- Theo dõi vào vùng 666m quanh điểm hồi sinh. Chỉ kích hoạt khi bước vào vùng.
+task.spawn(function()
+	while ST.alive do
+		task.wait(CFG.B10_CHECK_INTERVAL)
+		if ST.uiReady and ST.b10On and ST.b10SpawnPos then
+			local root = getRoot()
+			if root then
+				local inside = (root.Position - ST.b10SpawnPos).Magnitude <= CFG.B10_ZONE_RADIUS
+				if inside and not ST.b10Inside and not ST.b10Phase and not ST.returningSteal then
+					ST.b10Phase = "toWaypoint"
+					ST.b10Run = true
+					ST.b10Move = {stuckT = 0, lastPos = nil}
+					if UI.notifyStatus then UI.notifyStatus("auto biome 10: vào vùng 666m, chạy tới điểm biome", Color3.fromRGB(70, 210, 130)) end
+				end
+				ST.b10Inside = inside
+			end
+		end
+	end
+end)
+
+table.insert(conns, LocalPlayer.CharacterAdded:Connect(function()
+	ST.b10Inside = false
+	if ST.b10Phase then cancelBiome10() end
+end))
+
+-- ===== vòng điều khiển di chuyển chính =====
 task.spawn(function()
 	while ST.alive do
 		task.wait(0.2)
@@ -1199,14 +1354,19 @@ task.spawn(function()
 					end
 				else
 					if stealLine.beam then destroyStealLine() end
-					if not (ST.walkOn and ST.espOn) then
-						if ST.walkTarget or ST.waitLastPos then stopWalking() end
+
+					-- ưu tiên 1: biome 10
+					if ST.b10Phase then
+						runBiome10(hum, root)
+
+					-- ưu tiên 2: farm ore (đi thẳng, không né)
+					elseif not (ST.walkOn and ST.espOn) then
+						if ST.walkTarget then stopWalking() end
 					else
 						if ST.walkTarget then
 							local e = tracked[ST.walkTarget]
 							if not e or not ST.walkTarget:IsDescendantOf(workspace) or not eligible(e) or not inEspRange(e.part) then
 								ST.walkTarget = nil
-								ST.walkSidestepUntil = 0
 								hum:MoveTo(root.Position)
 							end
 						end
@@ -1215,52 +1375,45 @@ task.spawn(function()
 							local better = pickBestOre()
 							if better and better ~= ST.walkTarget and oreRank(tracked[better].ore.key) < oreRank(tracked[ST.walkTarget].ore.key) then
 								ST.walkTarget = better
-								ST.walkLastPos, ST.walkStuckT, ST.walkAge, ST.walkSidestepUntil = nil, 0, 0, 0
+								ST.walkMove = {stuckT = 0, lastPos = nil}
+								ST.walkAge = 0
 							end
 						end
 
 						if not ST.walkTarget then
 							ST.walkTarget = pickBestOre()
-							ST.walkLastPos, ST.walkStuckT, ST.walkAge, ST.walkSidestepUntil = nil, 0, 0, 0
+							ST.walkMove = {stuckT = 0, lastPos = nil}
+							ST.walkAge = 0
 						end
 
 						if ST.walkTarget then
-							ST.waitLastPos, ST.waitStuckT, ST.waitSidestepUntil = nil, 0, 0
 							local e = tracked[ST.walkTarget]
 							local part = e and e.part
 							if part and part.Parent then
 								local d = (root.Position - part.Position).Magnitude
 								if d <= CFG.WALK_REACH then
 									hum:MoveTo(root.Position)
-									ST.walkAge, ST.walkStuckT, ST.walkSidestepUntil = 0, 0, 0
+									ST.walkAge = 0
+									ST.walkMove = {stuckT = 0, lastPos = nil}
 								else
 									ST.walkAge = ST.walkAge + 0.2
 									if ST.walkAge >= CFG.WALK_GIVEUP then
 										walkSkip[ST.walkTarget] = now + CFG.WALK_SKIP_TIME
 										ST.walkTarget = nil
-										ST.walkSidestepUntil = 0
 										hum:MoveTo(root.Position)
 									else
-										ST.walkStuckT, ST.walkLastPos, ST.walkSidestepGoal, ST.walkSidestepUntil, ST.walkSideSign =
-											moveWithAvoidance(
-												hum, root, part.Position, now,
-												ST.walkStuckT, ST.walkLastPos, ST.walkSidestepGoal, ST.walkSidestepUntil,
-												ST.walkSideSign, CFG.WALK_STUCK_TIME, 1.4
-											)
+										directMove(hum, root, part.Position, ST.walkMove)
 									end
 								end
 							else
 								ST.walkTarget = nil
 							end
+
+						-- chỗ đợi quặng: đi vòng tròn, đi thẳng
 						elseif ST.waitPos then
 							ST.waitAngle = (ST.waitAngle + CFG.WAIT_ANG_SPEED * 0.2 * ST.waitDir) % (math.pi * 2)
 							local goal = ST.waitPos + Vector3.new(math.cos(ST.waitAngle) * CFG.WAIT_RADIUS, 0, math.sin(ST.waitAngle) * CFG.WAIT_RADIUS)
-							ST.waitStuckT, ST.waitLastPos, ST.waitSidestepGoal, ST.waitSidestepUntil, ST.waitDir =
-								moveWithAvoidance(
-									hum, root, goal, now,
-									ST.waitStuckT, ST.waitLastPos, ST.waitSidestepGoal, ST.waitSidestepUntil,
-									ST.waitDir, CFG.WAIT_STUCK_TIME, 1.3
-								)
+							directMove(hum, root, goal, ST.waitMove)
 						end
 					end
 				end
@@ -1268,6 +1421,82 @@ task.spawn(function()
 		end
 	end
 end)
+
+-- ===== auto swing: đập liên tục khi đang cầm cuốc, không cần quặng hay ESP =====
+local lastSwingAt = 0
+local lastSwingEquipAt = 0
+
+task.spawn(function()
+	while ST.alive do
+		task.wait(CFG.SWING_LOOP_WAIT)
+		if ST.uiReady and ST.swingOn then
+			local char = LocalPlayer.Character
+			local hum = getHum()
+			if char and hum then
+				local tool = char:FindFirstChildOfClass("Tool")
+
+				-- chưa cầm cuốc thì tự cầm (giới hạn tần suất)
+				if not (tool and isPickaxe(tool)) then
+					local now = os.clock()
+					if now - lastSwingEquipAt >= 0.5 then
+						lastSwingEquipAt = now
+						local pick = getPickaxe()
+						if pick and isPickaxe(pick) then
+							pcall(function() hum:EquipTool(pick) end)
+						end
+					end
+				end
+
+				-- đang cầm cuốc thì đập theo nhịp SWING_INTERVAL
+				tool = char:FindFirstChildOfClass("Tool")
+				if tool and isPickaxe(tool) then
+					local now = os.clock()
+					if now - lastSwingAt >= CFG.SWING_INTERVAL then
+						lastSwingAt = now
+						pcall(function() tool:Activate() end)
+					end
+				end
+			end
+		end
+	end
+end)
+
+-- ===== auto reconnect: bị kick / văng / mất mạng thì tự vào lại =====
+local reconnecting = false
+
+local function queueRejoin()
+	if CFG.REQUEUE_URL ~= "" and typeof(queue_on_teleport) == "function" then
+		pcall(queue_on_teleport, 'loadstring(game:HttpGet("' .. CFG.REQUEUE_URL .. '"))()')
+	end
+end
+
+local function rejoinLoop()
+	if reconnecting then return end
+	reconnecting = true
+	task.spawn(function()
+		task.wait(CFG.RECON_FIRST_DELAY)
+		while ST.alive and reconnectOn do
+			queueRejoin()
+			local ok = pcall(function()
+				S.TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+			end)
+			if not ok then
+				ok = pcall(function()
+					S.TeleportService:Teleport(game.PlaceId, LocalPlayer)
+				end)
+			end
+			if ok then break end
+			task.wait(CFG.RECON_RETRY_DELAY)
+		end
+		reconnecting = false
+	end)
+end
+
+table.insert(conns, S.GuiService.ErrorMessageChanged:Connect(function(msg)
+	if ST.alive and reconnectOn and type(msg) == "string" and msg ~= "" then
+		rejoinLoop()
+	end
+end))
 
 -- ===== GUI (Menu ngang hình chữ nhật + Fix chạm tab) =====
 local container = getContainer()
@@ -1345,7 +1574,6 @@ UI.expandedGroup.Visible = false
 UI.expandedGroup.ZIndex = 22
 UI.expandedGroup.Parent = UI.island
 
--- Thanh trên ngang: Icon + Tên + Tab Main / Quick Key + Stats/Pos
 mkLabel(UI.expandedGroup, {
 	Text = SCRIPT_NAME,
 	Font = Enum.Font.GothamBold,
@@ -1413,7 +1641,6 @@ topDivider.BorderSizePixel = 0
 topDivider.ZIndex = 23
 topDivider.Parent = UI.expandedGroup
 
--- Thân menu ngang: Cột trái (Ưu tiên & thứ tự quặng) | Cột phải (Chức năng & cấu hình)
 local mainBody = Instance.new("Frame")
 mainBody.Position = UDim2.fromOffset(0, 58)
 mainBody.Size = UDim2.new(1, 0, 1, -58)
@@ -1452,7 +1679,7 @@ rightPane.BorderSizePixel = 0
 rightPane.ScrollBarThickness = 3
 rightPane.ScrollBarImageColor3 = Color3.fromRGB(200, 200, 210)
 rightPane.ScrollingDirection = Enum.ScrollingDirection.Y
-rightPane.CanvasSize = UDim2.new(0, 0, 0, 336)
+rightPane.CanvasSize = UDim2.new(0, 0, 0, 410)
 rightPane.ZIndex = 25
 rightPane.Parent = mainBody
 
@@ -1615,6 +1842,16 @@ UI.stealToggle = makeToggle(rightPane, 86, "Auto steal", false, function(on)
 	setStealEnabled(on)
 end, true)
 
+UI.afkToggle = makeToggle(leftPane, 138, "Anti AFK", antiAfkOn, function(on)
+	antiAfkOn = on
+	saveConfig()
+end, true)
+
+UI.reconToggle = makeToggle(leftPane, 164, "Auto reconnect", reconnectOn, function(on)
+	reconnectOn = on
+	saveConfig()
+end, true)
+
 UI.stealPosLbl = mkLabel(rightPane, {
 	Text = string.format("về: X %d · Y %d · Z %d",
 		math.floor(ST.stealReturnPos.X + 0.5), math.floor(ST.stealReturnPos.Y + 0.5), math.floor(ST.stealReturnPos.Z + 0.5)),
@@ -1734,14 +1971,62 @@ distPlus.Activated:Connect(function()
 	saveConfig()
 end)
 
--- Công tắc auto đánh khi cầm pickaxe
-UI.attackToggle = makeToggle(rightPane, 292, "Auto đánh (pickaxe)", false, function(on)
-	ST.attackOn = on
+UI.statusLbl = mkLabel(rightPane, {Text = "tắt", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(6, 260), Size = UDim2.new(1, -14, 0, 13), ZIndex = 25})
+UI.biomeLbl = mkLabel(rightPane, {Text = "biome: đang dò...", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(6, 275), Size = UDim2.new(1, -14, 0, 13), ZIndex = 25})
+
+UI.swingToggle = makeToggle(rightPane, 294, "Auto swing", ST.swingOn, function(on)
+	ST.swingOn = on
 	saveConfig()
 end, true)
 
-UI.statusLbl = mkLabel(rightPane, {Text = "tắt", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(6, 260), Size = UDim2.new(1, -14, 0, 13), ZIndex = 25})
-UI.biomeLbl = mkLabel(rightPane, {Text = "biome: đang dò...", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(6, 275), Size = UDim2.new(1, -14, 0, 13), ZIndex = 25})
+UI.b10Toggle = makeToggle(rightPane, 322, "Auto biome 10", ST.b10On, function(on)
+	ST.b10On = on
+	if not on then cancelBiome10() end
+	if on and not ST.b10SpawnPos and UI.notifyStatus then
+		UI.notifyStatus("auto biome 10: hãy đặt điểm hồi sinh trước", Color3.fromRGB(255, 195, 70))
+	end
+	saveConfig()
+end, true)
+
+mkLabel(rightPane, {Text = "Điểm hồi sinh", Font = Enum.Font.GothamBold, TextSize = 12, Position = UDim2.fromOffset(6, 350), Size = UDim2.new(0.55, 0, 0, 24), ZIndex = 25})
+local spawnBtn = Instance.new("TextButton")
+spawnBtn.AnchorPoint = Vector2.new(1, 0)
+spawnBtn.Position = UDim2.new(1, -8, 0, 350)
+spawnBtn.Size = UDim2.fromOffset(68, 24)
+spawnBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+spawnBtn.Font = Enum.Font.GothamBold
+spawnBtn.TextSize = 11
+spawnBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+spawnBtn.Text = "Đặt đây"
+spawnBtn.AutoButtonColor = false
+spawnBtn.BorderSizePixel = 0
+spawnBtn.ZIndex = 25
+spawnBtn.Parent = rightPane
+Instance.new("UICorner", spawnBtn).CornerRadius = UDim.new(0, 7)
+
+UI.spawnLbl = mkLabel(rightPane, {Text = "chưa đặt", TextSize = 10, TextColor3 = Color3.fromRGB(150, 150, 160), Position = UDim2.fromOffset(6, 374), Size = UDim2.new(1, -14, 0, 12), ZIndex = 25})
+mkLabel(rightPane, {
+	Text = string.format("vùng 666m quanh điểm · waypoint: X %d · Y %d · Z %d",
+		math.floor(CFG.B10_WAYPOINT.X + 0.5), math.floor(CFG.B10_WAYPOINT.Y + 0.5), math.floor(CFG.B10_WAYPOINT.Z + 0.5)),
+	TextSize = 10,
+	TextColor3 = Color3.fromRGB(150, 150, 160),
+	Position = UDim2.fromOffset(6, 390),
+	Size = UDim2.new(1, -14, 0, 12),
+	ZIndex = 25,
+})
+
+setB10Spawn = function(v)
+	ST.b10SpawnPos = v
+	ST.b10Inside = false
+	UI.spawnLbl.Text = v and string.format("X %d · Y %d · Z %d", math.floor(v.X + 0.5), math.floor(v.Y + 0.5), math.floor(v.Z + 0.5)) or "chưa đặt"
+	saveConfig()
+end
+
+spawnBtn.Activated:Connect(function()
+	local root = getRoot()
+	if root then setB10Spawn(root.Position) end
+end)
+setB10Spawn(ST.b10SpawnPos)
 
 -- ===== Quick Key =====
 local FUNCS = {
@@ -1749,8 +2034,9 @@ local FUNCS = {
 	{id = "auto", label = "Auto pickaxe", order = 2, get = function() return ST.autoEquipOn end, set = function(v) UI.autoToggle.set(v) end},
 	{id = "walk", label = "Auto farm ore", order = 3, get = function() return ST.walkOn end, set = function(v) UI.walkToggle.set(v) end},
 	{id = "steal", label = "Auto steal", order = 4, get = function() return ST.stealOn end, set = function(v) UI.stealToggle.set(v) end},
-	{id = "attack", label = "Auto đánh", order = 5, get = function() return ST.attackOn end, set = function(v) UI.attackToggle.set(v) end},
-	{id = "hop", label = "Hop Server", order = 6, action = hopServer},
+	{id = "swing", label = "Auto swing", order = 5, get = function() return ST.swingOn end, set = function(v) UI.swingToggle.set(v) end},
+	{id = "b10", label = "Auto biome 10", order = 6, get = function() return ST.b10On end, set = function(v) UI.b10Toggle.set(v) end},
+	{id = "hop", label = "Hop Server", order = 7, action = hopServer},
 }
 for _, f in ipairs(FUNCS) do FUNC_BY_ID[f.id] = f end
 
@@ -1765,15 +2051,14 @@ local function refreshQuickBarVis()
 	local count = pinnedCount()
 	UI.quickBar.Visible = ST.uiReady and (count > 0)
 	if count > 0 then
-		-- handle (16) + mỗi nút 42 + khoảng cách 8 giữa các phần tử
-		UI.quickBar.Size = UDim2.fromOffset(CFG.QUICK_WIDTH, CFG.QUICK_HANDLE_H + count * 50)
+		UI.quickBar.Size = UDim2.fromOffset(174, count * 50 - 8)
 	end
 end
 
 UI.quickBar = Instance.new("Frame")
 UI.quickBar.Name = "SysOreQuickBar"
 UI.quickBar.BackgroundTransparency = 1
-UI.quickBar.Size = UDim2.fromOffset(CFG.QUICK_WIDTH, 42)
+UI.quickBar.Size = UDim2.fromOffset(174, 42)
 UI.quickBar.Visible = false
 UI.quickBar.ZIndex = 35
 UI.quickBar.Parent = UI.gui
@@ -1783,33 +2068,9 @@ quickLayout.Padding = UDim.new(0, 8)
 quickLayout.SortOrder = Enum.SortOrder.LayoutOrder
 quickLayout.Parent = UI.quickBar
 
--- Thanh kéo quick bar (nằm trên cùng, LayoutOrder 0)
-UI.quickHandle = Instance.new("TextButton")
-UI.quickHandle.Name = "QuickDragHandle"
-UI.quickHandle.Size = UDim2.new(1, 0, 0, CFG.QUICK_HANDLE_H)
-UI.quickHandle.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-UI.quickHandle.BackgroundTransparency = 0.1
-UI.quickHandle.BorderSizePixel = 0
-UI.quickHandle.AutoButtonColor = false
-UI.quickHandle.Font = Enum.Font.GothamBold
-UI.quickHandle.TextSize = 10
-UI.quickHandle.TextColor3 = Color3.fromRGB(170, 170, 180)
-UI.quickHandle.Text = "⋮⋮ kéo"
-UI.quickHandle.LayoutOrder = 0
-UI.quickHandle.Active = true
-UI.quickHandle.ZIndex = 36
-UI.quickHandle.Parent = UI.quickBar
-Instance.new("UICorner", UI.quickHandle).CornerRadius = UDim.new(0, 8)
-
 local function placeQuickBar()
 	local vp = getViewport()
-	local h = UI.quickBar.Size.Y.Offset
-	if ST.quickX == nil or ST.quickY == nil then
-		ST.quickX, ST.quickY = 10, math.floor(vp.Y * 0.32)
-	end
-	ST.quickX = math.clamp(ST.quickX, 0, math.max(0, vp.X - CFG.QUICK_WIDTH))
-	ST.quickY = math.clamp(ST.quickY, topInset() + 4, math.max(topInset() + 4, vp.Y - h - 4))
-	UI.quickBar.Position = UDim2.fromOffset(ST.quickX, ST.quickY)
+	UI.quickBar.Position = UDim2.fromOffset(10, math.floor(vp.Y * 0.32))
 end
 placeQuickBar()
 
@@ -1817,7 +2078,7 @@ local function addPill(f)
 	if pills[f.id] then refreshQuickBarVis() return end
 	local wrap = Instance.new("Frame")
 	wrap.Name = "SysOrePill"
-	wrap.Size = UDim2.fromOffset(CFG.QUICK_WIDTH, 42)
+	wrap.Size = UDim2.fromOffset(174, 42)
 	wrap.BackgroundTransparency = 1
 	wrap.LayoutOrder = f.order
 	wrap.ZIndex = 35
@@ -2017,7 +2278,6 @@ local function setExpanded(v)
 	local x, y = currentPos()
 	tween(UI.island, TWEEN.BOUNCE, {Size = UDim2.fromOffset(ST.curSize.X, ST.curSize.Y), Position = UDim2.fromOffset(x, y)})
 	UI.expandedGroup.Visible = v
-	-- Khi mở: vùng chạm header chỉ bằng thanh tiêu đề (54px), không phủ thân menu
 	header.Size = v and UDim2.fromOffset(CFG.EXPANDED_VEC.X, 54) or UDim2.fromOffset(CFG.ICON_SIZE, CFG.ICON_SIZE)
 	placeNotif()
 end
@@ -2043,6 +2303,7 @@ table.insert(conns, S.UIS.InputChanged:Connect(function(input)
 			clampSquare()
 			UI.island.Position = UDim2.fromOffset(ST.squareX, ST.squareY)
 			placeNotif()
+			placeQuickBar()
 		end
 	end
 end))
@@ -2050,38 +2311,9 @@ end))
 table.insert(conns, S.UIS.InputEnded:Connect(function(input)
 	if dragging and isPointer(input.UserInputType) then
 		dragging = false
-		-- Chạm (không kéo): thu gọn thì mở, đang mở thì đóng
 		if not moved then
 			setExpanded(not dragWasExpanded)
 		end
-	end
-end))
-
--- ===== kéo quick bar (qua thanh "⋮⋮ kéo") =====
-local qDragging, qDragStart, qStartX, qStartY = false, Vector2.new(0, 0), 0, 0
-
-table.insert(conns, UI.quickHandle.InputBegan:Connect(function(input)
-	if isPointer(input.UserInputType) then
-		qDragging = true
-		qDragStart = Vector2.new(input.Position.X, input.Position.Y)
-		qStartX, qStartY = ST.quickX or 10, ST.quickY or 0
-	end
-end))
-
-table.insert(conns, S.UIS.InputChanged:Connect(function(input)
-	if not qDragging then return end
-	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-		local dx, dy = input.Position.X - qDragStart.X, input.Position.Y - qDragStart.Y
-		ST.quickX = qStartX + dx
-		ST.quickY = qStartY + dy
-		placeQuickBar()
-	end
-end))
-
-table.insert(conns, S.UIS.InputEnded:Connect(function(input)
-	if qDragging and isPointer(input.UserInputType) then
-		qDragging = false
-		saveConfig()
 	end
 end))
 
@@ -2125,7 +2357,6 @@ end
 if wantEsp then UI.espToggle.set(true) end
 if wantWalk then UI.walkToggle.set(true) end
 if wantSteal then UI.stealToggle.set(true) end
-if wantAttack then UI.attackToggle.set(true) end
 ST.restoring = false
 saveConfig()
 
@@ -2145,6 +2376,8 @@ local function refreshUI()
 	local walkText = ""
 	if ST.returningSteal then
 		walkText = "  ·  về điểm steal"
+	elseif ST.b10Phase == "toWaypoint" then
+		walkText = "  ·  biome 10: chạy tới điểm"
 	elseif ST.walkOn then
 		walkText = ST.walkTarget and "  ·  đang đi" or "  ·  chờ quặng"
 	end
@@ -2220,7 +2453,7 @@ UI.gui.Destroying:Connect(function()
 	ST.alive = false
 	ST.uiReady = false
 	ST.walkOn = false
-	ST.attackOn = false
+	ST.b10Phase = nil
 	setStealEnabled(false)
 	destroyStealLine()
 	stopESP()
@@ -2250,7 +2483,6 @@ task.spawn(function()
 	if ST.espOn then
 		startESP()
 	end
-	placeQuickBar()
 	refreshQuickBarVis()
 	refreshUI()
 end)
