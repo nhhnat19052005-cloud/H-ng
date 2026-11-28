@@ -1,4 +1,4 @@
--- Huongcuo (Delta Mobile Safe + Quick Key + Đi thẳng + Auto Steal + Chỉ chạy sau Loading + Line cầu vồng về điểm + Menu ngang + Auto Swing + Anti AFK + Auto Reconnect + Auto biome 10 + HP quặng + Chuyển tab animation + Loading thu về island)
+-- Huongcuo (Delta Mobile Safe + Quick Key + Đi thẳng + Auto Steal + Chỉ chạy sau Loading + Line cầu vồng về điểm + Menu ngang + Auto Swing + Anti AFK + Auto Reconnect + Auto biome 10 + HP quặng + Chuyển tab animation + Loading thu về island + Nền động living green + Fix line ESP + Fix thông báo trùng + Không nhảy khi đi quặng + Tự nhặt lại trứng rơi (theo tên, chịu ragdoll))
 local S = {
 	Players = game:GetService("Players"),
 	RunService = game:GetService("RunService"),
@@ -54,8 +54,6 @@ local CFG = {
 	BIOME_PAD_Y = 50,
 	HOP_MAX_PLAYERS = 2,
 	HOP_COOLDOWN = 15,
-	-- link raw của chính script (GitHub raw / Pastebin raw). Cần điền để tự chạy lại khi disconnect.
-	REQUEUE_URL = "",
 	ON_COLOR = Color3.fromRGB(70, 210, 130),
 	OFF_COLOR = Color3.fromRGB(60, 60, 68),
 	SWING_INTERVAL = 0.25,
@@ -70,6 +68,14 @@ local CFG = {
 	DIRECT_STUCK_TIME = 0.8,
 	HP_REFRESH = 0.5,
 	TAG_WIDTH = 190,
+	ORE_DEDUPE_DIST = 4,
+	HP_NEAR_DIST = 6,
+	DROP_RECOVER_TIMEOUT = 40,
+	DROP_REACH = 4,
+	BG_FPS = 24,
+	BG_POLLEN = 16,
+	BG_LEAVES = 9,
+	BG_ROOTS = 5,
 }
 
 local TWEEN = {
@@ -142,19 +148,20 @@ local ST = {
 	curSize = Vector2.new(CFG.ICON_SIZE, CFG.ICON_SIZE),
 	squareX = 0,
 	squareY = 0,
-	-- auto biome 10
 	b10On = false,
 	b10SpawnPos = nil,
 	b10Phase = nil,
 	b10Run = false,
 	b10Inside = false,
 	b10Move = {stuckT = 0, lastPos = nil},
-	-- di chuyển thẳng cho đi quặng, chỗ đợi và chạy về khi steal
 	walkMove = {stuckT = 0, lastPos = nil},
 	waitMove = {stuckT = 0, lastPos = nil},
 	stealMove = {stuckT = 0, lastPos = nil},
-	-- reconnect
 	reconnectedRun = false,
+	-- trứng đang cầm (theo tên) và trạng thái nhặt lại
+	heldName = nil,
+	heldPos = nil,
+	dropRec = {active = false, name = nil, pos = nil, startedAt = 0, missing = 0, mv = {stuckT = 0, lastPos = nil}},
 }
 
 local oreOrder = {}
@@ -169,7 +176,7 @@ local conns, rainbowGrads = {}, {}
 local pills, FUNC_BY_ID = {}, {}
 local UI = {}
 local antiAfkOn, reconnectOn = true, true
-local setWaitPos -- khai báo trước để các callback GUI gọi được
+local setWaitPos
 local setB10Spawn
 local cancelBiome10
 
@@ -365,9 +372,8 @@ local function resolveOre(inst)
 end
 
 -- ===== đọc HP quặng =====
--- Thử lần lượt: attribute -> NumberValue/IntValue -> text "cur/max" hoặc "HP cur" trên mọi GUI của quặng.
 local HP_NAMES = {"Health", "HP", "Hp", "health", "hp", "Durability", "Durab", "Ore", "Value"}
-local MAX_NAMES = {"MaxHealth", "MaxHP", "MaxHp", "maxHealth", "MaxDurability", "MaxValue"}
+local MAX_NAMES = {"MaxHealth", "MaxHP", "MaxHp", "maxHealth", "maxhp", "MaxDurability", "MaxValue"}
 
 local function scanAttrs(o)
 	for _, n in ipairs(HP_NAMES) do
@@ -379,6 +385,62 @@ local function scanAttrs(o)
 				if type(m) == "number" then mx = m break end
 			end
 			return v, mx
+		end
+	end
+	return nil
+end
+
+local function scanAttrsLoose(o)
+	local attrs = o:GetAttributes()
+	local cur, mx
+	for k, v in pairs(attrs) do
+		if type(v) == "number" then
+			local lk = string.lower(k)
+			if string.find(lk, "max", 1, true) then
+				mx = mx or v
+			elseif string.find(lk, "hp", 1, true) or string.find(lk, "health", 1, true)
+				or string.find(lk, "dur", 1, true) or string.find(lk, "hit", 1, true) then
+				cur = cur or v
+			end
+		end
+	end
+	if cur then return cur, mx end
+	return nil
+end
+
+-- text số (dạng "120/500" hoặc "HP 120") trong một GUI
+local function parseHpText(txt)
+	if type(txt) ~= "string" or txt == "" then return nil end
+	local a, b = string.match(txt, "(%d+)%s*/%s*(%d+)")
+	if a and b then return tonumber(a), tonumber(b) end
+	local c = string.match(txt, "[Hh][Pp]%s*:?%s*(%d+)")
+	if c then return tonumber(c), nil end
+	return nil
+end
+
+-- tìm text HP trên các GUI nằm gần quặng, kể cả khi GUI không là con của quặng
+local function findNearbyHp(target, part)
+	if not part then return nil end
+	local scope = target.Parent
+	if scope and scope:IsA("Workspace") then scope = target end
+	if not scope then return nil end
+	for _, d in ipairs(scope:GetDescendants()) do
+		if (d:IsA("TextLabel") or d:IsA("TextButton")) and not isOwnName(d) and not isOwn(d) then
+			local cur, mx = parseHpText(d.Text)
+			if cur then
+				local gui = d:FindFirstAncestorWhichIsA("BillboardGui") or d:FindFirstAncestorWhichIsA("SurfaceGui")
+				local anchorPart = nil
+				if gui then
+					if gui.Adornee and gui.Adornee:IsA("BasePart") then
+						anchorPart = gui.Adornee
+					elseif gui.Parent and gui.Parent:IsA("BasePart") then
+						anchorPart = gui.Parent
+					end
+				end
+				if anchorPart and (anchorPart.Position - part.Position).Magnitude <= CFG.HP_NEAR_DIST then
+					return cur, mx
+				end
+			end
 		end
 	end
 	return nil
@@ -397,11 +459,13 @@ local function readOreHp(target)
 	local hpVal, maxVal
 	for _, d in ipairs(target:GetDescendants()) do
 		if d:IsA("NumberValue") or d:IsA("IntValue") then
-			for _, hn in ipairs(HP_NAMES) do
-				if d.Name == hn and not hpVal then hpVal = d end
-			end
-			for _, mn in ipairs(MAX_NAMES) do
-				if d.Name == mn and not maxVal then maxVal = d end
+			local lk = string.lower(d.Name)
+			if (string.find(lk, "hp", 1, true) or string.find(lk, "health", 1, true) or string.find(lk, "dur", 1, true)) then
+				if string.find(lk, "max", 1, true) then
+					maxVal = maxVal or d
+				else
+					hpVal = hpVal or d
+				end
 			end
 		end
 	end
@@ -409,17 +473,23 @@ local function readOreHp(target)
 		return hpVal.Value, maxVal and maxVal.Value or nil
 	end
 
+	cur, mx = scanAttrsLoose(target)
+	if cur then return cur, mx end
+	for _, d in ipairs(target:GetDescendants()) do
+		cur, mx = scanAttrsLoose(d)
+		if cur then return cur, mx end
+	end
+
 	for _, d in ipairs(target:GetDescendants()) do
 		if (d:IsA("TextLabel") or d:IsA("TextButton")) and not isOwnName(d) then
-			local txt = d.Text
-			if type(txt) == "string" and txt ~= "" then
-				local a, b = string.match(txt, "(%d+)%s*/%s*(%d+)")
-				if a and b then return tonumber(a), tonumber(b) end
-				local c = string.match(txt, "[Hh][Pp]%s*:?%s*(%d+)")
-				if c then return tonumber(c), nil end
-			end
+			local c2, m2 = parseHpText(d.Text)
+			if c2 then return c2, m2 end
 		end
 	end
+
+	local part = getPart(target)
+	cur, mx = findNearbyHp(target, part)
+	if cur then return cur, mx end
 
 	return nil
 end
@@ -577,7 +647,7 @@ local function inBiome(pos)
 	return math.abs(rel.X) <= h.X and math.abs(rel.Y) <= h.Y + CFG.BIOME_PAD_Y and math.abs(rel.Z) <= h.Z
 end
 
--- ===== ESP line & highlight =====
+-- ===== ESP line =====
 local function refreshRootAtt()
 	local root = getRoot()
 	if not root then return nil end
@@ -590,10 +660,20 @@ local function refreshRootAtt()
 	return ST.rootAtt
 end
 
+local function detachLine(e)
+	pcall(function()
+		if e.beam then e.beam:Destroy() end
+		if e.att1 then e.att1:Destroy() end
+	end)
+	e.beam = nil
+	e.att1 = nil
+end
+
 local function attachLine(e)
 	if e.beam then return end
 	local ra = refreshRootAtt()
 	if not ra then return end
+	if not (e.part and e.part.Parent) then return end
 	local att1 = Instance.new("Attachment")
 	att1.Name = "SysOreAtt"
 	att1.Parent = e.part
@@ -613,16 +693,24 @@ local function attachLine(e)
 	e.beam = beam
 end
 
-local function detachLine(e)
-	pcall(function()
-		if e.beam then e.beam:Destroy() end
-		if e.att1 then e.att1:Destroy() end
-	end)
-	e.beam = nil
-	e.att1 = nil
+-- kiểm tra line còn đúng không; thiếu, sai parent, hoặc trỏ vào attachment cũ thì dựng lại
+local function ensureLine(e)
+	if not ST.espOn or not e.part or not e.part.Parent then return end
+	local ra = refreshRootAtt()
+	if not ra then return end
+	local ok = e.beam ~= nil and e.att1 ~= nil
+		and e.beam.Parent == e.part
+		and e.att1.Parent == e.part
+		and e.beam.Attachment0 == ra
+		and e.beam.Attachment1 == e.att1
+	if not ok then
+		detachLine(e)
+		attachLine(e)
+	end
+	if e.beam then e.beam.Enabled = e.inRange ~= false end
 end
 
--- ===== line cầu vồng nối tới điểm chạy về khi steal =====
+-- ===== line cầu vồng về điểm steal =====
 local function destroyStealLine()
 	if stealLine.grad then
 		rainbowGrads[stealLine.grad] = nil
@@ -760,16 +848,59 @@ local function syncTracked()
 	end
 end
 
+-- ===== chống đếm trùng: một quặng có thể được nhận diện qua model, part và BillboardGui =====
+local function isSameOre(a, b)
+	if a == b then return true end
+	if a:IsDescendantOf(b) or b:IsDescendantOf(a) then return true end
+	local pa, pb = getPart(a), getPart(b)
+	if pa and pb and (pa.Position - pb.Position).Magnitude < CFG.ORE_DEDUPE_DIST then return true end
+	return false
+end
+
+local function alreadyKnownNearby(target, ore)
+	for inst, o in pairs(known) do
+		if o.key == ore.key and inst ~= target and isSameOre(inst, target) then
+			return true
+		end
+	end
+	return false
+end
+
+-- ===== thông báo quặng mới: gom trong 0.3s =====
+local pendingNew = {}
+local flushScheduled = false
+
+local function queueNewOreNotice(ore)
+	pendingNew[ore.key] = (pendingNew[ore.key] or 0) + 1
+	if flushScheduled then return end
+	flushScheduled = true
+	task.delay(0.3, function()
+		flushScheduled = false
+		local parts = {}
+		for _, o in ipairs(ORES) do
+			local n = pendingNew[o.key]
+			if n and n > 0 then
+				table.insert(parts, string.format('<font color="%s">+%d %s</font>', toHex(o.color), n, o.label))
+			end
+		end
+		pendingNew = {}
+		if #parts > 0 and UI.showNotice then
+			UI.showNotice(table.concat(parts, "  •  "))
+		end
+	end)
+end
+
 local function addKnown(target, ore, announce)
 	if known[target] then return end
 	local p = getPart(target)
 	if not (p and inBiome(p.Position)) then return end
+	if alreadyKnownNearby(target, ore) then return end
 	known[target] = ore
 	knownCount[ore.key] = knownCount[ore.key] + 1
 	ST.knownTotal = ST.knownTotal + 1
 	if ST.espOn and allowed(ore.key) then
 		track(target, ore)
-		if announce and UI.notify then UI.notify(ore) end
+		if announce then queueNewOreNotice(ore) end
 	end
 end
 
@@ -841,6 +972,7 @@ local function stopESP()
 	for inst in pairs(tracked) do untrack(inst) end
 	known, ST.knownTotal = {}, 0
 	for k in pairs(knownCount) do knownCount[k] = 0 end
+	pendingNew = {}
 end
 
 table.insert(conns, workspace.DescendantAdded:Connect(function(inst)
@@ -884,17 +1016,6 @@ task.spawn(function()
 		task.wait(CFG.BIOME_SCAN_INTERVAL)
 	end
 end)
-
--- ===== requeue =====
-local function queueRejoin()
-	if CFG.REQUEUE_URL == "" then return end
-	if typeof(queue_on_teleport) ~= "function" then return end
-	saveConfig()
-	pcall(function()
-		if typeof(writefile) == "function" then writefile(CFG.RECON_FLAG, "1") end
-	end)
-	pcall(queue_on_teleport, '_G.HUONGCUTO_RECONNECT = true\nloadstring(game:HttpGet("' .. CFG.REQUEUE_URL .. '"))()')
-end
 
 -- ===== hop server =====
 local function httpGet(url)
@@ -943,7 +1064,6 @@ local function hopServer()
 		task.wait(0.5)
 		ST.statusText = "đang chuyển…"
 		if UI.notifyStatus then UI.notifyStatus("đang chuyển…", Color3.fromRGB(255, 195, 70)) end
-		queueRejoin()
 		local ok = pcall(function() S.TeleportService:TeleportToPlaceInstance(game.PlaceId, id, LocalPlayer) end)
 		if not ok then
 			ST.statusText = "teleport lỗi"
@@ -982,7 +1102,7 @@ end
 task.spawn(function()
 	while ST.alive do
 		task.wait(CFG.EQUIP_INTERVAL)
-		if ST.uiReady and ST.autoEquipOn and not ST.returningSteal then
+		if ST.uiReady and ST.autoEquipOn and not ST.returningSteal and not ST.dropRec.active then
 			local char = LocalPlayer.Character
 			local hum = char and char:FindFirstChildOfClass("Humanoid")
 			if hum and hum.Health > 0 and not char:FindFirstChildOfClass("Tool") then
@@ -1019,7 +1139,7 @@ task.spawn(function()
 	end
 end)
 
--- ===== nhảy qua vật thấp =====
+-- ===== nhảy qua vật thấp (chỉ dùng cho steal và biome 10) =====
 local function forceJump(hum)
 	if not hum then return end
 	local now = os.clock()
@@ -1127,6 +1247,8 @@ end
 
 local function setStealEnabled(on)
 	ST.stealOn = on
+	ST.dropRec.active = false
+	ST.heldName = nil
 	refreshAllPrompts()
 	if on then
 		if ST.uiReady then snapshotExistingTools() end
@@ -1176,19 +1298,145 @@ task.spawn(function()
 end)
 
 -- ===== đi thẳng tới đích =====
-local function directMove(hum, root, goal, mv)
+-- canJump = false: không nhảy khi kẹt (dùng cho đi tới quặng và chỗ đợi)
+local function directMove(hum, root, goal, mv, canJump)
 	if mv.lastPos and (root.Position - mv.lastPos).Magnitude < 0.4 then
 		mv.stuckT = mv.stuckT + 0.2
 	else
 		mv.stuckT = 0
 	end
 	mv.lastPos = root.Position
-	if mv.stuckT >= CFG.DIRECT_STUCK_TIME then
+	if canJump and mv.stuckT >= CFG.DIRECT_STUCK_TIME then
 		forceJump(hum)
 		mv.stuckT = 0
 	end
 	hum:MoveTo(goal)
 end
+
+-- ===== tự nhặt lại trứng bị rơi =====
+-- Ghi nhớ tên trứng đang cầm; nếu trứng biến khỏi người mà vẫn còn trong workspace thì đi nhặt lại.
+-- Chạy trong vòng riêng, không phụ thuộc getHum() nên vẫn chạy khi bị ragdoll.
+local function charHoldsName(name)
+	if not name then return false end
+	local char = LocalPlayer.Character
+	local bp = LocalPlayer:FindFirstChildOfClass("Backpack")
+	if char and char:FindFirstChild(name) then return true end
+	if bp and bp:FindFirstChild(name) then return true end
+	return false
+end
+
+local function findEggOnGround(name, near, radius)
+	local best, bestD = nil, radius
+	for _, d in ipairs(workspace:GetDescendants()) do
+		if d.Name == name and not isOwn(d) and (d:IsA("Tool") or d:IsA("Model") or d:IsA("BasePart")) then
+			local h = d:IsA("BasePart") and d or d:FindFirstChild("Handle", true)
+			if h and h:IsA("BasePart") then
+				local dist = (h.Position - near).Magnitude
+				if dist <= bestD then best, bestD = h, dist end
+			end
+		end
+	end
+	return best
+end
+
+-- chỉ bấm prompt gần trứng và có tên liên quan
+local function tryFirePromptNear(name, pos)
+	if typeof(fireproximityprompt) ~= "function" then return end
+	for _, d in ipairs(workspace:GetDescendants()) do
+		if d:IsA("ProximityPrompt") and d.Parent and d.Parent:IsA("BasePart") then
+			if (d.Parent.Position - pos).Magnitude <= CFG.DROP_REACH + 4
+				and string.find(d.Parent:GetFullName(), name, 1, true) then
+				pcall(fireproximityprompt, d)
+			end
+		end
+	end
+end
+
+local function finishDropRecovery(msg, col)
+	ST.dropRec.active = false
+	ST.dropRec.name = nil
+	ST.dropRec.pos = nil
+	if UI.notifyStatus then UI.notifyStatus(msg, col) end
+end
+
+-- vòng quét: ghi nhớ trứng đang cầm và phát hiện khi nó rơi
+task.spawn(function()
+	while ST.alive do
+		task.wait(0.3)
+		if ST.uiReady and ST.stealOn and not ST.dropRec.active then
+			local char = LocalPlayer.Character
+			local root = char and char:FindFirstChild("HumanoidRootPart")
+			local held = char and char:FindFirstChildOfClass("Tool")
+			if held and not isPickaxe(held) then
+				ST.heldName = held.Name
+				if root then ST.heldPos = root.Position end
+			elseif ST.heldName and not charHoldsName(ST.heldName) then
+				local h = findEggOnGround(ST.heldName, ST.heldPos or (root and root.Position) or Vector3.new(), 200)
+				if h then
+					ST.dropRec.active = true
+					ST.dropRec.name = ST.heldName
+					ST.dropRec.pos = h.Position
+					ST.dropRec.startedAt = os.clock()
+					ST.dropRec.missing = 0
+					ST.dropRec.mv = {stuckT = 0, lastPos = nil}
+					ST.returningSteal = false
+					ST.walkTarget = nil
+					destroyStealLine()
+					if UI.notifyStatus then
+						UI.notifyStatus("trứng rơi (" .. ST.heldName .. ") → quay lại nhặt", Color3.fromRGB(255, 195, 70))
+					end
+				end
+			end
+		end
+	end
+end)
+
+-- vòng nhặt: chạy liên tục, không phụ thuộc vòng farm
+task.spawn(function()
+	while ST.alive do
+		task.wait(0.2)
+		local rec = ST.dropRec
+		if ST.uiReady and ST.stealOn and rec.active then
+			local char = LocalPlayer.Character
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+			local root = char and char:FindFirstChild("HumanoidRootPart")
+
+			if charHoldsName(rec.name) then
+				finishDropRecovery("đã nhặt lại trứng", Color3.fromRGB(70, 210, 130))
+				ST.heldName = rec.name
+				triggerStealReturn("nhặt lại")
+			elseif hum and root then
+				local st = hum:GetState()
+				local ragdolled = hum.PlatformStand
+					or st == Enum.HumanoidStateType.Ragdoll
+					or st == Enum.HumanoidStateType.FallingDown
+				if ragdolled or hum.Health <= 0 then
+					-- đang ngã thì không đếm timeout và không đi
+					rec.startedAt = os.clock()
+				elseif os.clock() - rec.startedAt >= CFG.DROP_RECOVER_TIMEOUT then
+					finishDropRecovery("không thấy trứng rơi, dừng", Color3.fromRGB(255, 110, 110))
+				else
+					local h = findEggOnGround(rec.name, root.Position, 200)
+					if h then
+						rec.pos = h.Position
+						rec.missing = 0
+						if (root.Position - h.Position).Magnitude <= CFG.DROP_REACH then
+							hum:MoveTo(h.Position)
+							tryFirePromptNear(rec.name, h.Position)
+						else
+							directMove(hum, root, h.Position, rec.mv, true)
+						end
+					else
+						rec.missing = (rec.missing or 0) + 1
+						if rec.missing >= 15 then -- khoảng 3 giây không thấy trứng
+							finishDropRecovery("không thấy trứng rơi, dừng", Color3.fromRGB(255, 110, 110))
+						end
+					end
+				end
+			end
+		end
+	end
+end)
 
 -- ===== auto farm ore + chỗ đợi quặng =====
 local function eligible(e)
@@ -1252,7 +1500,7 @@ local function runBiome10(hum, root)
 		end
 		return
 	end
-	directMove(hum, root, CFG.B10_WAYPOINT, ST.b10Move)
+	directMove(hum, root, CFG.B10_WAYPOINT, ST.b10Move, true)
 end
 
 task.spawn(function()
@@ -1262,7 +1510,7 @@ task.spawn(function()
 			local root = getRoot()
 			if root then
 				local inside = (root.Position - ST.b10SpawnPos).Magnitude <= CFG.B10_ZONE_RADIUS
-				if inside and not ST.b10Inside and not ST.b10Phase and not ST.returningSteal then
+				if inside and not ST.b10Inside and not ST.b10Phase and not ST.returningSteal and not ST.dropRec.active then
 					ST.b10Phase = "toWaypoint"
 					ST.b10Run = true
 					ST.b10Move = {stuckT = 0, lastPos = nil}
@@ -1288,7 +1536,9 @@ task.spawn(function()
 			if hum and root then
 				local now = os.clock()
 
-				if ST.stealOn and ST.returningSteal then
+				if ST.stealOn and ST.dropRec.active then
+					-- việc nhặt trứng do vòng riêng xử lý
+				elseif ST.stealOn and ST.returningSteal then
 					syncStealLine()
 					local dHome = (root.Position - ST.stealReturnPos).Magnitude
 					if dHome <= CFG.STEAL_REACH then
@@ -1300,7 +1550,7 @@ task.spawn(function()
 						ST.stealMove = {stuckT = 0, lastPos = nil}
 						hum:MoveTo(ST.stealReturnPos)
 					else
-						directMove(hum, root, ST.stealReturnPos, ST.stealMove)
+						directMove(hum, root, ST.stealReturnPos, ST.stealMove, true)
 					end
 				else
 					if stealLine.beam then destroyStealLine() end
@@ -1349,7 +1599,7 @@ task.spawn(function()
 										ST.walkTarget = nil
 										hum:MoveTo(root.Position)
 									else
-										directMove(hum, root, part.Position, ST.walkMove)
+										directMove(hum, root, part.Position, ST.walkMove, false)
 									end
 								end
 							else
@@ -1359,7 +1609,7 @@ task.spawn(function()
 						elseif ST.waitPos then
 							ST.waitAngle = (ST.waitAngle + CFG.WAIT_ANG_SPEED * 0.2 * ST.waitDir) % (math.pi * 2)
 							local goal = ST.waitPos + Vector3.new(math.cos(ST.waitAngle) * CFG.WAIT_RADIUS, 0, math.sin(ST.waitAngle) * CFG.WAIT_RADIUS)
-							directMove(hum, root, goal, ST.waitMove)
+							directMove(hum, root, goal, ST.waitMove, false)
 						end
 					end
 				end
@@ -1414,7 +1664,6 @@ local function rejoinLoop()
 	task.spawn(function()
 		task.wait(CFG.RECON_FIRST_DELAY)
 		while ST.alive and reconnectOn do
-			queueRejoin()
 			local ok = pcall(function()
 				S.TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
 			end)
@@ -1432,15 +1681,7 @@ end
 
 table.insert(conns, S.GuiService.ErrorMessageChanged:Connect(function(msg)
 	if ST.alive and reconnectOn and type(msg) == "string" and msg ~= "" then
-		queueRejoin()
 		rejoinLoop()
-	end
-end))
-
-table.insert(conns, S.Players.PlayerRemoving:Connect(function(p)
-	if p ~= LocalPlayer then return end
-	if ST.alive and reconnectOn and not ST.hopping then
-		queueRejoin()
 	end
 end))
 
@@ -1456,6 +1697,7 @@ UI.gui.Name = SCRIPT_NAME
 UI.gui.ResetOnSpawn = false
 UI.gui.IgnoreGuiInset = true
 UI.gui.DisplayOrder = 999999
+UI.gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 UI.gui.Parent = container
 
 local function clampSquare()
@@ -1503,14 +1745,131 @@ Instance.new("UICorner", UI.island).CornerRadius = UDim.new(0, 14)
 rainbowStroke(UI.island, 2, 0)
 rainbowStroke(UI.island, 6, 0.7)
 
-mkLabel(UI.island, {
-	Text = "💎",
-	Font = Enum.Font.GothamBold,
-	TextSize = 24,
-	TextXAlignment = Enum.TextXAlignment.Center,
-	Size = UDim2.fromOffset(CFG.ICON_SIZE, CFG.ICON_SIZE),
-	ZIndex = 22,
-})
+-- ===== NỀN ĐỘNG: living green =====
+local bgLayer = Instance.new("Frame")
+bgLayer.Name = "LivingBg"
+bgLayer.Size = UDim2.fromScale(1, 1)
+bgLayer.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+bgLayer.BackgroundTransparency = 0
+bgLayer.BorderSizePixel = 0
+bgLayer.ClipsDescendants = true
+bgLayer.Active = false
+bgLayer.ZIndex = 21
+bgLayer.Visible = false
+bgLayer.Parent = UI.island
+Instance.new("UICorner", bgLayer).CornerRadius = UDim.new(0, 14)
+
+local bgGrad = Instance.new("UIGradient")
+bgGrad.Rotation = 90
+bgGrad.Color = ColorSequence.new(Color3.fromRGB(38, 96, 56), Color3.fromRGB(12, 34, 20))
+bgGrad.Parent = bgLayer
+
+local glow = Instance.new("Frame")
+glow.Name = "Glow"
+glow.AnchorPoint = Vector2.new(0.5, 0)
+glow.Size = UDim2.fromScale(0.95, 0.65)
+glow.Position = UDim2.fromScale(0.5, -0.12)
+glow.BackgroundColor3 = Color3.fromRGB(120, 230, 150)
+glow.BackgroundTransparency = 0.88
+glow.BorderSizePixel = 0
+glow.ZIndex = 1
+glow.Parent = bgLayer
+Instance.new("UICorner", glow).CornerRadius = UDim.new(1, 0)
+
+local rootFrames = {}
+local function mkRoot(x, y, len, rot, thick)
+	local r = Instance.new("Frame")
+	r.Name = "Root"
+	r.AnchorPoint = Vector2.new(0.5, 0.5)
+	r.Position = UDim2.fromScale(x, y)
+	r.Size = UDim2.fromOffset(thick, len)
+	r.Rotation = rot
+	r.BackgroundColor3 = Color3.fromRGB(64, 128, 80)
+	r.BackgroundTransparency = 0.4
+	r.BorderSizePixel = 0
+	r.ZIndex = 1
+	r.Parent = bgLayer
+	Instance.new("UICorner", r).CornerRadius = UDim.new(1, 0)
+	table.insert(rootFrames, {frame = r, baseRot = rot, phase = math.random() * 6.28})
+end
+local ROOT_LAYOUT = {
+	{0.04, 0.55, 150, 18, 4},
+	{0.10, 0.80, 110, -24, 3},
+	{0.90, 0.35, 140, -15, 4},
+	{0.96, 0.70, 120, 22, 3},
+	{0.50, 1.00, 170, 4, 5},
+}
+for i = 1, math.min(CFG.BG_ROOTS, #ROOT_LAYOUT) do
+	local l = ROOT_LAYOUT[i]
+	mkRoot(l[1], l[2], l[3], l[4], l[5])
+end
+
+local leaves = {}
+for i = 1, CFG.BG_LEAVES do
+	local lf = Instance.new("Frame")
+	lf.Name = "Leaf"
+	lf.AnchorPoint = Vector2.new(0.5, 0.5)
+	lf.Position = UDim2.fromScale(0.08 + (i / CFG.BG_LEAVES) * 0.84, 0.15 + ((i * 37) % 60) / 100)
+	lf.Size = UDim2.fromOffset(8, 5)
+	lf.Rotation = (i * 47) % 90
+	lf.BackgroundColor3 = Color3.fromRGB(150, 240, 165)
+	lf.BackgroundTransparency = 0.4
+	lf.BorderSizePixel = 0
+	lf.ZIndex = 1
+	lf.Parent = bgLayer
+	Instance.new("UICorner", lf).CornerRadius = UDim.new(1, 0)
+	table.insert(leaves, {frame = lf, phase = i * 0.9})
+end
+
+local pollen = {}
+for i = 1, CFG.BG_POLLEN do
+	local p = Instance.new("Frame")
+	p.Name = "Pollen"
+	p.AnchorPoint = Vector2.new(0.5, 0.5)
+	local bx = ((i * 73) % 100) / 100
+	local by = ((i * 41) % 100) / 100
+	p.Position = UDim2.fromScale(bx, by)
+	p.Size = UDim2.fromOffset(3, 3)
+	p.BackgroundColor3 = Color3.fromRGB(230, 255, 210)
+	p.BackgroundTransparency = 0.25
+	p.BorderSizePixel = 0
+	p.ZIndex = 1
+	p.Parent = bgLayer
+	Instance.new("UICorner", p).CornerRadius = UDim.new(1, 0)
+	table.insert(pollen, {frame = p, bx = bx, by = by, phase = i * 0.7, speed = 0.15 + (i % 5) * 0.05})
+end
+
+task.spawn(function()
+	local t = 0
+	local dtTarget = 1 / CFG.BG_FPS
+	while ST.alive and bgLayer.Parent do
+		local dt = task.wait(dtTarget)
+		if bgLayer.Visible then
+			t = t + dt
+			for _, r in ipairs(rootFrames) do
+				if r.frame.Parent then
+					r.frame.Rotation = r.baseRot + math.sin(t * 0.6 + r.phase) * 2.5
+				end
+			end
+			for _, lf in ipairs(leaves) do
+				if lf.frame.Parent then
+					lf.frame.BackgroundTransparency = 0.3 + math.abs(math.sin(t * 1.2 + lf.phase)) * 0.5
+				end
+			end
+			for _, p in ipairs(pollen) do
+				if p.frame.Parent then
+					local rise = (t * p.speed * 0.05) % 1
+					local y = p.by - rise
+					if y < -0.05 then y = y + 1.1 end
+					local x = p.bx + math.sin(t * p.speed + p.phase) * 0.025
+					p.frame.Position = UDim2.fromScale(x, y)
+					p.frame.BackgroundTransparency = 0.25 + math.abs(math.sin(t + p.phase)) * 0.5
+				end
+			end
+			glow.BackgroundTransparency = 0.84 + math.sin(t * 0.8) * 0.06
+		end
+	end
+end)
 
 UI.expandedGroup = Instance.new("Frame")
 UI.expandedGroup.Name = "Expanded"
@@ -1519,6 +1878,15 @@ UI.expandedGroup.BackgroundTransparency = 1
 UI.expandedGroup.Visible = false
 UI.expandedGroup.ZIndex = 22
 UI.expandedGroup.Parent = UI.island
+
+mkLabel(UI.island, {
+	Text = "💎",
+	Font = Enum.Font.GothamBold,
+	TextSize = 24,
+	TextXAlignment = Enum.TextXAlignment.Center,
+	Size = UDim2.fromOffset(CFG.ICON_SIZE, CFG.ICON_SIZE),
+	ZIndex = 22,
+})
 
 mkLabel(UI.expandedGroup, {
 	Text = SCRIPT_NAME,
@@ -2127,9 +2495,7 @@ for i, f in ipairs(FUNCS) do
 	end, true)
 end
 
--- ===== chuyển tab có animation (đã sửa lệch) =====
--- Lưu vị trí và độ trong suốt gốc của từng phần tử một lần duy nhất,
--- mọi animation đều đưa về đúng giá trị gốc này nên không bị lệch khi chuyển nhiều lần.
+-- ===== chuyển tab có animation =====
 local tabBusy = false
 local baseState = {}
 
@@ -2166,7 +2532,6 @@ local function restoreBase(root)
 end
 
 local function fadeTree(root, alpha)
-	-- alpha 0 = gốc (hiện rõ), 1 = ẩn hết. Luôn tính từ giá trị gốc đã lưu.
 	local b = baseState[root]
 	if not b then return end
 	for _, rec in ipairs(b.items) do
@@ -2267,40 +2632,20 @@ local function placeNotif()
 	)
 end
 
-local notifVals, notifOrder, notifToken = {}, {}, 0
-UI.notify = function(ore)
-	if not notifVals[ore.key] then
-		notifVals[ore.key] = 0
-		table.insert(notifOrder, ore)
-	end
-	notifVals[ore.key] = notifVals[ore.key] + 1
-	local parts = {}
-	for _, o in ipairs(notifOrder) do
-		table.insert(parts, string.format('<font color="%s">+%d %s</font>', toHex(o.color), notifVals[o.key], o.label))
-	end
-	UI.notifLbl.Text = table.concat(parts, "  •  ")
+local noticeToken = 0
+UI.showNotice = function(richText)
+	UI.notifLbl.Text = richText
 	placeNotif()
 	UI.notif.Visible = true
-	notifToken = notifToken + 1
-	local my = notifToken
+	noticeToken = noticeToken + 1
+	local my = noticeToken
 	task.delay(CFG.NOTIF_DURATION, function()
-		if my == notifToken then
-			UI.notif.Visible = false
-			notifVals, notifOrder = {}, {}
-		end
+		if my == noticeToken then UI.notif.Visible = false end
 	end)
 end
 
 UI.notifyStatus = function(msg, col)
-	notifVals, notifOrder = {}, {}
-	UI.notifLbl.Text = string.format('<font color="%s">%s</font>', toHex(col or Color3.fromRGB(255, 255, 255)), msg)
-	placeNotif()
-	UI.notif.Visible = true
-	notifToken = notifToken + 1
-	local my = notifToken
-	task.delay(CFG.NOTIF_DURATION, function()
-		if my == notifToken then UI.notif.Visible = false end
-	end)
+	UI.showNotice(string.format('<font color="%s">%s</font>', toHex(col or Color3.fromRGB(255, 255, 255)), msg))
 end
 
 -- ===== mở/đóng và kéo =====
@@ -2321,6 +2666,7 @@ local function setExpanded(v)
 	local x, y = currentPos()
 	tween(UI.island, TWEEN.BOUNCE, {Size = UDim2.fromOffset(ST.curSize.X, ST.curSize.Y), Position = UDim2.fromOffset(x, y)})
 	UI.expandedGroup.Visible = v
+	bgLayer.Visible = v
 	header.Size = v and UDim2.fromOffset(CFG.EXPANDED_VEC.X, 54) or UDim2.fromOffset(CFG.ICON_SIZE, CFG.ICON_SIZE)
 	placeNotif()
 end
@@ -2397,7 +2743,6 @@ Instance.new("UICorner", barFill).CornerRadius = UDim.new(1, 0)
 rainbowFill(barFill)
 
 local function collapseLoadingIntoIsland()
-	-- thu khung loading về đúng vị trí island rồi ẩn
 	local ix, iy = currentPos()
 	local target = UDim2.fromOffset(ix + CFG.ICON_SIZE / 2, iy + CFG.ICON_SIZE / 2)
 	local tw1 = tween(loadFrame, TWEEN.COLLAPSE, {
@@ -2443,7 +2788,9 @@ local function refreshUI()
 	end
 
 	local walkText = ""
-	if ST.returningSteal then
+	if ST.dropRec.active then
+		walkText = "  ·  đi nhặt trứng rơi"
+	elseif ST.returningSteal then
 		walkText = "  ·  về điểm steal"
 	elseif ST.b10Phase == "toWaypoint" then
 		walkText = "  ·  biome 10: chạy tới điểm"
@@ -2469,15 +2816,6 @@ local function refreshUI()
 		end
 	end
 
-	if ST.espOn then
-		local ra = refreshRootAtt()
-		if ra then
-			for _, e in pairs(tracked) do
-				if not e.beam then attachLine(e) elseif e.beam.Attachment0 ~= ra then e.beam.Attachment0 = ra end
-			end
-		end
-	end
-
 	local now = os.clock()
 	for _, e in pairs(tracked) do
 		local d = distanceTo(e.part)
@@ -2486,8 +2824,9 @@ local function refreshUI()
 			e.inRange = inR
 			if e.hl then e.hl.Enabled = inR end
 			if e.bb then e.bb.Enabled = inR end
-			if e.beam then e.beam.Enabled = inR end
 		end
+
+		ensureLine(e)
 
 		if now - (e.hpAt or 0) >= CFG.HP_REFRESH then
 			e.hpAt = now
@@ -2495,8 +2834,7 @@ local function refreshUI()
 			e.hpText = formatHp(cur, mx)
 		end
 
-		local hpLine = e.hpText or "HP ?"
-		e.lbl.Text = e.ore.label .. "  " .. hpLine .. (d and ("  " .. math.floor(d) .. "m") or "")
+		e.lbl.Text = e.ore.label .. "  " .. (e.hpText or "HP ?") .. (d and ("  " .. math.floor(d) .. "m") or "")
 
 		if e.target and e.target.Parent then
 			for _, g in ipairs(e.target:GetDescendants()) do
@@ -2533,6 +2871,7 @@ UI.gui.Destroying:Connect(function()
 	ST.uiReady = false
 	ST.walkOn = false
 	ST.b10Phase = nil
+	ST.dropRec.active = false
 	setStealEnabled(false)
 	destroyStealLine()
 	stopESP()
